@@ -42,6 +42,18 @@ Each table stores a `company_id` and regular users with role `company` only acce
 
 An experimental endpoint `/api/recommendations` returns the top-selling products as basic "AI" suggestions.
 
+
+### Debug mode (development only)
+
+When running with `python app.py`, debug mode is **disabled by default**.
+Enable it only in local development by setting `FLASK_DEBUG=1`:
+
+```
+FLASK_DEBUG=1 python app.py
+```
+
+Do not enable debug mode in production.
+
 ## Setup
 
 ```

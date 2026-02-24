@@ -2930,4 +2930,5 @@ def api_recommendations():
 if __name__ == '__main__':
     with app.app_context():
         ensure_admin()
-    app.run(debug=True)
+    debug = os.environ.get('FLASK_DEBUG', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+    app.run(debug=debug)
