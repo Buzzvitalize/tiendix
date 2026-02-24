@@ -1,0 +1,10 @@
+# Ignore local SQLite database generated via migrations
+database.sqlite
+*.pyc
+__pycache__/
+.venv/
+.env
+static/uploads/
+static/pdfs/
+static/qrcodes/
+logs/
