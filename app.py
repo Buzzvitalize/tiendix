@@ -2925,7 +2925,7 @@ def contab_dgii():
 @app.route('/api/recommendations')
 def api_recommendations():
     """Return top product recommendations based on past orders."""
-    return jsonify({'products': recommend_products()})
+    return jsonify({'products': recommend_products(current_company_id())})
 
 if __name__ == '__main__':
     with app.app_context():
