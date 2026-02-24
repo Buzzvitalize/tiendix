@@ -67,7 +67,7 @@ from account_pdf import generate_account_statement_pdf
 from functools import wraps
 from auth import auth_bp, generate_reset_token
 from forms import AccountRequestForm
-from config import DevelopmentConfig
+from config import DevelopmentConfig, TestingConfig, ProductionConfig, validate_runtime_config
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover
@@ -80,6 +80,8 @@ except Exception:  # pragma: no cover
     Queue = None
     Redis = None
 import threading
+from queue import Queue as ThreadQueue, Empty
+import time
 
 load_dotenv()
 # Load RNC data for company name lookup
@@ -96,7 +98,15 @@ if os.path.exists(DATA_PATH):
                     RNC_DATA[rnc] = name
 
 app = Flask(__name__)
-app.config.from_object(DevelopmentConfig)
+APP_ENV = os.getenv('APP_ENV', 'development').strip().lower()
+config_map = {
+    'development': DevelopmentConfig,
+    'testing': TestingConfig,
+    'production': ProductionConfig,
+}
+app.config.from_object(config_map.get(APP_ENV, DevelopmentConfig))
+app.config['APP_ENV'] = APP_ENV
+validate_runtime_config(app.config)
 
 if not os.path.exists('logs'):
     os.makedirs('logs')
@@ -112,12 +122,25 @@ MAIL_PORT = int(os.getenv('MAIL_PORT', 587))
 MAIL_USERNAME = os.getenv('MAIL_USERNAME')
 MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')
 MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', MAIL_USERNAME)
+MAIL_MAX_RETRIES = int(os.getenv('MAIL_MAX_RETRIES', 3))
+MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
+
+EMAIL_METRICS = {
+    'queued': 0,
+    'sent': 0,
+    'failed': 0,
+    'retries': 0,
+    'skipped': 0,
+}
+_email_queue = ThreadQueue()
 
 
-def send_email(to, subject, html, attachments=None):
+def _deliver_email(to, subject, html, attachments=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
+        EMAIL_METRICS['skipped'] += 1
         app.logger.warning('Email settings missing; skipping send to %s', to)
         return
+
     msg = MIMEMultipart()
     msg['Subject'] = subject
     msg['From'] = MAIL_DEFAULT_SENDER
@@ -128,14 +151,48 @@ def send_email(to, subject, html, attachments=None):
         part = MIMEApplication(data, Name=filename)
         part['Content-Disposition'] = f'attachment; filename="{filename}"'
         msg.attach(part)
-    try:
-        with smtplib.SMTP(MAIL_SERVER, MAIL_PORT) as s:
-            if MAIL_USERNAME and MAIL_PASSWORD:
-                s.starttls()
-                s.login(MAIL_USERNAME, MAIL_PASSWORD)
-            s.sendmail(MAIL_DEFAULT_SENDER, [to], msg.as_string())
-    except Exception as e:  # pragma: no cover
-        app.logger.error('Email send failed: %s', e)
+
+    for attempt in range(1, MAIL_MAX_RETRIES + 1):
+        try:
+            with smtplib.SMTP(MAIL_SERVER, MAIL_PORT) as s:
+                if MAIL_USERNAME and MAIL_PASSWORD:
+                    s.starttls()
+                    s.login(MAIL_USERNAME, MAIL_PASSWORD)
+                s.sendmail(MAIL_DEFAULT_SENDER, [to], msg.as_string())
+            EMAIL_METRICS['sent'] += 1
+            return
+        except Exception as e:  # pragma: no cover
+            if attempt < MAIL_MAX_RETRIES:
+                EMAIL_METRICS['retries'] += 1
+                app.logger.warning('Email send failed (attempt %s/%s) to %s: %s', attempt, MAIL_MAX_RETRIES, to, e)
+                time.sleep(MAIL_RETRY_DELAY_SEC)
+                continue
+            EMAIL_METRICS['failed'] += 1
+            app.logger.error('Email send failed after %s attempts to %s: %s', MAIL_MAX_RETRIES, to, e)
+
+
+def _email_worker():  # pragma: no cover - background helper
+    while True:
+        try:
+            payload = _email_queue.get(timeout=1)
+        except Empty:
+            continue
+        if payload is None:
+            break
+        _deliver_email(*payload)
+        _email_queue.task_done()
+
+
+_email_worker_thread = threading.Thread(target=_email_worker, daemon=True)
+_email_worker_thread.start()
+
+
+def send_email(to, subject, html, attachments=None, asynchronous=True):
+    if asynchronous:
+        EMAIL_METRICS['queued'] += 1
+        _email_queue.put((to, subject, html, attachments))
+        return
+    _deliver_email(to, subject, html, attachments)
 
 
 def _fmt_money(value):
@@ -658,8 +715,8 @@ def inject_company():
             if low_stock:
                 db.session.commit()
             notif_count = Notification.query.filter_by(company_id=current_company_id(), is_read=False).count()
-    except Exception:
-        pass
+    except Exception as exc:
+        app.logger.exception('Failed to compute notifications: %s', exc)
     return {'company': getattr(g, 'company', None), 'notification_count': notif_count}
 
 
