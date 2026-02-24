@@ -336,7 +336,7 @@ def test_mark_invoice_paid(client):
     login(client, 'user', 'pass')
     client.post(f'/facturas/{invoice_id}/pagar', follow_redirects=True)
     with app.app_context():
-        assert Invoice.query.get(invoice_id).status == 'Pagada'
+        assert db.session.get(Invoice, invoice_id).status == 'Pagada'
     client.get('/logout')
 
 

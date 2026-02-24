@@ -287,12 +287,12 @@ def _export_job(app_obj, company_id, user, start, end, estado, categoria, format
                             float(inv.total),
                         ])
                 wb.save(path)
-            entry = ExportLog.query.get(entry_id)
+            entry = db.session.get(ExportLog, entry_id)
             entry.status = 'success'
             entry.file_path = path
             db.session.commit()
         except Exception as exc:  # pragma: no cover - hard to simulate failures
-            entry = ExportLog.query.get(entry_id)
+            entry = db.session.get(ExportLog, entry_id)
             entry.status = 'fail'
             entry.message = str(exc)
             db.session.commit()
@@ -638,7 +638,7 @@ def rnc_lookup(rnc):
 @app.before_request
 def load_company():
     cid = current_company_id()
-    g.company = CompanyInfo.query.get(cid) if cid else None
+    g.company = db.session.get(CompanyInfo, cid) if cid else None
 
 
 @app.context_processor
@@ -664,7 +664,7 @@ def inject_company():
 
 
 def get_company_info():
-    c = CompanyInfo.query.get(current_company_id())
+    c = db.session.get(CompanyInfo, current_company_id())
     if not c:
         return {}
     return {
@@ -1725,7 +1725,7 @@ def settings():
 @app.route('/ajustes/empresa', methods=['GET', 'POST'])
 @manager_only
 def settings_company():
-    company = CompanyInfo.query.get(current_company_id())
+    company = db.session.get(CompanyInfo, current_company_id())
     if not company:
         flash('Seleccione una empresa')
         return redirect(url_for('admin_companies'))
@@ -1798,7 +1798,7 @@ def settings_company():
 @app.route('/ajustes/usuarios/agregar', methods=['GET', 'POST'])
 @manager_only
 def settings_add_user():
-    company = CompanyInfo.query.get(current_company_id())
+    company = db.session.get(CompanyInfo, current_company_id())
     if request.method == 'POST':
         if session.get('role') == 'manager':
             count = User.query.filter_by(company_id=company.id, role='company').count()
@@ -1993,7 +1993,7 @@ def list_orders():
 @app.route('/pedidos/<int:order_id>/facturar')
 def order_to_invoice(order_id):
     order = company_get(Order, order_id)
-    company = CompanyInfo.query.get(current_company_id())
+    company = db.session.get(CompanyInfo, current_company_id())
     if order.client.is_final_consumer:
         prefix, counter = "B02", "ncf_final"
     else:
