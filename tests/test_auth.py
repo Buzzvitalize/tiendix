@@ -29,3 +29,17 @@ def client(tmp_path):
 def test_login(client):
     resp = client.post('/login', data={'username': 'admin', 'password': '363636'})
     assert resp.status_code == 302
+
+
+
+def test_password_is_hashed(client):
+    with app.app_context():
+        user = User.query.filter_by(username='admin').first()
+        assert user.password != '363636'
+        assert ':' in user.password
+
+
+def test_sidebar_hides_contabilidad_menu(client):
+    client.post('/login', data={'username': 'admin', 'password': '363636'})
+    resp = client.get('/', follow_redirects=True)
+    assert b'Contabilidad' not in resp.data

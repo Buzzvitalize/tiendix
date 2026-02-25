@@ -30,7 +30,7 @@ def verify_reset_token(token, max_age=3600):
         data = s.loads(token, max_age=max_age)
     except (BadSignature, SignatureExpired):
         return None
-    user = User.query.get(data.get('user_id'))
+    user = db.session.get(User, data.get('user_id'))
     if not user or user.password != data.get('pw'):
         return None
     return user
