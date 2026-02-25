@@ -11,6 +11,9 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     HTML = None
 
+from fpdf import FPDF
+from fpdf.enums import XPos, YPos
+
 BLUE = "#1e3a8a"
 STYLE = f"""
 @page {{ size: A4; margin: 2cm; }}
@@ -146,6 +149,42 @@ def build_html(title: str, company: dict, client: dict, items: list,
 </html>
 """
 
+
+def _write_fallback_pdf(title: str, company: dict, client: dict, items: list,
+                        subtotal: float, itbis: float, total: float,
+                        output_path: Path) -> None:
+    """Generate a basic PDF when WeasyPrint cannot render in the server."""
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+    pdf.set_font('Helvetica', 'B', 16)
+    pdf.cell(0, 10, company.get('name', 'Tiendix'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font('Helvetica', 'B', 13)
+    pdf.cell(0, 8, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font('Helvetica', '', 10)
+    pdf.cell(0, 6, f"Cliente: {client.get('name', '')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    if client.get('identifier'):
+        pdf.cell(0, 6, f"Cédula/RNC: {client.get('identifier')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(2)
+    pdf.set_font('Helvetica', 'B', 9)
+    pdf.cell(90, 7, 'Producto', border=1)
+    pdf.cell(25, 7, 'Cant.', border=1)
+    pdf.cell(35, 7, 'Precio', border=1)
+    pdf.cell(40, 7, 'Total', border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font('Helvetica', '', 9)
+    for item in items:
+        amount = item['unit_price'] * item['quantity'] - item.get('discount', 0)
+        pdf.cell(90, 6, str(item.get('product_name', ''))[:40], border=1)
+        pdf.cell(25, 6, str(item.get('quantity', 0)), border=1)
+        pdf.cell(35, 6, _fmt_money(item.get('unit_price', 0)), border=1)
+        pdf.cell(40, 6, _fmt_money(amount), border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.ln(3)
+    pdf.set_font('Helvetica', 'B', 10)
+    pdf.cell(0, 6, f"Subtotal: {_fmt_money(subtotal)}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, f"ITBIS: {_fmt_money(itbis)}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, f"Total: {_fmt_money(total)}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.output(str(output_path))
+
 def generate_pdf(title: str, company: dict, client: dict, items: list,
                  subtotal: float, itbis: float, total: float, ncf: str | None = None,
                  seller: str | None = None, payment_method: str | None = None,
@@ -167,7 +206,6 @@ def generate_pdf(title: str, company: dict, client: dict, items: list,
         'valid_until': valid_until,
         'footer': footer,
     }
-    # QR codes disabled
     item_dicts = [_item_to_dict(i) for i in items]
     discount_total = sum(i.get('discount', 0.0) for i in item_dicts)
     client_dict = _client_to_dict(client)
@@ -175,14 +213,13 @@ def generate_pdf(title: str, company: dict, client: dict, items: list,
                       discount_total, itbis, total, meta)
     output_path = Path(output_path or 'document.pdf')
     current_app.logger.info("Rendering %s PDF to %s", title, output_path)
-    if HTML is None:
-        current_app.logger.warning("WeasyPrint is not installed; generating placeholder PDF")
-        with open(output_path, 'wb') as f:
-            f.write(b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF")
-    else:
-        try:
-            HTML(string=html, base_url='.').write_pdf(output_path)
-        except Exception as exc:  # pragma: no cover
-            current_app.logger.exception("PDF generation failed: %s", exc)
-            raise
+
+    try:
+        if HTML is None:
+            raise RuntimeError('WeasyPrint not available in this environment')
+        HTML(string=html, base_url='.').write_pdf(output_path)
+    except Exception as exc:  # pragma: no cover
+        current_app.logger.exception("WeasyPrint render failed, using FPDF fallback: %s", exc)
+        _write_fallback_pdf(title, company, client_dict, item_dicts, subtotal, itbis, total, output_path)
+
     return str(output_path)
