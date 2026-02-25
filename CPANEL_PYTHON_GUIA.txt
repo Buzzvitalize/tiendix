@@ -96,9 +96,9 @@ B) Error al enviar correo de recuperación
 - Revisa MAIL_SERVER/MAIL_PORT/MAIL_USERNAME/MAIL_PASSWORD.
 - Revisa firewall/puerto SMTP del hosting.
 
-C) Error al generar PDF
-- Esta versión genera PDFs con `fpdf2` (sin depender de librerías nativas de WeasyPrint).
-- Si falla, revisa permisos de escritura de `static/pdfs/` y logs en `logs/app.log`.
+C) Error con WeasyPrint (PDF)
+- Algunos hostings no incluyen librerías del sistema.
+- Pide al proveedor habilitar dependencias de Cairo/Pango o desactiva temporalmente reportes PDF.
 
 D) Error 500 después de subir cambios
 - Activa venv.
