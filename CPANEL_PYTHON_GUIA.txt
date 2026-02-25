@@ -140,3 +140,13 @@ Revisa estos puntos (en orden):
 Nota técnica:
 - Tiendix ahora evita recalcular notificaciones de inventario en cada request;
   ese escaneo se refresca por sesión cada 5 minutos para acelerar la navegación.
+
+
+13) Bloquear descarga de archivos sensibles (MUY recomendado)
+-------------------------------------------------------------
+Este proyecto incluye un `.htaccess` para bloquear acceso directo a archivos como:
+- `app.py`, `auth.py`, `config.py`, `models.py`
+- `requirements.txt`, `.env`, `database.sqlite`, etc.
+
+Asegúrate de que ese `.htaccess` esté subido en la raíz pública de la app
+(o en el directorio donde Apache resuelve la URL).

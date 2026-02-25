@@ -84,6 +84,7 @@ from queue import Queue as ThreadQueue, Empty
 import time
 
 load_dotenv()
+
 # Load RNC data for company name lookup
 RNC_DATA = {}
 DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', 'DGII_RNC.TXT')
@@ -107,6 +108,32 @@ config_map = {
 app.config.from_object(config_map.get(APP_ENV, DevelopmentConfig))
 app.config['APP_ENV'] = APP_ENV
 validate_runtime_config(app.config)
+
+SENSITIVE_PATHS = {
+    'app.py',
+    'auth.py',
+    'config.py',
+    'models.py',
+    'requirements.txt',
+    '.env',
+    '.env.example',
+    'database.sqlite',
+    'passenger_wsgi.py',
+}
+SENSITIVE_EXTENSIONS = (
+    '.py', '.pyc', '.sqlite', '.db', '.env', '.ini', '.pem', '.key', '.log',
+)
+
+
+@app.before_request
+def block_sensitive_paths():
+    requested = request.path.lstrip('/').lower()
+    if not requested:
+        return None
+    if requested in SENSITIVE_PATHS or requested.endswith(SENSITIVE_EXTENSIONS):
+        return ('Not Found', 404)
+    return None
+
 
 if not os.path.exists('logs'):
     os.makedirs('logs')
