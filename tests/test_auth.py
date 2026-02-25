@@ -43,3 +43,10 @@ def test_sidebar_hides_contabilidad_menu(client):
     client.post('/login', data={'username': 'admin', 'password': '363636'})
     resp = client.get('/', follow_redirects=True)
     assert b'Contabilidad' not in resp.data
+
+
+
+def test_dom_time_visible_after_login(client):
+    client.post('/login', data={'username': 'admin', 'password': '363636'})
+    resp = client.get('/', follow_redirects=True)
+    assert b'Hora RD:' in resp.data

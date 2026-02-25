@@ -60,7 +60,7 @@
       </div>
     </div>
   </div>
-  <div class="grid md:grid-cols-4 gap-4">
+  <div class="grid md:grid-cols-5 gap-4">
     <div>
       <label class="block text-sm font-medium text-gray-700 mb-1">Vendedor</label>
       <select name="seller" class="input" required>
@@ -85,6 +85,15 @@
         <option>Banco BHD</option>
         <option>Banco Banreservas</option>
         <option>Banesco</option>
+      </select>
+    </div>
+    <div>
+      <label for="validity-period" class="block text-sm font-medium text-gray-700 mb-1">Vigencia</label>
+      <select name="validity_period" id="validity-period" class="input">
+        <option value="15d">15 días</option>
+        <option value="1m" selected>1 mes</option>
+        <option value="2m">2 meses</option>
+        <option value="3m">3 meses</option>
       </select>
     </div>
     <div>

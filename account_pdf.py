@@ -2,9 +2,11 @@ from __future__ import annotations
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 BLUE = (30, 58, 138)
+DOM_TZ = ZoneInfo("America/Santo_Domingo")
 
 def _money(v: float) -> str:
     return f"RD$ {v:,.2f}"
@@ -33,7 +35,7 @@ def generate_account_statement_pdf(company: dict, client: dict, rows: list, tota
     pdf.cell(0, 8, 'Estado de Cuenta de Cliente', align='C', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0,0,0)
     pdf.set_font('Helvetica', '', 10)
-    pdf.cell(0, 5, f"Fecha: {datetime.now().strftime('%d/%m/%Y')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 5, f"Fecha: {datetime.now(DOM_TZ).strftime('%d/%m/%Y')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(4)
     # client info
     pdf.set_font('Helvetica', 'B', 10)

@@ -508,6 +508,18 @@ INVOICE_STATUSES = ('Pendiente', 'Pagada')
 MAX_EXPORT_ROWS = 50000
 
 
+QUOTATION_VALIDITY_OPTIONS = {
+    '15d': 15,
+    '1m': 30,
+    '2m': 60,
+    '3m': 90,
+}
+
+
+def _quotation_validity_days(value: str | None) -> int:
+    return QUOTATION_VALIDITY_OPTIONS.get(value or '1m', 30)
+
+
 def current_company_id():
     return session.get('company_id')
 
@@ -753,7 +765,7 @@ def inject_company():
             notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
     except Exception as exc:
         app.logger.exception('Failed to compute notifications: %s', exc)
-    return {'company': getattr(g, 'company', None), 'notification_count': notif_count}
+    return {'company': getattr(g, 'company', None), 'notification_count': notif_count, 'current_dom_time': dom_now().strftime('%d/%m/%Y %I:%M %p')}
 
 
 def get_company_info():
@@ -1717,7 +1729,8 @@ def new_quotation():
         payment_method = request.form.get('payment_method')
         bank = request.form.get('bank') if payment_method == 'Transferencia' else None
         date = dom_now()
-        valid_until = date + timedelta(days=30)
+        validity_days = _quotation_validity_days(request.form.get('validity_period'))
+        valid_until = date + timedelta(days=validity_days)
         quotation = Quotation(client_id=client.id, subtotal=subtotal, itbis=itbis, total=total,
                                seller=request.form.get('seller'), payment_method=payment_method,
                                bank=bank, note=request.form.get('note'),
@@ -1741,7 +1754,7 @@ def new_quotation():
     ).all()
     warehouses = company_query(Warehouse).order_by(Warehouse.name).all()
     sellers = company_query(User).options(load_only(User.id, User.first_name, User.last_name)).all()
-    return render_template('cotizacion.html', clients=clients, products=products, warehouses=warehouses, sellers=sellers)
+    return render_template('cotizacion.html', clients=clients, products=products, warehouses=warehouses, sellers=sellers, validity_options=QUOTATION_VALIDITY_OPTIONS)
 
 @app.route('/cotizaciones/editar/<int:quotation_id>', methods=['GET', 'POST'])
 def edit_quotation(quotation_id):
@@ -1779,6 +1792,8 @@ def edit_quotation(quotation_id):
         quotation.payment_method = payment_method
         quotation.bank = bank
         quotation.note = request.form.get('note')
+        validity_days = _quotation_validity_days(request.form.get('validity_period'))
+        quotation.valid_until = (quotation.date or dom_now()) + timedelta(days=validity_days)
         for it in items:
             quotation.items.append(QuotationItem(**it))
         db.session.commit()
@@ -1806,6 +1821,7 @@ def edit_quotation(quotation_id):
         products=products,
         items=items,
         sellers=sellers,
+        validity_options=QUOTATION_VALIDITY_OPTIONS,
     )
 
 
@@ -2615,7 +2631,7 @@ def account_statement_detail(client_id):
     rows = []
     totals = 0
     aging = {'0-30': 0, '31-60': 0, '61-90': 0, '91-120': 0, '121+': 0}
-    now = datetime.utcnow()
+    now = dom_now()
     for inv in invoices:
         balance = _invoice_balance(inv)
         if balance <= 0:
@@ -2716,7 +2732,7 @@ def export_reportes():
     header = [
         f"Empresa: {company.get('name', '')}",
         f"Rango: {(fecha_inicio or 'Todas')} - {(fecha_fin or 'Todas')}",
-        f"Generado: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} por {user}",
+        f"Generado: {dom_now().strftime('%Y-%m-%d %H:%M')} por {user}",
     ]
     current_app.logger.info(
         "export user=%s company=%s formato=%s tipo=%s filtros=%s",

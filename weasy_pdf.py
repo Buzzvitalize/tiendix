@@ -6,12 +6,21 @@ but renders directly with fpdf2 to avoid native WeasyPrint dependencies.
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
 BLUE = (30, 58, 138)
+
+DOM_TZ = ZoneInfo("America/Santo_Domingo")
+
+
+def _to_dom_time(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(DOM_TZ).replace(tzinfo=None)
 
 
 def _fmt_money(value: float) -> str:
@@ -179,7 +188,8 @@ def generate_pdf(title: str, company: dict, client: dict, items: list,
     pdf.set_auto_page_break(auto=True, margin=14)
     pdf.add_page()
 
-    _draw_header(pdf, title, company, date or datetime.now(), doc_number, ncf, valid_until)
+    base_date = _to_dom_time(date or datetime.now(DOM_TZ))
+    _draw_header(pdf, title, company, base_date, doc_number, ncf, valid_until)
     _draw_client_block(pdf, client_dict)
     _draw_meta_block(pdf, seller, payment_method, bank, purchase_order)
     _draw_items_table(pdf, item_dicts)
