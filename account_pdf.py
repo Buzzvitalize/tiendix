@@ -19,7 +19,9 @@ def generate_account_statement_pdf(company: dict, client: dict, rows: list, tota
     # header with logo and company
     logo = company.get('logo')
     if logo:
-        logo_path = Path('static/uploads') / logo
+        logo_path = Path(str(logo))
+        if not logo_path.is_absolute():
+            logo_path = Path('static') / str(logo).lstrip('/')
         if logo_path.exists():
             pdf.image(str(logo_path), 10, 8, 30)
     pdf.set_text_color(*BLUE)

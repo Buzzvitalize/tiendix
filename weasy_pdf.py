@@ -6,6 +6,7 @@ but renders directly with fpdf2 to avoid native WeasyPrint dependencies.
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -60,6 +61,13 @@ def _client_to_dict(client) -> dict:
 
 
 def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_number: int | None, ncf: str | None, valid_until: datetime | None):
+    logo = company.get('logo')
+    if logo:
+        logo_path = str(logo)
+        if os.path.exists(logo_path):
+            pdf.image(logo_path, x=10, y=8, w=24)
+            pdf.set_xy(38, 10)
+
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 18)
     pdf.cell(0, 10, company.get('name', 'Tiendix'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)

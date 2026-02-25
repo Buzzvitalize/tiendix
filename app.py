@@ -778,7 +778,7 @@ def get_company_info():
         'rnc': c.rnc,
         'phone': c.phone,
         'website': c.website,
-        'logo': os.path.join(app.static_folder, c.logo) if c.logo else None,
+        'logo': os.path.join(app.static_folder, c.logo if c.logo.startswith('uploads/') else f'uploads/{c.logo}') if c.logo else None,
         'ncf_final': c.ncf_final,
         'ncf_fiscal': c.ncf_fiscal,
     }
