@@ -42,6 +42,18 @@ Each table stores a `company_id` and regular users with role `company` only acce
 
 An experimental endpoint `/api/recommendations` returns the top-selling products as basic "AI" suggestions.
 
+
+### Debug mode (development only)
+
+When running with `python app.py`, debug mode is **disabled by default**.
+Enable it only in local development by setting `FLASK_DEBUG=1`:
+
+```
+FLASK_DEBUG=1 python app.py
+```
+
+Do not enable debug mode in production.
+
 ## Setup
 
 ```
@@ -57,3 +69,82 @@ python app.py
 ```
 
 For company name auto-completion, download the latest `DGII_RNC.TXT` from the DGII and place it under `data/`.
+
+
+## Ejecutar con Docker (guía para principiantes)
+
+Si nunca has usado Docker, sigue estos pasos literalmente:
+
+### 1) Instalar Docker
+- Windows/Mac: instala **Docker Desktop**
+- Linux: instala **Docker Engine** + **Docker Compose plugin**
+
+Verifica que funcione:
+
+```
+docker --version
+docker compose version
+```
+
+### 2) Configuración mínima
+Este proyecto ya incluye `docker-compose.yml` con valores por defecto.
+Solo cambia la clave de sesión en `docker-compose.yml`:
+
+```yaml
+SECRET_KEY: "cambia_esta_clave_por_una_segura"
+```
+
+> Usa una clave larga y difícil de adivinar.
+
+### 3) Levantar el sistema
+Desde la carpeta del proyecto ejecuta:
+
+```
+docker compose up --build
+```
+
+¿Qué hace este comando?
+- Construye la imagen de Tiendix
+- Instala dependencias
+- Ejecuta migraciones (`flask db upgrade`)
+- Inicia la app en el puerto `5000`
+
+### 4) Abrir la aplicación
+Abre en tu navegador:
+
+```
+http://localhost:5000
+```
+
+### 5) Apagar el sistema
+En la terminal donde está corriendo, presiona `Ctrl + C`, o usa:
+
+```
+docker compose down
+```
+
+### 6) Dónde quedan tus datos
+El `docker-compose.yml` monta volúmenes locales para que no pierdas información:
+- `database.sqlite` (base de datos)
+- `logs/` (logs)
+- `static/uploads/` (logos/archivos)
+
+### 7) Comandos útiles
+Ver logs:
+
+```
+docker compose logs -f
+```
+
+Entrar al contenedor:
+
+```
+docker compose exec tiendix bash
+```
+
+Correr pruebas dentro del contenedor:
+
+```
+docker compose exec tiendix pytest
+```
+

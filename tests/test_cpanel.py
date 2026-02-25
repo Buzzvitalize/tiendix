@@ -44,7 +44,7 @@ def test_admin_access_and_role_change(client):
         user = User.query.filter_by(username='user').first()
     client.post(f'/cpaneltx/users/{user.id}/role', data={'role': 'manager'})
     with app.app_context():
-        assert User.query.get(user.id).role == 'manager'
+        assert db.session.get(User, user.id).role == 'manager'
 
 
 def test_admin_update_email_password(client):
@@ -53,7 +53,7 @@ def test_admin_update_email_password(client):
         user = User.query.filter_by(username='user').first()
     client.post(f'/cpaneltx/users/{user.id}/update', data={'email': 'new@ex.com', 'password': 'newpass'})
     with app.app_context():
-        u = User.query.get(user.id)
+        u = db.session.get(User, user.id)
         assert u.email == 'new@ex.com'
         assert u.check_password('newpass')
 

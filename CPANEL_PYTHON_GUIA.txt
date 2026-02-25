@@ -1,0 +1,127 @@
+GUIA COMPLETA (PASO A PASO) PARA INSTALAR TIENDIX EN CPANEL PYTHON
+===================================================================
+
+Esta guía está escrita para principiantes, sin asumir experiencia previa.
+
+0) Requisitos previos
+---------------------
+Necesitas:
+- Un hosting con cPanel que tenga "Setup Python App" habilitado.
+- Acceso al File Manager de cPanel o acceso Git/SSH.
+- Tu dominio o subdominio activo.
+
+1) Subir el proyecto
+--------------------
+Opción A (File Manager):
+1. Comprime el proyecto en .zip.
+2. En cPanel > File Manager, entra a tu home.
+3. Sube el .zip y extráelo en una carpeta, por ejemplo: `tiendix`.
+
+Opción B (Git):
+1. En cPanel Terminal/SSH, clona el repositorio en `~/tiendix`.
+
+2) Crear la app Python en cPanel
+--------------------------------
+1. Ve a cPanel > Setup Python App.
+2. Click en "Create Application".
+3. Configura:
+   - Python version: 3.10 (recomendado)
+   - Application root: tiendix
+   - Application URL: tu-dominio.com o subdominio
+   - Application startup file: passenger_wsgi.py
+   - Application Entry point: application
+4. Guarda.
+
+3) Activar entorno virtual e instalar dependencias
+---------------------------------------------------
+1. En la pantalla de Setup Python App, copia el comando que cPanel te da para activar el venv.
+   (ejemplo: `source /home/USUARIO/virtualenv/tiendix/3.10/bin/activate`)
+2. En Terminal ejecútalo.
+3. Ve al proyecto:
+   `cd ~/tiendix`
+4. Instala dependencias:
+   `pip install -r requirements.txt`
+
+Nota:
+- `requirements.txt` ya incluye lo necesario para la app (Flask, SQLAlchemy,
+  migraciones, formularios, PDF, etc.).
+
+4) Variables de entorno (MUY IMPORTANTE)
+----------------------------------------
+En Setup Python App > Environment Variables agrega:
+
+APP_ENV=production
+SECRET_KEY=pon_una_clave_larga_y_unica
+MAIL_SERVER=smtp.tu-proveedor.com
+MAIL_PORT=587
+MAIL_USERNAME=tu_correo
+MAIL_PASSWORD=tu_password
+MAIL_DEFAULT_SENDER=tu_correo
+
+Recomendación:
+- No uses una SECRET_KEY corta.
+- Usa una clave larga, aleatoria y privada.
+
+5) Ejecutar migraciones de base de datos
+----------------------------------------
+Con el venv activado y dentro de `~/tiendix`:
+
+flask db upgrade
+
+Esto crea/actualiza las tablas.
+
+6) Archivo WSGI para cPanel
+---------------------------
+Este proyecto incluye `passenger_wsgi.py` listo para usar.
+Si tu cPanel no lo detecta, verifica que exista en la raíz del proyecto
+(`~/tiendix/passenger_wsgi.py`).
+
+7) Reiniciar la aplicación
+--------------------------
+En Setup Python App:
+- Click en "Restart".
+
+8) Verificar que funciona
+-------------------------
+1. Abre tu URL en el navegador.
+2. Prueba login.
+3. Prueba recuperar contraseña (si ya configuraste SMTP).
+
+9) Errores comunes y solución rápida
+------------------------------------
+A) Error: "SECRET_KEY is required in production"
+- Te faltó definir SECRET_KEY en variables de entorno.
+
+B) Error al enviar correo de recuperación
+- Revisa MAIL_SERVER/MAIL_PORT/MAIL_USERNAME/MAIL_PASSWORD.
+- Revisa firewall/puerto SMTP del hosting.
+
+C) Error al generar PDF
+- Esta versión genera PDFs con `fpdf2` (sin depender de librerías nativas de WeasyPrint).
+- Si falla, revisa permisos de escritura de `static/pdfs/` y logs en `logs/app.log`.
+
+D) Error 500 después de subir cambios
+- Activa venv.
+- Corre `pip install -r requirements.txt`.
+- Corre `flask db upgrade`.
+- Reinicia la app desde cPanel.
+
+10) Flujo de actualización (cuando subes cambios nuevos)
+--------------------------------------------------------
+1. Subir cambios a `~/tiendix`.
+2. Activar venv.
+3. `pip install -r requirements.txt` (por si hay dependencias nuevas).
+4. `flask db upgrade`.
+5. Restart en Setup Python App.
+
+11) Checklist final
+-------------------
+[ ] App creada en Setup Python App
+[ ] Variables de entorno configuradas
+[ ] Dependencias instaladas
+[ ] Migraciones ejecutadas
+[ ] App reiniciada
+[ ] Login OK
+[ ] Recuperación de contraseña OK
+
+Listo. Con eso Tiendix queda operando en cPanel de forma correcta.
