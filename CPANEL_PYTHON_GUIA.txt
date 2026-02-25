@@ -125,3 +125,18 @@ D) Error 500 después de subir cambios
 [ ] Recuperación de contraseña OK
 
 Listo. Con eso Tiendix queda operando en cPanel de forma correcta.
+
+
+12) Si la página carga lenta en cPanel
+--------------------------------------
+Revisa estos puntos (en orden):
+1. APP_ENV debe ser `production`.
+2. FLASK_DEBUG debe estar apagado (vacío o 0).
+3. Reinicia la app desde Setup Python App después de cambios.
+4. Verifica que no haya errores repetidos en `logs/app.log`.
+5. Si usas SMTP lento, mantén envío asíncrono (ya viene activo por defecto).
+6. Si la lentitud es intermitente, revisa límites del hosting (CPU/RAM/IO).
+
+Nota técnica:
+- Tiendix ahora evita recalcular notificaciones de inventario en cada request;
+  ese escaneo se refresca por sesión cada 5 minutos para acelerar la navegación.

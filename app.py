@@ -702,19 +702,28 @@ def load_company():
 def inject_company():
     notif_count = 0
     try:
-        if 'user_id' in session and current_company_id():
-            low_stock = (
-                company_query(ProductStock)
-                .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
-                .all()
-            )
-            for ps in low_stock:
-                msg = f"Stock bajo: {ps.product.name}"
-                if not Notification.query.filter_by(company_id=current_company_id(), message=msg).first():
-                    db.session.add(Notification(company_id=current_company_id(), message=msg))
-            if low_stock:
-                db.session.commit()
-            notif_count = Notification.query.filter_by(company_id=current_company_id(), is_read=False).count()
+        cid = current_company_id()
+        if 'user_id' in session and cid:
+            # Avoid expensive inventory scans on every request.
+            # Refresh low-stock notifications at most once every 5 minutes per session.
+            now_ts = int(time.time())
+            last_scan = session.get('low_stock_scan_at', 0)
+            if now_ts - last_scan >= 300:
+                low_stock = (
+                    company_query(ProductStock)
+                    .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
+                    .all()
+                )
+                for ps in low_stock:
+                    msg = f"Stock bajo: {ps.product.name}"
+                    exists = Notification.query.filter_by(company_id=cid, message=msg).first()
+                    if not exists:
+                        db.session.add(Notification(company_id=cid, message=msg))
+                if low_stock:
+                    db.session.commit()
+                session['low_stock_scan_at'] = now_ts
+
+            notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
     except Exception as exc:
         app.logger.exception('Failed to compute notifications: %s', exc)
     return {'company': getattr(g, 'company', None), 'notification_count': notif_count}
