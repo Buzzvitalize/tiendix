@@ -28,6 +28,12 @@ def _fmt_money(value: float) -> str:
     return f"RD$ {value:,.2f}"
 
 
+def _safe_text(value) -> str:
+    """Return latin-1-safe text for built-in FPDF fonts."""
+    text = '' if value is None else str(value)
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
+
 def _item_to_dict(item) -> dict:
     if isinstance(item, dict):
         return item
@@ -79,19 +85,19 @@ def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_numbe
     pdf.set_xy(text_x, top_y)
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 18)
-    pdf.cell(0, 8, company.get('name', 'Tiendix'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 8, _safe_text(company.get('name', 'Tiendix')), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Helvetica', '', 10)
     if company.get('address'):
         pdf.set_x(text_x)
-        pdf.multi_cell(0, 5, company['address'])
+        pdf.multi_cell(0, 5, _safe_text(company['address']))
     if company.get('website'):
         pdf.set_x(text_x)
-        pdf.cell(0, 5, company['website'], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 5, _safe_text(company['website']), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if company.get('phone'):
         pdf.set_x(text_x)
-        pdf.cell(0, 5, f"Tel: {company['phone']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 5, _safe_text(f"Tel: {company['phone']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     company_block_bottom = max(pdf.get_y(), logo_bottom_y)
     pdf.set_y(company_block_bottom + 15)  # 1.5 cm
@@ -99,16 +105,16 @@ def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_numbe
     # Bloque de documento y fechas
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 16)
-    pdf.cell(0, 8, title, align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 8, _safe_text(title), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Helvetica', '', 10)
     if doc_number is not None:
-        pdf.cell(0, 5, f"{title} N° {doc_number}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 5, f"Fecha de creación: {date.strftime('%d/%m/%Y %I:%M %p')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 5, _safe_text(f"{title} N° {doc_number}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 5, _safe_text(f"Fecha de creación: {date.strftime('%d/%m/%Y %I:%M %p')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if ncf:
-        pdf.cell(0, 5, f"NCF: {ncf}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 5, _safe_text(f"NCF: {ncf}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if valid_until:
-        pdf.cell(0, 5, f"Válido hasta: {valid_until.strftime('%d/%m/%Y')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 5, _safe_text(f"Válido hasta: {valid_until.strftime('%d/%m/%Y')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.ln(15)  # 1.5 cm
 
@@ -116,17 +122,17 @@ def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_numbe
 def _draw_client_block(pdf: FPDF, client: dict):
     pdf.ln(2)
     pdf.set_font('Helvetica', 'B', 11)
-    pdf.cell(0, 6, 'Detalles del cliente', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, _safe_text('Detalles del cliente'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_font('Helvetica', '', 10)
-    pdf.cell(0, 5, f"Nombre: {client.get('name','')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 5, _safe_text(f"Nombre: {client.get('name','')}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('identifier'):
-        pdf.cell(0, 5, f"Cédula/RNC: {client['identifier']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 5, _safe_text(f"Cédula/RNC: {client['identifier']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('address'):
-        pdf.cell(0, 5, f"Dirección: {client['address']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 5, _safe_text(f"Dirección: {client['address']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('phone'):
-        pdf.cell(0, 5, f"Teléfono: {client['phone']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 5, _safe_text(f"Teléfono: {client['phone']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('email'):
-        pdf.cell(0, 5, f"Correo: {client['email']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0, 5, _safe_text(f"Correo: {client['email']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
 
 def _draw_meta_block(pdf: FPDF, seller: str | None, payment_method: str | None, bank: str | None, purchase_order: str | None):
@@ -145,7 +151,7 @@ def _draw_meta_block(pdf: FPDF, seller: str | None, payment_method: str | None, 
         pdf.ln(2)
         pdf.set_font('Helvetica', '', 10)
         for line in details:
-            pdf.cell(0, 5, line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.cell(0, 5, _safe_text(line), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
 
 def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
@@ -157,7 +163,7 @@ def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
     pdf.set_text_color(255, 255, 255)
     pdf.set_font('Helvetica', 'B', 8)
     for h, w in zip(headers, widths):
-        pdf.cell(w, 7, h, border=1, align='C', fill=True, new_x=XPos.RIGHT, new_y=YPos.TOP)
+        pdf.cell(w, 7, _safe_text(h), border=1, align='C', fill=True, new_x=XPos.RIGHT, new_y=YPos.TOP)
     pdf.ln()
 
     pdf.set_text_color(0, 0, 0)
@@ -176,7 +182,7 @@ def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
         ]
         for idx, (text, w) in enumerate(zip(row, widths)):
             align = 'R' if idx in (4, 6, 7) else ('C' if idx == 5 else 'L')
-            pdf.cell(w, 6, text, border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
+            pdf.cell(w, 6, _safe_text(text), border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.ln()
 
     # Añade filas vacías para que el documento no se vea vacío cuando hay pocos productos.
@@ -191,21 +197,21 @@ def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
 def _draw_totals(pdf: FPDF, subtotal: float, itbis: float, total: float, discount: float, note: str | None, footer: str | None):
     pdf.ln(2)
     pdf.set_font('Helvetica', 'B', 10)
-    pdf.cell(0, 6, f"Subtotal: {_fmt_money(subtotal)}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 6, f"Descuento: {_fmt_money(discount)}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 6, f"ITBIS (18%): {_fmt_money(itbis)}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, _safe_text(f"Subtotal: {_fmt_money(subtotal)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, _safe_text(f"Descuento: {_fmt_money(discount)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, _safe_text(f"ITBIS (18%): {_fmt_money(itbis)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(*BLUE)
-    pdf.cell(0, 7, f"Total: {_fmt_money(total)}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 7, _safe_text(f"Total: {_fmt_money(total)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0, 0, 0)
 
     if note:
         pdf.ln(3)
         pdf.set_font('Helvetica', '', 9)
-        pdf.multi_cell(0, 5, f"Nota: {note}")
+        pdf.multi_cell(0, 5, _safe_text(f"Nota: {note}"))
     if footer:
         pdf.ln(2)
         pdf.set_font('Helvetica', '', 8)
-        pdf.multi_cell(0, 4, footer)
+        pdf.multi_cell(0, 4, _safe_text(footer))
 
 
 def generate_pdf(title: str, company: dict, client: dict, items: list,

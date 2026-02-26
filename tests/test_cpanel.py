@@ -162,3 +162,24 @@ def test_admin_can_create_system_announcement(client):
         ann = SystemAnnouncement.query.first()
         assert ann is not None
         assert ann.is_active is True
+
+
+
+def test_cpanel_companies_can_select_company_context(client):
+    with app.app_context():
+        other = CompanyInfo(name='Otra', street='', sector='', province='', phone='', rnc='')
+        db.session.add(other)
+        db.session.commit()
+        other_id = other.id
+
+    login(client, 'admin', '363636')
+    r = client.get(f'/cpaneltx/companies/select/{other_id}', follow_redirects=False)
+    assert r.status_code == 302
+
+    with client.session_transaction() as sess:
+        assert sess.get('company_id') == other_id
+
+    clear_resp = client.get('/cpaneltx/companies/clear', follow_redirects=False)
+    assert clear_resp.status_code == 302
+    with client.session_transaction() as sess:
+        assert sess.get('company_id') is None

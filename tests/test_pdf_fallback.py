@@ -74,3 +74,21 @@ def test_items_table_adds_empty_rows_until_minimum():
 
     # 8 encabezados + 15 filas * 8 columnas = 128 celdas
     assert pdf.cell_calls == 128
+
+
+def test_generate_pdf_bytes_accepts_unicode_text_without_crashing():
+    company = {'name': 'Comp 🚀', 'address': 'Calle Ñ', 'phone': '809-555-0000'}
+    client = {'name': 'Cliente 😀', 'identifier': '001-0000000-1'}
+    items = [
+        {'product_name': 'Producto 💡 especial', 'quantity': 2, 'unit_price': 100.0, 'discount': 0.0}
+    ]
+
+    with app.app_context():
+        payload = weasy_pdf.generate_pdf_bytes(
+            'Cotización ✅', company, client, items,
+            subtotal=200.0, itbis=36.0, total=236.0,
+            note='Nota con emoji 🔧',
+        )
+
+    assert isinstance(payload, (bytes, bytearray))
+    assert payload.startswith(b'%PDF')
