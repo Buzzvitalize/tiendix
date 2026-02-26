@@ -105,7 +105,7 @@ flask db upgrade
 
 5. Reinicia la app desde Setup Python App.
 
-Consulta también `CPANEL_PYTHON_GUIA.txt`, `CPANEL_MYSQL_BASE.sql` y `.env.cpanel.example`.
+Consulta también `CPANEL_PYTHON_GUIA.txt`, `CPANEL_MYSQL_BASE.sql`, `CPANEL_MYSQL_FULL_SCHEMA.sql` y `.env.cpanel.example`.
 
 For company name auto-completion, download the latest `DGII_RNC.TXT` from the DGII and place it under `data/`.
 

@@ -177,9 +177,9 @@ Asegúrate de que ese `.htaccess` esté subido en la raíz pública de la app
 5. Coloca esos datos en `DATABASE_URL`.
 
 Opcional:
-- Puedes importar `CPANEL_MYSQL_BASE.sql` desde phpMyAdmin para dejar la base
-  con configuración inicial de charset/collation.
-- Luego SIEMPRE ejecuta `flask db upgrade` para crear/actualizar tablas.
+- Puedes importar `CPANEL_MYSQL_BASE.sql` para validar charset/collation.
+- Si quieres la base completa lista para phpMyAdmin, importa `CPANEL_MYSQL_FULL_SCHEMA.sql`.
+- Luego ejecuta `flask db upgrade` para asegurar compatibilidad de migraciones futuras.
 
 
 Nota de seguridad importante:
