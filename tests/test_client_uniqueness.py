@@ -85,5 +85,5 @@ def test_edit_duplicate_email(client):
     text = resp.get_data(as_text=True)
     assert 'Ya existe un cliente con ese correo electrónico' in text
     with app.app_context():
-        c2 = Client.query.get(cid)
+        c2 = db.session.get(Client, cid)
         assert c2.email == 'second@ex.com'
