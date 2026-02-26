@@ -387,3 +387,19 @@ def test_account_statement_pdf(client):
     resp = client.get(f'/reportes/estado-cuentas/{cid}?pdf=1')
     assert resp.status_code == 200
     client.get('/logout')
+
+
+
+def test_get_company_info_logo_path_normalized(client):
+    from app import get_company_info
+    with app.app_context():
+        company = CompanyInfo.query.first()
+        company.logo = 'logo.png'
+        db.session.commit()
+    login(client, 'user', 'pass')
+    with client.session_transaction() as sess:
+        if not sess.get('company_id'):
+            sess['company_id'] = 1
+    with app.app_context():
+        info = get_company_info()
+        assert info['logo'].endswith('/static/uploads/logo.png')

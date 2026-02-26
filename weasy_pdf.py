@@ -6,12 +6,22 @@ but renders directly with fpdf2 to avoid native WeasyPrint dependencies.
 from __future__ import annotations
 
 from datetime import datetime
+import os
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
 BLUE = (30, 58, 138)
+
+DOM_TZ = ZoneInfo("America/Santo_Domingo")
+
+
+def _to_dom_time(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(DOM_TZ).replace(tzinfo=None)
 
 
 def _fmt_money(value: float) -> str:
@@ -51,6 +61,13 @@ def _client_to_dict(client) -> dict:
 
 
 def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_number: int | None, ncf: str | None, valid_until: datetime | None):
+    logo = company.get('logo')
+    if logo:
+        logo_path = str(logo)
+        if os.path.exists(logo_path):
+            pdf.image(logo_path, x=10, y=8, w=24)
+            pdf.set_xy(38, 10)
+
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 18)
     pdf.cell(0, 10, company.get('name', 'Tiendix'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -179,7 +196,8 @@ def generate_pdf(title: str, company: dict, client: dict, items: list,
     pdf.set_auto_page_break(auto=True, margin=14)
     pdf.add_page()
 
-    _draw_header(pdf, title, company, date or datetime.now(), doc_number, ncf, valid_until)
+    base_date = _to_dom_time(date or datetime.now(DOM_TZ))
+    _draw_header(pdf, title, company, base_date, doc_number, ncf, valid_until)
     _draw_client_block(pdf, client_dict)
     _draw_meta_block(pdf, seller, payment_method, bank, purchase_order)
     _draw_items_table(pdf, item_dicts)

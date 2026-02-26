@@ -2,22 +2,27 @@ from __future__ import annotations
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 BLUE = (30, 58, 138)
+DOM_TZ = ZoneInfo("America/Santo_Domingo")
 
 def _money(v: float) -> str:
     return f"RD$ {v:,.2f}"
 
 def generate_account_statement_pdf(company: dict, client: dict, rows: list, total: float,
-                                   aging: dict, overdue_pct: float) -> str:
+                                   aging: dict, overdue_pct: float,
+                                   output_path: str | Path | None = None) -> str:
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     # header with logo and company
     logo = company.get('logo')
     if logo:
-        logo_path = Path('static/uploads') / logo
+        logo_path = Path(str(logo))
+        if not logo_path.is_absolute():
+            logo_path = Path('static') / str(logo).lstrip('/')
         if logo_path.exists():
             pdf.image(str(logo_path), 10, 8, 30)
     pdf.set_text_color(*BLUE)
@@ -33,7 +38,7 @@ def generate_account_statement_pdf(company: dict, client: dict, rows: list, tota
     pdf.cell(0, 8, 'Estado de Cuenta de Cliente', align='C', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0,0,0)
     pdf.set_font('Helvetica', '', 10)
-    pdf.cell(0, 5, f"Fecha: {datetime.now().strftime('%d/%m/%Y')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 5, f"Fecha: {datetime.now(DOM_TZ).strftime('%d/%m/%Y')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(4)
     # client info
     pdf.set_font('Helvetica', 'B', 10)
@@ -82,6 +87,7 @@ def generate_account_statement_pdf(company: dict, client: dict, rows: list, tota
     pdf.ln(8)
     pdf.set_font('Helvetica','',8)
     pdf.multi_cell(0,4,'Pagos a cuentas: ______\nLas facturas no pagadas luego de la fecha de vencimiento generan un cargo mensual de un 3% de mora.')
-    output = Path('estado_cuenta.pdf')
+    output = Path(output_path or 'estado_cuenta.pdf')
+    output.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(output))
     return str(output)

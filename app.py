@@ -61,6 +61,9 @@ from werkzeug.security import generate_password_hash
 import os
 import re
 import json
+import secrets
+import string
+from pathlib import Path
 from ai import recommend_products
 from weasy_pdf import generate_pdf
 from account_pdf import generate_account_statement_pdf
@@ -84,6 +87,7 @@ from queue import Queue as ThreadQueue, Empty
 import time
 
 load_dotenv()
+
 # Load RNC data for company name lookup
 RNC_DATA = {}
 DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', 'DGII_RNC.TXT')
@@ -107,6 +111,32 @@ config_map = {
 app.config.from_object(config_map.get(APP_ENV, DevelopmentConfig))
 app.config['APP_ENV'] = APP_ENV
 validate_runtime_config(app.config)
+
+SENSITIVE_PATHS = {
+    'app.py',
+    'auth.py',
+    'config.py',
+    'models.py',
+    'requirements.txt',
+    '.env',
+    '.env.example',
+    'database.sqlite',
+    'passenger_wsgi.py',
+}
+SENSITIVE_EXTENSIONS = (
+    '.py', '.pyc', '.sqlite', '.db', '.env', '.ini', '.pem', '.key', '.log',
+)
+
+
+@app.before_request
+def block_sensitive_paths():
+    requested = request.path.lstrip('/').lower()
+    if not requested:
+        return None
+    if requested in SENSITIVE_PATHS or requested.endswith(SENSITIVE_EXTENSIONS):
+        return ('Not Found', 404)
+    return None
+
 
 if not os.path.exists('logs'):
     os.makedirs('logs')
@@ -134,6 +164,14 @@ EMAIL_METRICS = {
 }
 _email_queue = ThreadQueue()
 
+EMAIL_METRICS = {
+    'queued': 0,
+    'sent': 0,
+    'failed': 0,
+    'retries': 0,
+    'skipped': 0,
+}
+_email_queue = ThreadQueue()
 
 def _deliver_email(to, subject, html, attachments=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
@@ -481,6 +519,18 @@ INVOICE_STATUSES = ('Pendiente', 'Pagada')
 MAX_EXPORT_ROWS = 50000
 
 
+QUOTATION_VALIDITY_OPTIONS = {
+    '15d': 15,
+    '1m': 30,
+    '2m': 60,
+    '3m': 90,
+}
+
+
+def _quotation_validity_days(value: str | None) -> int:
+    return QUOTATION_VALIDITY_OPTIONS.get(value or '1m', 30)
+
+
 def current_company_id():
     return session.get('company_id')
 
@@ -702,22 +752,31 @@ def load_company():
 def inject_company():
     notif_count = 0
     try:
-        if 'user_id' in session and current_company_id():
-            low_stock = (
-                company_query(ProductStock)
-                .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
-                .all()
-            )
-            for ps in low_stock:
-                msg = f"Stock bajo: {ps.product.name}"
-                if not Notification.query.filter_by(company_id=current_company_id(), message=msg).first():
-                    db.session.add(Notification(company_id=current_company_id(), message=msg))
-            if low_stock:
-                db.session.commit()
-            notif_count = Notification.query.filter_by(company_id=current_company_id(), is_read=False).count()
+        cid = current_company_id()
+        if 'user_id' in session and cid:
+            # Avoid expensive inventory scans on every request.
+            # Refresh low-stock notifications at most once every 5 minutes per session.
+            now_ts = int(time.time())
+            last_scan = session.get('low_stock_scan_at', 0)
+            if now_ts - last_scan >= 300:
+                low_stock = (
+                    company_query(ProductStock)
+                    .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
+                    .all()
+                )
+                for ps in low_stock:
+                    msg = f"Stock bajo: {ps.product.name}"
+                    exists = Notification.query.filter_by(company_id=cid, message=msg).first()
+                    if not exists:
+                        db.session.add(Notification(company_id=cid, message=msg))
+                if low_stock:
+                    db.session.commit()
+                session['low_stock_scan_at'] = now_ts
+
+            notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
     except Exception as exc:
         app.logger.exception('Failed to compute notifications: %s', exc)
-    return {'company': getattr(g, 'company', None), 'notification_count': notif_count}
+    return {'company': getattr(g, 'company', None), 'notification_count': notif_count, 'current_dom_time': dom_now().strftime('%d/%m/%Y %I:%M %p')}
 
 
 def get_company_info():
@@ -730,10 +789,51 @@ def get_company_info():
         'rnc': c.rnc,
         'phone': c.phone,
         'website': c.website,
-        'logo': os.path.join(app.static_folder, c.logo) if c.logo else None,
+        'logo': os.path.join(app.static_folder, c.logo if c.logo.startswith('uploads/') else f'uploads/{c.logo}') if c.logo else None,
         'ncf_final': c.ncf_final,
         'ncf_fiscal': c.ncf_fiscal,
     }
+
+
+def _company_slug(name: str | None) -> str:
+    raw = (name or 'empresa').strip().lower()
+    slug = re.sub(r'[^a-z0-9]+', '-', raw).strip('-')
+    return slug or 'empresa'
+
+
+def _company_token(company_id: int) -> str:
+    pdf_root = Path(app.static_folder) / 'pdfs'
+    pdf_root.mkdir(parents=True, exist_ok=True)
+    token_file = pdf_root / '.company_tokens.json'
+    data = {}
+    if token_file.exists():
+        try:
+            data = json.loads(token_file.read_text(encoding='utf-8'))
+        except Exception:
+            data = {}
+    key = str(company_id)
+    token = data.get(key)
+    if not token:
+        alphabet = string.ascii_lowercase + string.digits
+        token = ''.join(secrets.choice(alphabet) for _ in range(6))
+        data[key] = token
+        token_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    return token
+
+
+def _company_pdf_dir(doc_type: str = 'general') -> Path:
+    cid = current_company_id()
+    company = db.session.get(CompanyInfo, cid) if cid else None
+    slug = _company_slug(company.name if company else None)
+    token = _company_token(cid or 0)
+    path = Path(app.static_folder) / 'pdfs' / slug / token / doc_type
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _company_pdf_path(doc_type: str, filename: str) -> str:
+    return str(_company_pdf_dir(doc_type) / filename)
+
 # Routes
 @app.before_request
 def require_login():
@@ -1681,7 +1781,8 @@ def new_quotation():
         payment_method = request.form.get('payment_method')
         bank = request.form.get('bank') if payment_method == 'Transferencia' else None
         date = dom_now()
-        valid_until = date + timedelta(days=30)
+        validity_days = _quotation_validity_days(request.form.get('validity_period'))
+        valid_until = date + timedelta(days=validity_days)
         quotation = Quotation(client_id=client.id, subtotal=subtotal, itbis=itbis, total=total,
                                seller=request.form.get('seller'), payment_method=payment_method,
                                bank=bank, note=request.form.get('note'),
@@ -1705,7 +1806,7 @@ def new_quotation():
     ).all()
     warehouses = company_query(Warehouse).order_by(Warehouse.name).all()
     sellers = company_query(User).options(load_only(User.id, User.first_name, User.last_name)).all()
-    return render_template('cotizacion.html', clients=clients, products=products, warehouses=warehouses, sellers=sellers)
+    return render_template('cotizacion.html', clients=clients, products=products, warehouses=warehouses, sellers=sellers, validity_options=QUOTATION_VALIDITY_OPTIONS)
 
 @app.route('/cotizaciones/editar/<int:quotation_id>', methods=['GET', 'POST'])
 def edit_quotation(quotation_id):
@@ -1743,6 +1844,8 @@ def edit_quotation(quotation_id):
         quotation.payment_method = payment_method
         quotation.bank = bank
         quotation.note = request.form.get('note')
+        validity_days = _quotation_validity_days(request.form.get('validity_period'))
+        quotation.valid_until = (quotation.date or dom_now()) + timedelta(days=validity_days)
         for it in items:
             quotation.items.append(QuotationItem(**it))
         db.session.commit()
@@ -1770,6 +1873,7 @@ def edit_quotation(quotation_id):
         products=products,
         items=items,
         sellers=sellers,
+        validity_options=QUOTATION_VALIDITY_OPTIONS,
     )
 
 
@@ -1911,8 +2015,7 @@ def quotation_pdf(quotation_id):
     quotation = company_get(Quotation, quotation_id)
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+    pdf_path = _company_pdf_path('cotizaciones', filename)
     app.logger.info("Generating quotation PDF %s", quotation_id)
     generate_pdf('Cotización', company, quotation.client, quotation.items,
                  quotation.subtotal, quotation.itbis, quotation.total,
@@ -1935,8 +2038,7 @@ def send_quotation_email(quotation_id):
         return redirect(url_for('list_quotations'))
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+    pdf_path = _company_pdf_path('cotizaciones', filename)
     generate_pdf('Cotización', company, client, quotation.items,
                  quotation.subtotal, quotation.itbis, quotation.total,
                  seller=quotation.seller, payment_method=quotation.payment_method,
@@ -2110,8 +2212,7 @@ def order_pdf(order_id):
     order = company_get(Order, order_id)
     company = get_company_info()
     filename = f'pedido_{order_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+    pdf_path = _company_pdf_path('pedidos', filename)
     app.logger.info("Generating order PDF %s", order_id)
     generate_pdf('Pedido', company, order.client, order.items,
                  order.subtotal, order.itbis, order.total,
@@ -2161,8 +2262,7 @@ def invoice_pdf(invoice_id):
     invoice = company_get(Invoice, invoice_id)
     company = get_company_info()
     filename = f'factura_{invoice_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+    pdf_path = _company_pdf_path('facturas', filename)
     app.logger.info("Generating invoice PDF %s", invoice_id)
     generate_pdf('Factura', company, invoice.client, invoice.items,
                  invoice.subtotal, invoice.itbis, invoice.total,
@@ -2179,7 +2279,13 @@ def invoice_pdf(invoice_id):
 
 @app.route('/pdfs/<path:filename>')
 def serve_pdf(filename):
-    return send_from_directory(os.path.join(app.static_folder, 'pdfs'), filename)
+    if '..' in filename or filename.startswith('/'):
+        return ('Not Found', 404)
+    base = _company_pdf_dir().parent.resolve()
+    file_path = (base / filename).resolve()
+    if not str(file_path).startswith(str(base.resolve())) or not file_path.exists():
+        return ('Not Found', 404)
+    return send_file(str(file_path), as_attachment=True)
 
 def _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria):
     """Return an invoice query filtered by the provided parameters."""
@@ -2579,7 +2685,7 @@ def account_statement_detail(client_id):
     rows = []
     totals = 0
     aging = {'0-30': 0, '31-60': 0, '61-90': 0, '91-120': 0, '121+': 0}
-    now = datetime.utcnow()
+    now = dom_now()
     for inv in invoices:
         balance = _invoice_balance(inv)
         if balance <= 0:
@@ -2625,7 +2731,7 @@ def account_statement_detail(client_id):
             'phone': client.phone,
             'email': client.email,
         }
-        pdf_path = generate_account_statement_pdf(company, client_dict, rows, totals, aging, overdue_pct)
+        pdf_path = generate_account_statement_pdf(company, client_dict, rows, totals, aging, overdue_pct, output_path=_company_pdf_path('estado_cuenta', f'estado_cuenta_{client.id}.pdf'))
         return send_file(pdf_path, as_attachment=True, download_name=f'estado_cuenta_{client.id}.pdf')
     return render_template('estado_cuenta_detalle.html', client=client, rows=rows, total=totals, aging=aging, overdue_pct=overdue_pct)
 
@@ -2680,7 +2786,7 @@ def export_reportes():
     header = [
         f"Empresa: {company.get('name', '')}",
         f"Rango: {(fecha_inicio or 'Todas')} - {(fecha_fin or 'Todas')}",
-        f"Generado: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} por {user}",
+        f"Generado: {dom_now().strftime('%Y-%m-%d %H:%M')} por {user}",
     ]
     current_app.logger.info(
         "export user=%s company=%s formato=%s tipo=%s filtros=%s",
@@ -2867,7 +2973,7 @@ def export_reportes():
             0,
             subtotal,
             note=note,
-            output_path='reportes.pdf'
+            output_path=_company_pdf_path('reportes', 'reportes.pdf')
         )
         log_export(user, formato, tipo, filtros, 'success', file_path=pdf_path)
         return send_file(pdf_path, as_attachment=True, download_name='reportes.pdf')
