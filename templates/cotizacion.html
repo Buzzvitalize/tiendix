@@ -117,14 +117,14 @@
       <span>Total</span>
       <span>Acción</span>
     </div>
-    <datalist id="product-options">
-      {% for p in products %}
-      <option data-id="{{ p.id }}" data-unit="{{ p.unit }}" data-price="{{ p.price }}" value="{{ p.code }} - {{ p.name }}"></option>
-      {% endfor %}
-    </datalist>
     <div id="productos">
       <div class="grid grid-cols-1 sm:grid-cols-7 gap-2 mb-2 product-row">
-        <input class="input product-input" list="product-options" placeholder="Producto">
+        <select class="input product-select">
+          <option value="">Seleccione producto</option>
+          {% for p in products %}
+          <option value="{{ p.id }}" data-unit="{{ p.unit }}" data-price="{{ p.price }}">{{ p.code }} - {{ p.name }}</option>
+          {% endfor %}
+        </select>
         <input type="hidden" name="product_id[]" class="product-id">
         <input class="input unit-field" placeholder="Unidad" readonly>
         <input class="input price-field" placeholder="Precio" readonly>
@@ -245,7 +245,7 @@ window.addEventListener('load', () => {
   });
 
   function bindProduct(row) {
-    const input = row.querySelector('.product-input');
+    const select = row.querySelector('.product-select');
     const idField = row.querySelector('.product-id');
     const unit = row.querySelector('.unit-field');
     const price = row.querySelector('.price-field');
@@ -259,10 +259,10 @@ window.addEventListener('load', () => {
       const d=parseFloat(disc.value)||0;
       total.value=(p*q*(1-d/100)).toFixed(2);
     }
-    input.addEventListener('input', function() {
-      const opt = document.querySelector(`#product-options option[value="${input.value}"]`);
-      if(opt){
-        idField.value = opt.dataset.id;
+    select.addEventListener('change', function() {
+      const opt = select.options[select.selectedIndex];
+      if(opt && opt.value){
+        idField.value = opt.value;
         unit.value = opt.dataset.unit || '';
         price.value = opt.dataset.price ? parseFloat(opt.dataset.price).toFixed(2) : '';
       }else{
@@ -283,6 +283,8 @@ window.addEventListener('load', () => {
   function addProductRow() {
     const row = templateRow.cloneNode(true);
     row.querySelectorAll('input').forEach(i => i.value = '');
+    const select = row.querySelector('.product-select');
+    if (select) select.selectedIndex = 0;
     productContainer.appendChild(row);
     bindProduct(row);
   }

@@ -68,6 +68,45 @@ pytest
 python app.py
 ```
 
+## cPanel (Python Setup + phpMyAdmin/MySQL)
+
+Para producción en cPanel se recomienda usar MySQL/MariaDB (no `sqlite`).
+
+1. Crea base y usuario en **cPanel > MySQL Databases**.
+2. En **Setup Python App > Environment Variables** puedes usar cualquiera de estas opciones.
+
+**Opción A (rápida, recomendada): variables simples**
+```
+APP_ENV=production
+SECRET_KEY=clave_larga_y_segura
+DB_DRIVER=mysql+pymysql
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=USUARIO_tiendix
+DB_USER=USUARIO_dbuser
+DB_PASSWORD=clave_db
+```
+
+**Opción B (URL completa):**
+```
+APP_ENV=production
+SECRET_KEY=clave_larga_y_segura
+DATABASE_URL=mysql+pymysql://USUARIO_dbuser:clave_db@localhost:3306/USUARIO_tiendix?charset=utf8mb4
+```
+
+> La app soporta `mysql://...` y lo corrige automáticamente a `mysql+pymysql://...`.
+
+3. Activa el virtualenv e instala dependencias.
+4. Ejecuta migraciones:
+
+```
+flask db upgrade
+```
+
+5. Reinicia la app desde Setup Python App.
+
+Consulta también `CPANEL_PYTHON_GUIA.txt`, `CPANEL_MYSQL_BASE.sql` y `.env.cpanel.example`.
+
 For company name auto-completion, download the latest `DGII_RNC.TXT` from the DGII and place it under `data/`.
 
 
@@ -147,4 +186,3 @@ Correr pruebas dentro del contenedor:
 ```
 docker compose exec tiendix pytest
 ```
-

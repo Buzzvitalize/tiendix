@@ -11,6 +11,7 @@ from flask import (
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from forms import LoginForm, ResetRequestForm
 from models import User, db
+from sqlalchemy import func
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -56,21 +57,27 @@ def reset_request():
 def login():
     form = LoginForm()
     if form.validate_on_submit():
-        username = getattr(getattr(form, 'username', None), 'data', None) or request.form.get('username')
+        username = (getattr(getattr(form, 'username', None), 'data', None) or request.form.get('username') or '').strip().lower()
         password = getattr(getattr(form, 'password', None), 'data', None) or request.form.get('password')
-        user = User.query.filter_by(username=username).first()
+        user = User.query.filter(func.lower(User.username) == username).first()
         if user and user.check_password(password):
             session['user_id'] = user.id
             session['role'] = user.role
             session['company_id'] = user.company_id
             session['username'] = user.username
             session['full_name'] = f"{user.first_name} {user.last_name}".strip()
+            from app import log_audit
+            log_audit('login_success', 'auth', user.id, details=f'username={user.username}')
             return redirect(url_for('index'))
+        from app import log_audit
+        log_audit('login_failed', 'auth', status='fail', details=f'username={username or ""}')
         flash('Credenciales inválidas', 'login')
     return render_template('login.html', form=form, company=None)
 
 @auth_bp.route('/logout')
 def logout():
+    from app import log_audit
+    log_audit('logout', 'auth')
     session.clear()
     return redirect(url_for('auth.login'))
 
@@ -85,6 +92,9 @@ def reset_password(token):
         password = request.form.get('password')
         if not password:
             flash('Contraseña requerida', 'login')
+            return render_template('reset_password.html', token=token)
+        if len(password) < 6:
+            flash('La contraseña debe tener mínimo 6 caracteres', 'login')
             return render_template('reset_password.html', token=token)
         user.set_password(password)
         db.session.commit()

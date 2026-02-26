@@ -61,36 +61,56 @@ def _client_to_dict(client) -> dict:
 
 
 def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_number: int | None, ncf: str | None, valid_until: datetime | None):
+    left_x = pdf.l_margin
+    top_y = 10
+    logo_box_w = 28
+    text_x = left_x + logo_box_w + 4
+
+    # Logo a la izquierda
     logo = company.get('logo')
+    logo_bottom_y = top_y
     if logo:
         logo_path = str(logo)
         if os.path.exists(logo_path):
-            pdf.image(logo_path, x=10, y=8, w=24)
-            pdf.set_xy(38, 10)
+            pdf.image(logo_path, x=left_x, y=top_y, w=logo_box_w)
+            logo_bottom_y = top_y + logo_box_w
 
+    # Nombre y dirección/web a la derecha del logo
+    pdf.set_xy(text_x, top_y)
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 18)
-    pdf.cell(0, 10, company.get('name', 'Tiendix'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 8, company.get('name', 'Tiendix'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Helvetica', '', 10)
     if company.get('address'):
-        pdf.cell(0, 5, company['address'], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_x(text_x)
+        pdf.multi_cell(0, 5, company['address'])
+    if company.get('website'):
+        pdf.set_x(text_x)
+        pdf.cell(0, 5, company['website'], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if company.get('phone'):
-        pdf.cell(0, 5, company['phone'], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_x(text_x)
+        pdf.cell(0, 5, f"Tel: {company['phone']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-    pdf.ln(3)
+    company_block_bottom = max(pdf.get_y(), logo_bottom_y)
+    pdf.set_y(company_block_bottom + 15)  # 1.5 cm
+
+    # Bloque de documento y fechas
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 16)
     pdf.cell(0, 8, title, align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font('Helvetica', '', 9)
+    pdf.set_font('Helvetica', '', 10)
     if doc_number is not None:
         pdf.cell(0, 5, f"{title} N° {doc_number}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 5, date.strftime('%d/%m/%Y %I:%M %p'), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 5, f"Fecha de creación: {date.strftime('%d/%m/%Y %I:%M %p')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if ncf:
         pdf.cell(0, 5, f"NCF: {ncf}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if valid_until:
         pdf.cell(0, 5, f"Válido hasta: {valid_until.strftime('%d/%m/%Y')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    pdf.ln(15)  # 1.5 cm
 
 
 def _draw_client_block(pdf: FPDF, client: dict):
@@ -128,7 +148,7 @@ def _draw_meta_block(pdf: FPDF, seller: str | None, payment_method: str | None, 
             pdf.cell(0, 5, line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
 
-def _draw_items_table(pdf: FPDF, items: list[dict]):
+def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
     headers = ["Código", "Ref", "Producto", "Unidad", "Precio", "Cant.", "Desc.", "Total"]
     widths = [18, 18, 52, 18, 24, 14, 22, 24]
 
@@ -159,9 +179,16 @@ def _draw_items_table(pdf: FPDF, items: list[dict]):
             pdf.cell(w, 6, text, border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.ln()
 
+    # Añade filas vacías para que el documento no se vea vacío cuando hay pocos productos.
+    empty_rows = max(0, min_rows - len(items))
+    for _ in range(empty_rows):
+        for idx, w in enumerate(widths):
+            align = 'R' if idx in (4, 6, 7) else ('C' if idx == 5 else 'L')
+            pdf.cell(w, 6, '', border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
+        pdf.ln()
 
-def _draw_totals(pdf: FPDF, subtotal: float, itbis: float, total: float, note: str | None, footer: str | None):
-    discount = 0.0
+
+def _draw_totals(pdf: FPDF, subtotal: float, itbis: float, total: float, discount: float, note: str | None, footer: str | None):
     pdf.ln(2)
     pdf.set_font('Helvetica', 'B', 10)
     pdf.cell(0, 6, f"Subtotal: {_fmt_money(subtotal)}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -201,9 +228,39 @@ def generate_pdf(title: str, company: dict, client: dict, items: list,
     _draw_client_block(pdf, client_dict)
     _draw_meta_block(pdf, seller, payment_method, bank, purchase_order)
     _draw_items_table(pdf, item_dicts)
-    _draw_totals(pdf, subtotal, itbis, total, note, footer)
+    total_discount = sum(float(i.get('discount', 0) or 0) for i in item_dicts)
+    _draw_totals(pdf, subtotal, itbis, total, total_discount, note, footer)
 
     output_path = Path(output_path or 'document.pdf')
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(output_path))
     return str(output_path)
+
+
+def generate_pdf_bytes(title: str, company: dict, client: dict, items: list,
+                       subtotal: float, itbis: float, total: float, ncf: str | None = None,
+                       seller: str | None = None, payment_method: str | None = None,
+                       bank: str | None = None, purchase_order: str | None = None,
+                       doc_number: int | None = None, invoice_type: str | None = None,
+                       note: str | None = None, date: datetime | None = None,
+                       valid_until: datetime | None = None, footer: str | None = None) -> bytes:
+    """Render a PDF and return raw bytes (faster for direct downloads/emails)."""
+    item_dicts = [_item_to_dict(i) for i in items]
+    client_dict = _client_to_dict(client)
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.add_page()
+
+    base_date = _to_dom_time(date or datetime.now(DOM_TZ))
+    _draw_header(pdf, title, company, base_date, doc_number, ncf, valid_until)
+    _draw_client_block(pdf, client_dict)
+    _draw_meta_block(pdf, seller, payment_method, bank, purchase_order)
+    _draw_items_table(pdf, item_dicts)
+    total_discount = sum(float(i.get('discount', 0) or 0) for i in item_dicts)
+    _draw_totals(pdf, subtotal, itbis, total, total_discount, note, footer)
+
+    payload = pdf.output()
+    if isinstance(payload, (bytes, bytearray)):
+        return bytes(payload)
+    return str(payload).encode('latin-1')
