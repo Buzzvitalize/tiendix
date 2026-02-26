@@ -103,6 +103,25 @@ if os.path.exists(DATA_PATH):
 
 app = Flask(__name__)
 APP_ENV = os.getenv('APP_ENV', 'development').strip().lower()
+
+
+def _normalized_database_url(url: str | None) -> str | None:
+    """Normalize DB URL so cPanel/MySQL strings work with SQLAlchemy.
+
+    cPanel users often set `mysql://...`; SQLAlchemy expects an explicit driver
+    such as `mysql+pymysql://...`.
+    """
+    if not url:
+        return url
+    if url.startswith('mysql://'):
+        return url.replace('mysql://', 'mysql+pymysql://', 1)
+    return url
+
+
+database_url = _normalized_database_url(os.getenv('DATABASE_URL'))
+if database_url:
+    os.environ['DATABASE_URL'] = database_url
+
 config_map = {
     'development': DevelopmentConfig,
     'testing': TestingConfig,

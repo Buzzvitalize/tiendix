@@ -58,3 +58,8 @@ def test_send_email_retries_and_metrics(monkeypatch):
     assert app_module.EMAIL_METRICS['retries'] == 2
     assert app_module.EMAIL_METRICS['sent'] == 1
     assert app_module.EMAIL_METRICS['failed'] == 0
+
+
+def test_normalized_database_url_for_mysql_scheme():
+    assert app_module._normalized_database_url('mysql://u:p@localhost/db') == 'mysql+pymysql://u:p@localhost/db'
+    assert app_module._normalized_database_url('mysql+pymysql://u:p@localhost/db') == 'mysql+pymysql://u:p@localhost/db'

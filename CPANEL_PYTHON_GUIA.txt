@@ -57,6 +57,12 @@ MAIL_PORT=587
 MAIL_USERNAME=tu_correo
 MAIL_PASSWORD=tu_password
 MAIL_DEFAULT_SENDER=tu_correo
+DATABASE_URL=mysql+pymysql://USUARIO_DB:CLAVE_DB@localhost/USUARIO_tiendix?charset=utf8mb4
+
+IMPORTANTE:
+- Para producción en cPanel se recomienda MySQL/MariaDB (phpMyAdmin), NO sqlite.
+- Si pones `mysql://...` el sistema lo convierte automáticamente a
+  `mysql+pymysql://...`, pero es mejor escribirlo ya correcto.
 
 Recomendación:
 - No uses una SECRET_KEY corta.
@@ -150,3 +156,15 @@ Este proyecto incluye un `.htaccess` para bloquear acceso directo a archivos com
 
 Asegúrate de que ese `.htaccess` esté subido en la raíz pública de la app
 (o en el directorio donde Apache resuelve la URL).
+5.1) Crear base de datos MySQL en cPanel (antes de migrar)
+-----------------------------------------------------------
+1. Ve a cPanel > **MySQL Databases**.
+2. Crea una base, por ejemplo: `USUARIO_tiendix`.
+3. Crea un usuario MySQL y asígnale contraseña segura.
+4. Asigna el usuario a la base con permisos **ALL PRIVILEGES**.
+5. Coloca esos datos en `DATABASE_URL`.
+
+Opcional:
+- Puedes importar `CPANEL_MYSQL_BASE.sql` desde phpMyAdmin para dejar la base
+  con configuración inicial de charset/collation.
+- Luego SIEMPRE ejecuta `flask db upgrade` para crear/actualizar tablas.
