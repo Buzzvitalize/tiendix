@@ -14,6 +14,8 @@ def client(tmp_path):
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
     with app.app_context():
         db.create_all()
+        User.query.delete()
+        db.session.commit()
         u = User(username='admin', first_name='Ad', last_name='Min', role='admin')
         u.set_password('363636')
         db.session.add(u)
@@ -62,3 +64,20 @@ def test_login_writes_audit_success_and_failure(client):
         assert failed.status == 'fail'
         assert ok is not None
         assert ok.status == 'ok'
+
+
+def test_login_accepts_uppercase_username(client):
+    resp = client.post('/login', data={'username': 'ADMIN', 'password': '363636'})
+    assert resp.status_code == 302
+
+
+def test_reset_password_requires_minimum_6(client):
+    with app.app_context():
+        user = User.query.filter_by(username='admin').first()
+        user.email = 'admin@example.com'
+        db.session.commit()
+        from auth import generate_reset_token
+        token = generate_reset_token(user)
+
+    resp = client.post(f'/reset/{token}', data={'password': '12345'}, follow_redirects=True)
+    assert b'minimo 6' in resp.data.lower() or b'm\xc3\xadnimo 6' in resp.data.lower()

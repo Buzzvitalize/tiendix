@@ -499,6 +499,13 @@ def _migrate_legacy_schema():
             )"""
         )
 
+    if inspector.has_table('user'):
+        # Normaliza usuarios antiguos a minúsculas para evitar conflictos por mayúsculas.
+        db.session.execute(db.text("UPDATE user SET username = lower(username) WHERE username <> lower(username)"))
+
+    if inspector.has_table('account_request'):
+        db.session.execute(db.text("UPDATE account_request SET username = lower(username) WHERE username <> lower(username)"))
+
     for stmt in statements:
         db.session.execute(db.text(stmt))
     if statements:
@@ -907,8 +914,21 @@ def request_account():
                 'request',
             )
             return redirect(url_for('request_account'))
-        if request.form.get('password') != request.form.get('confirm_password'):
+        password = (request.form.get('password') or '')
+        if len(password) < 6:
+            flash('La contraseña debe tener mínimo 6 caracteres', 'request')
+            return redirect(url_for('request_account'))
+        if password != request.form.get('confirm_password'):
             flash('Las contraseñas no coinciden', 'request')
+            return redirect(url_for('request_account'))
+        username = (request.form.get('username') or '').strip().lower()
+        if not username:
+            flash('Debe ingresar un usuario válido', 'request')
+            return redirect(url_for('request_account'))
+        existing_user = User.query.filter(func.lower(User.username) == username).first()
+        pending_user = AccountRequest.query.filter(func.lower(AccountRequest.username) == username).first()
+        if existing_user or pending_user:
+            flash('Ese nombre de usuario ya existe, use otro.', 'request')
             return redirect(url_for('request_account'))
         account_type = request.form['account_type']
         identifier = request.form.get('identifier')
@@ -925,8 +945,8 @@ def request_account():
             email=request.form['email'],
             address=request.form.get('address'),
             website=request.form.get('website'),
-            username=request.form['username'],
-            password=generate_password_hash(request.form['password']),
+            username=username,
+            password=generate_password_hash(password),
             accepted_terms=True,
             accepted_terms_at=dom_now(),
             accepted_terms_ip=request.remote_addr,
@@ -984,7 +1004,10 @@ def clear_company():
 def approve_request(req_id):
     req = AccountRequest.query.get_or_404(req_id)
     role = request.form.get('role', 'company')
-    username = req.username
+    username = (req.username or '').lower()
+    if User.query.filter(func.lower(User.username) == username).first():
+        flash('No se puede aprobar: el usuario ya existe (mayúsculas/minúsculas).')
+        return redirect(url_for('admin_requests'))
     password = req.password
     email = req.email
     company = CompanyInfo(
@@ -1132,6 +1155,9 @@ def cpanel_user_update(user_id):
     if email:
         user.email = email
     if password:
+        if len(password) < 6:
+            flash('La contraseña debe tener mínimo 6 caracteres')
+            return redirect(url_for('cpanel_users'))
         user.set_password(password)
     db.session.commit()
     log_audit('cpanel_user_update', 'user', user_id, details=f'email={email or ""};password_changed={bool(password)}')
@@ -2144,14 +2170,25 @@ def settings_add_user():
             if count >= 2:
                 flash('Los managers solo pueden crear 2 usuarios')
                 return redirect(url_for('settings_add_user'))
+        username = (request.form.get('username') or '').strip().lower()
+        password = request.form.get('password') or ''
+        if not username:
+            flash('Debe ingresar un usuario válido')
+            return redirect(url_for('settings_add_user'))
+        if len(password) < 6:
+            flash('La contraseña debe tener mínimo 6 caracteres')
+            return redirect(url_for('settings_add_user'))
+        if User.query.filter(func.lower(User.username) == username).first():
+            flash('Ese usuario ya existe')
+            return redirect(url_for('settings_add_user'))
         user = User(
-            username=request.form['username'],
+            username=username,
             first_name=request.form['first_name'],
             last_name=request.form['last_name'],
             role='company',
             company_id=company.id,
         )
-        user.set_password(request.form['password'])
+        user.set_password(password)
         db.session.add(user)
         db.session.commit()
         flash('Usuario creado')
@@ -2174,7 +2211,15 @@ def settings_manage_users():
             return redirect(url_for('settings_manage_users'))
         user.first_name = request.form.get('first_name', user.first_name)
         user.last_name = request.form.get('last_name', user.last_name)
-        user.username = request.form.get('username', user.username)
+        new_username = (request.form.get('username', user.username) or '').strip().lower()
+        if not new_username:
+            flash('Usuario inválido')
+            return redirect(url_for('settings_manage_users'))
+        conflict = User.query.filter(func.lower(User.username) == new_username, User.id != user.id).first()
+        if conflict:
+            flash('Ese usuario ya existe')
+            return redirect(url_for('settings_manage_users'))
+        user.username = new_username
         new_role = request.form.get('role', user.role)
         if new_role in ('company', 'manager'):
             user.role = new_role
