@@ -44,6 +44,7 @@ from models import (
     ExportLog,
     NcfLog,
     Notification,
+    ErrorReport,
     AuditLog,
     dom_now,
 )
@@ -470,6 +471,31 @@ def _migrate_legacy_schema():
                 details TEXT,
                 ip VARCHAR(45),
                 user_agent VARCHAR(255)
+            )"""
+        )
+
+    if not inspector.has_table('error_report'):
+        statements.append(
+            """CREATE TABLE error_report (
+                id INTEGER PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                user_id INTEGER REFERENCES user(id),
+                username VARCHAR(80),
+                company_id INTEGER,
+                title VARCHAR(180) NOT NULL,
+                module VARCHAR(80) NOT NULL,
+                severity VARCHAR(20) NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                page_url VARCHAR(255),
+                happened_at DATETIME,
+                expected_behavior TEXT,
+                actual_behavior TEXT NOT NULL,
+                steps_to_reproduce TEXT NOT NULL,
+                contact_email VARCHAR(120),
+                ip VARCHAR(45),
+                user_agent VARCHAR(255),
+                admin_notes TEXT
             )"""
         )
 
@@ -1006,6 +1032,76 @@ def reject_request(req_id):
     return redirect(url_for('admin_requests'))
 
 
+
+
+@app.route('/reportar-error', methods=['GET', 'POST'])
+def report_error():
+    if 'user_id' not in session:
+        flash('Debe iniciar sesión para reportar un error')
+        return redirect(url_for('auth.login'))
+
+    modules = [
+        'Login / Acceso',
+        'Cotizaciones',
+        'Pedidos',
+        'Facturas',
+        'Inventario',
+        'Clientes',
+        'Reportes',
+        'PDF / Descargas',
+        'Configuración',
+        'Otro',
+    ]
+    severities = [('baja', 'Baja'), ('media', 'Media'), ('alta', 'Alta'), ('critica', 'Crítica')]
+
+    if request.method == 'POST':
+        title = (request.form.get('title') or '').strip()
+        module = request.form.get('module') or 'Otro'
+        severity = request.form.get('severity') or 'media'
+        page_url = (request.form.get('page_url') or '').strip()
+        expected_behavior = (request.form.get('expected_behavior') or '').strip()
+        actual_behavior = (request.form.get('actual_behavior') or '').strip()
+        steps_to_reproduce = (request.form.get('steps_to_reproduce') or '').strip()
+        contact_email = (request.form.get('contact_email') or '').strip()
+        happened_at_raw = (request.form.get('happened_at') or '').strip()
+
+        if not title or not actual_behavior or not steps_to_reproduce:
+            flash('Complete título, qué pasó y pasos para reproducir el error.')
+            return render_template('report_error.html', modules=modules, severities=severities)
+
+        happened_at = None
+        if happened_at_raw:
+            try:
+                happened_at = datetime.fromisoformat(happened_at_raw)
+            except ValueError:
+                flash('La fecha/hora del incidente no es válida.')
+                return render_template('report_error.html', modules=modules, severities=severities)
+
+        report = ErrorReport(
+            user_id=session.get('user_id'),
+            username=session.get('username') or session.get('full_name'),
+            company_id=current_company_id(),
+            title=title,
+            module=module,
+            severity=severity,
+            status='abierto',
+            page_url=page_url[:255] if page_url else None,
+            happened_at=happened_at,
+            expected_behavior=expected_behavior,
+            actual_behavior=actual_behavior,
+            steps_to_reproduce=steps_to_reproduce,
+            contact_email=contact_email[:120] if contact_email else None,
+            ip=(request.headers.get('X-Forwarded-For', request.remote_addr) or '')[:45],
+            user_agent=(request.headers.get('User-Agent') or '')[:255],
+        )
+        db.session.add(report)
+        db.session.commit()
+        log_audit('error_report_create', 'error_report', report.id, details=f'severity={severity};module={module}')
+        flash('Reporte enviado. Responderemos en un plazo de hasta 72 horas laborables (puede ser antes).')
+        return redirect(url_for('report_error'))
+
+    return render_template('report_error.html', modules=modules, severities=severities)
+
 # --- CPanel ---
 
 
@@ -1126,6 +1222,43 @@ def cpanel_invoice_delete(iid):
     return redirect(url_for('cpanel_invoices'))
 
 
+
+
+
+@app.route('/cpaneltx/reportes-error')
+@admin_only
+def cpanel_error_reports():
+    status = request.args.get('status', '')
+    severity = request.args.get('severity', '')
+    q = request.args.get('q', '')
+    page = request.args.get('page', 1, type=int)
+
+    query = ErrorReport.query
+    if status:
+        query = query.filter(ErrorReport.status == status)
+    if severity:
+        query = query.filter(ErrorReport.severity == severity)
+    if q:
+        query = query.filter(or_(ErrorReport.title.ilike(f'%{q}%'), ErrorReport.username.ilike(f'%{q}%'), ErrorReport.ip.ilike(f'%{q}%')))
+
+    reports = query.order_by(ErrorReport.created_at.desc()).paginate(page=page, per_page=20, error_out=False)
+    return render_template('cpanel_error_reports.html', reports=reports, status=status, severity=severity, q=q)
+
+
+@app.post('/cpaneltx/reportes-error/<int:report_id>/estado')
+@admin_only
+def cpanel_error_report_status(report_id):
+    report = ErrorReport.query.get_or_404(report_id)
+    status = request.form.get('status')
+    if status in ('abierto', 'en_proceso', 'resuelto', 'cerrado'):
+        report.status = status
+        report.admin_notes = (request.form.get('admin_notes') or '').strip()
+        db.session.commit()
+        log_audit('error_report_status', 'error_report', report.id, details=f'status={status}')
+        flash('Estado del reporte actualizado')
+    else:
+        flash('Estado inválido')
+    return redirect(url_for('cpanel_error_reports'))
 
 @app.route('/cpaneltx/auditoria')
 @admin_only

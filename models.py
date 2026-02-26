@@ -298,6 +298,27 @@ class Notification(db.Model):
     created_at = db.Column(db.DateTime, default=dom_now)
 
 
+class ErrorReport(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    username = db.Column(db.String(80))
+    company_id = db.Column(db.Integer)
+    title = db.Column(db.String(180), nullable=False)
+    module = db.Column(db.String(80), nullable=False)
+    severity = db.Column(db.String(20), nullable=False, default='media')
+    status = db.Column(db.String(20), nullable=False, default='abierto')
+    page_url = db.Column(db.String(255))
+    happened_at = db.Column(db.DateTime)
+    expected_behavior = db.Column(db.Text)
+    actual_behavior = db.Column(db.Text, nullable=False)
+    steps_to_reproduce = db.Column(db.Text, nullable=False)
+    contact_email = db.Column(db.String(120))
+    ip = db.Column(db.String(45))
+    user_agent = db.Column(db.String(255))
+    admin_notes = db.Column(db.Text)
+
 class AuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
