@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="p-4 space-y-4">
+  <h1 class="text-2xl font-semibold">Avisos generales</h1>
+
+  <form method="post" class="bg-white p-4 rounded shadow space-y-3 max-w-3xl">
+    <div>
+      <label class="block text-sm font-medium mb-1">Título</label>
+      <input name="title" class="w-full border rounded px-3 py-2" placeholder="Ej.: Mantenimiento programado" required>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Mensaje</label>
+      <textarea name="message" class="w-full border rounded px-3 py-2" rows="4" placeholder="El servidor se actualizará..." required></textarea>
+    </div>
+    <div class="grid md:grid-cols-2 gap-3">
+      <div>
+        <label class="block text-sm font-medium mb-1">Horario programado</label>
+        <input type="datetime-local" name="scheduled_for" class="w-full border rounded px-3 py-2">
+      </div>
+      <label class="flex items-center gap-2 mt-6">
+        <input type="checkbox" name="is_active" checked>
+        <span class="text-sm">Publicar aviso de inmediato</span>
+      </label>
+    </div>
+    <button class="bg-gray-900 hover:bg-black text-white rounded px-4 py-2">Crear aviso</button>
+  </form>
+
+  <div class="space-y-3">
+    {% for ann in announcements %}
+    <div class="bg-white p-4 rounded shadow">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h3 class="font-semibold">{{ ann.title }}</h3>
+          <p class="text-sm text-gray-700 mt-1">{{ ann.message }}</p>
+          {% if ann.scheduled_for %}
+          <p class="text-xs text-gray-500 mt-1">Horario: {{ ann.scheduled_for.strftime('%d/%m/%Y %I:%M %p') }}</p>
+          {% endif %}
+        </div>
+        <span class="text-xs px-2 py-1 rounded {{ 'bg-green-100 text-green-700' if ann.is_active else 'bg-gray-100 text-gray-600' }}">{{ 'Activo' if ann.is_active else 'Inactivo' }}</span>
+      </div>
+      <form method="post" action="{{ url_for('cpanel_announcement_status', ann_id=ann.id) }}" class="mt-3 flex items-center gap-2">
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="is_active" {% if ann.is_active %}checked{% endif %}>
+          Mostrar este aviso
+        </label>
+        <button class="bg-blue-600 hover:bg-blue-700 text-white text-sm rounded px-3 py-1">Guardar</button>
+      </form>
+    </div>
+    {% else %}
+    <div class="bg-white p-4 rounded shadow text-gray-600">No hay avisos creados.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

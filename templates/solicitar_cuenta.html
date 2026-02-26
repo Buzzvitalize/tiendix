@@ -45,18 +45,51 @@
           </label>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <input name="first_name" placeholder="Nombre" class="input" required>
-          <input name="last_name" placeholder="Apellido" class="input" required>
+          <div>
+            <label for="first-name" class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+            <input id="first-name" name="first_name" placeholder="Nombre" class="input" required>
+          </div>
+          <div>
+            <label for="last-name" class="block text-sm font-medium text-gray-700 mb-1">Apellido</label>
+            <input id="last-name" name="last_name" placeholder="Apellido" class="input" required>
+          </div>
         </div>
-        <input name="phone" placeholder="Teléfono" class="input phone-mask" required>
-        <input id="company-name" name="company" placeholder="Nombre de la empresa o marca" class="input" required>
-        <input id="identifier" name="identifier" placeholder="Cédula" class="input" required>
-        <input name="address" placeholder="Dirección de la empresa" class="input">
-        <input name="website" placeholder="Página web" class="input">
-        <input name="username" placeholder="Nombre de usuario" class="input" required>
-        <input type="email" name="email" placeholder="Correo" class="input" required>
-        <input type="password" name="password" placeholder="Contraseña" class="input" required>
-        <input type="password" name="confirm_password" placeholder="Confirmar contraseña" class="input" required>
+        <div>
+          <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+          <input id="phone" name="phone" placeholder="Teléfono" class="input phone-mask" required>
+        </div>
+        <div>
+          <label for="company-name" class="block text-sm font-medium text-gray-700 mb-1">Nombre de la empresa o marca</label>
+          <input id="company-name" name="company" placeholder="Nombre de la empresa o marca" class="input" required>
+        </div>
+        <div>
+          <label for="identifier" class="block text-sm font-medium text-gray-700 mb-1">Cédula / RNC</label>
+          <input id="identifier" name="identifier" placeholder="Cédula" class="input" required>
+        </div>
+        <div>
+          <label for="address" class="block text-sm font-medium text-gray-700 mb-1">Dirección de la empresa</label>
+          <input id="address" name="address" placeholder="Dirección de la empresa" class="input">
+        </div>
+        <div>
+          <label for="website" class="block text-sm font-medium text-gray-700 mb-1">Página web</label>
+          <input id="website" name="website" placeholder="Página web" class="input">
+        </div>
+        <div>
+          <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Nombre de usuario</label>
+          <input id="username" name="username" placeholder="Nombre de usuario" class="input" required>
+        </div>
+        <div>
+          <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Correo</label>
+          <input id="email" type="email" name="email" placeholder="Correo" class="input" required>
+        </div>
+        <div>
+          <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
+          <input id="password" type="password" name="password" placeholder="Contraseña" class="input" required>
+        </div>
+        <div>
+          <label for="confirm-password" class="block text-sm font-medium text-gray-700 mb-1">Confirmar contraseña</label>
+          <input id="confirm-password" type="password" name="confirm_password" placeholder="Confirmar contraseña" class="input" required>
+        </div>
         <label class="flex items-center space-x-2 text-sm">
           {{ form.accepted_terms(class_='form-checkbox', required=True) }}
           <span>He leído y acepto los <a href="{{ url_for('terminos') }}" target="_blank" class="text-blue-600 underline">Términos y Condiciones</a></span>
