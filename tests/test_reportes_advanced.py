@@ -55,7 +55,7 @@ def test_export_async_job():
         # wait for background thread
         time.sleep(1)
         with app.app_context():
-            log = ExportLog.query.get(job_id)
+            log = db.session.get(ExportLog, job_id)
             assert log.status in ('queued','success')
 
 
@@ -69,7 +69,7 @@ def test_export_async_xlsx_job():
         job_id = resp.get_json()['job']
         time.sleep(1)
         with app.app_context():
-            log = ExportLog.query.get(job_id)
+            log = db.session.get(ExportLog, job_id)
             assert log.status in ('queued','success')
 
 

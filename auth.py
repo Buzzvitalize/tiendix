@@ -30,7 +30,7 @@ def verify_reset_token(token, max_age=3600):
         data = s.loads(token, max_age=max_age)
     except (BadSignature, SignatureExpired):
         return None
-    user = User.query.get(data.get('user_id'))
+    user = db.session.get(User, data.get('user_id'))
     if not user or user.password != data.get('pw'):
         return None
     return user
@@ -65,12 +65,18 @@ def login():
             session['company_id'] = user.company_id
             session['username'] = user.username
             session['full_name'] = f"{user.first_name} {user.last_name}".strip()
+            from app import log_audit
+            log_audit('login_success', 'auth', user.id, details=f'username={user.username}')
             return redirect(url_for('index'))
+        from app import log_audit
+        log_audit('login_failed', 'auth', status='fail', details=f'username={username or ""}')
         flash('Credenciales inválidas', 'login')
     return render_template('login.html', form=form, company=None)
 
 @auth_bp.route('/logout')
 def logout():
+    from app import log_audit
+    log_audit('logout', 'auth')
     session.clear()
     return redirect(url_for('auth.login'))
 

@@ -296,3 +296,19 @@ class Notification(db.Model):
     message = db.Column(db.String(200), nullable=False)
     is_read = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=dom_now)
+
+
+class AuditLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    username = db.Column(db.String(80))
+    role = db.Column(db.String(20))
+    company_id = db.Column(db.Integer)
+    action = db.Column(db.String(80), nullable=False)
+    entity = db.Column(db.String(80), nullable=False)
+    entity_id = db.Column(db.String(80))
+    status = db.Column(db.String(20), default='ok')
+    details = db.Column(db.Text)
+    ip = db.Column(db.String(45))
+    user_agent = db.Column(db.String(255))

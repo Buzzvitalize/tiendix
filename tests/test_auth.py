@@ -4,7 +4,7 @@ import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db
-from models import User
+from models import User, AuditLog
 
 
 @pytest.fixture
@@ -29,3 +29,36 @@ def client(tmp_path):
 def test_login(client):
     resp = client.post('/login', data={'username': 'admin', 'password': '363636'})
     assert resp.status_code == 302
+
+
+
+def test_password_is_hashed(client):
+    with app.app_context():
+        user = User.query.filter_by(username='admin').first()
+        assert user.password != '363636'
+        assert ':' in user.password
+
+
+def test_sidebar_hides_contabilidad_menu(client):
+    client.post('/login', data={'username': 'admin', 'password': '363636'})
+    resp = client.get('/', follow_redirects=True)
+    assert b'Contabilidad' not in resp.data
+
+
+
+def test_dom_time_visible_after_login(client):
+    client.post('/login', data={'username': 'admin', 'password': '363636'})
+    resp = client.get('/', follow_redirects=True)
+    assert b'Hora RD:' in resp.data
+
+
+def test_login_writes_audit_success_and_failure(client):
+    client.post('/login', data={'username': 'admin', 'password': 'bad'})
+    client.post('/login', data={'username': 'admin', 'password': '363636'})
+    with app.app_context():
+        failed = AuditLog.query.filter_by(action='login_failed').first()
+        ok = AuditLog.query.filter_by(action='login_success').first()
+        assert failed is not None
+        assert failed.status == 'fail'
+        assert ok is not None
+        assert ok.status == 'ok'
