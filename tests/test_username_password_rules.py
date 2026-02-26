@@ -63,3 +63,31 @@ def test_request_account_rejects_short_password(client):
 def test_request_account_rejects_case_insensitive_duplicate_username(client):
     resp = client.post('/solicitar-cuenta', data=_base_payload(username='ExIsTiNg'), follow_redirects=True)
     assert b'ya existe' in resp.data.lower()
+
+
+def test_first_account_becomes_admin_owner(tmp_path):
+    db_path = tmp_path / 'owner.sqlite'
+    app.config.from_object('config.TestingConfig')
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+
+    with app.app_context():
+        db.drop_all()
+        db.create_all()
+
+    with app.test_client() as client:
+        resp = client.post('/solicitar-cuenta', data=_base_payload(username='DueNo', email='dueno@example.com'), follow_redirects=True)
+        assert b'administrador' in resp.data.lower()
+
+    with app.app_context():
+        owner = User.query.filter_by(username='dueno').first()
+        assert owner is not None
+        assert owner.role == 'admin'
+        assert owner.company_id is not None
+        assert AccountRequest.query.count() == 0
+        CompanyInfo.query.delete()
+        User.query.delete()
+        db.session.commit()
+        db.drop_all()
+
+    if db_path.exists():
+        db_path.unlink()

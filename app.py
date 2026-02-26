@@ -612,17 +612,6 @@ def run_auto_migrations():
         _migrate_legacy_schema()
 
 
-def ensure_admin():  # pragma: no cover - optional helper for deployments
-    with app.app_context():
-        run_auto_migrations()
-        inspector = inspect(db.engine)
-        if inspector.has_table('user') and not User.query.filter_by(username='admin').first():
-            admin = User(username='admin', role='admin', first_name='Admin', last_name='')
-            admin.set_password(os.environ.get('ADMIN_PASSWORD', '363636'))
-            db.session.add(admin)
-            db.session.commit()
-        db.session.remove()
-
 
 # Run migrations when the module is imported so that new fields are available
 # even if ``flask db upgrade`` wasn't executed manually.
@@ -1033,6 +1022,34 @@ def request_account():
         if not identifier:
             flash('Debe ingresar RNC o Cédula', 'request')
             return redirect(url_for('request_account'))
+        if User.query.count() == 0:
+            company = CompanyInfo(
+                name=request.form['company'],
+                street=request.form.get('address') or '',
+                sector='',
+                province='',
+                phone=request.form['phone'],
+                rnc=identifier,
+                website=request.form.get('website'),
+                logo='',
+            )
+            db.session.add(company)
+            db.session.flush()
+            owner = User(
+                username=username,
+                first_name=request.form['first_name'],
+                last_name=request.form['last_name'],
+                role='admin',
+                company_id=company.id,
+                email=request.form['email'],
+            )
+            owner.password = generate_password_hash(password)
+            db.session.add(owner)
+            db.session.commit()
+            log_audit('owner_bootstrap', 'user', owner.id, details=f'company={company.id};username={username}')
+            flash('Cuenta principal creada: ahora eres Administrador (dueño).', 'login')
+            return redirect(url_for('auth.login'))
+
         req = AccountRequest(
             account_type=account_type,
             first_name=request.form['first_name'],
@@ -3449,8 +3466,6 @@ def api_recommendations():
     return jsonify({'products': recommend_products(current_company_id())})
 
 if __name__ == '__main__':
-    with app.app_context():
-        ensure_admin()
     debug = os.environ.get('FLASK_DEBUG', '').strip().lower() in {'1', 'true', 'yes', 'on'}
     host = os.environ.get('HOST', '127.0.0.1')
     port = int(os.environ.get('PORT', 5000))
