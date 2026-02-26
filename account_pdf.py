@@ -12,7 +12,8 @@ def _money(v: float) -> str:
     return f"RD$ {v:,.2f}"
 
 def generate_account_statement_pdf(company: dict, client: dict, rows: list, total: float,
-                                   aging: dict, overdue_pct: float) -> str:
+                                   aging: dict, overdue_pct: float,
+                                   output_path: str | Path | None = None) -> str:
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
@@ -86,6 +87,7 @@ def generate_account_statement_pdf(company: dict, client: dict, rows: list, tota
     pdf.ln(8)
     pdf.set_font('Helvetica','',8)
     pdf.multi_cell(0,4,'Pagos a cuentas: ______\nLas facturas no pagadas luego de la fecha de vencimiento generan un cargo mensual de un 3% de mora.')
-    output = Path('estado_cuenta.pdf')
+    output = Path(output_path or 'estado_cuenta.pdf')
+    output.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(output))
     return str(output)
