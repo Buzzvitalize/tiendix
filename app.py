@@ -57,6 +57,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     Workbook = None
 from datetime import datetime, timedelta
+from pathlib import Path
 from sqlalchemy import func, inspect, or_
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import load_only, joinedload
