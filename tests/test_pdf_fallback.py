@@ -70,7 +70,7 @@ def test_items_table_adds_empty_rows_until_minimum():
     items = [
         {'code': '01', 'reference': 'A1', 'product_name': 'Prod', 'unit': 'Unidad', 'unit_price': 100.0, 'quantity': 1, 'discount': 0.0}
     ]
-    weasy_pdf._draw_items_table(pdf, items, min_rows=8)
+    weasy_pdf._draw_items_table(pdf, items, min_rows=15)
 
-    # 8 encabezados + 8 filas * 8 columnas = 72 celdas
-    assert pdf.cell_calls == 72
+    # 8 encabezados + 15 filas * 8 columnas = 128 celdas
+    assert pdf.cell_calls == 128

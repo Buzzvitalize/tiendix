@@ -148,7 +148,7 @@ def _draw_meta_block(pdf: FPDF, seller: str | None, payment_method: str | None, 
             pdf.cell(0, 5, line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
 
-def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 8):
+def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
     headers = ["Código", "Ref", "Producto", "Unidad", "Precio", "Cant.", "Desc.", "Total"]
     widths = [18, 18, 52, 18, 24, 14, 22, 24]
 
