@@ -64,7 +64,7 @@ import os
 import re
 import json
 from ai import recommend_products
-from weasy_pdf import generate_pdf
+from weasy_pdf import generate_pdf, generate_pdf_bytes
 from account_pdf import generate_account_statement_pdf
 from functools import wraps
 from auth import auth_bp, generate_reset_token
@@ -2238,19 +2238,16 @@ def quotation_pdf(quotation_id):
     quotation = company_get(Quotation, quotation_id)
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
     app.logger.info("Generating quotation PDF %s", quotation_id)
-    generate_pdf('Cotización', company, quotation.client, quotation.items,
-                 quotation.subtotal, quotation.itbis, quotation.total,
-                 seller=quotation.seller, payment_method=quotation.payment_method,
-                 bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
-                 output_path=pdf_path,
-                 date=quotation.date, valid_until=quotation.valid_until,
-                 footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
-                         "Los precios están sujetos a cambios sin previo aviso. "
-                         "El ITBIS ha sido calculado conforme a la ley vigente."))
-    return send_file(pdf_path, download_name=filename, as_attachment=True)
+    pdf_data = generate_pdf_bytes('Cotización', company, quotation.client, quotation.items,
+                                  quotation.subtotal, quotation.itbis, quotation.total,
+                                  seller=quotation.seller, payment_method=quotation.payment_method,
+                                  bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
+                                  date=quotation.date, valid_until=quotation.valid_until,
+                                  footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
+                                          "Los precios están sujetos a cambios sin previo aviso. "
+                                          "El ITBIS ha sido calculado conforme a la ley vigente."))
+    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -2262,19 +2259,14 @@ def send_quotation_email(quotation_id):
         return redirect(url_for('list_quotations'))
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
-    generate_pdf('Cotización', company, client, quotation.items,
-                 quotation.subtotal, quotation.itbis, quotation.total,
-                 seller=quotation.seller, payment_method=quotation.payment_method,
-                 bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
-                 output_path=pdf_path,
-                 date=quotation.date, valid_until=quotation.valid_until,
-                 footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
-                         "Los precios están sujetos a cambios sin previo aviso. "
-                         "El ITBIS ha sido calculado conforme a la ley vigente."))
-    with open(pdf_path, 'rb') as f:
-        pdf_data = f.read()
+    pdf_data = generate_pdf_bytes('Cotización', company, client, quotation.items,
+                                  quotation.subtotal, quotation.itbis, quotation.total,
+                                  seller=quotation.seller, payment_method=quotation.payment_method,
+                                  bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
+                                  date=quotation.date, valid_until=quotation.valid_until,
+                                  footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
+                                          "Los precios están sujetos a cambios sin previo aviso. "
+                                          "El ITBIS ha sido calculado conforme a la ley vigente."))
     html = render_template('emails/quotation.html', client=client, company=company, quotation=quotation)
     send_email(client.email, 'Cotización', html, attachments=[(filename, pdf_data)])
     flash(f'Cotización enviada con éxito a {client.email}')
@@ -2438,18 +2430,15 @@ def order_pdf(order_id):
     order = company_get(Order, order_id)
     company = get_company_info()
     filename = f'pedido_{order_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
     app.logger.info("Generating order PDF %s", order_id)
-    generate_pdf('Pedido', company, order.client, order.items,
-                 order.subtotal, order.itbis, order.total,
-                 seller=order.seller, payment_method=order.payment_method,
-                 bank=order.bank, doc_number=order.id, note=order.note,
-                 output_path=pdf_path,
-                date=order.date,
-                footer=("Este pedido será procesado tras la confirmación de pago. "
-                        "Tiempo estimado de entrega: 3 a 5 días hábiles."))
-    return send_file(pdf_path, download_name=filename, as_attachment=True)
+    pdf_data = generate_pdf_bytes('Pedido', company, order.client, order.items,
+                                  order.subtotal, order.itbis, order.total,
+                                  seller=order.seller, payment_method=order.payment_method,
+                                  bank=order.bank, doc_number=order.id, note=order.note,
+                                  date=order.date,
+                                  footer=("Este pedido será procesado tras la confirmación de pago. "
+                                          "Tiempo estimado de entrega: 3 a 5 días hábiles."))
+    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
 
 # Invoices
 @app.route('/facturas')
@@ -2490,21 +2479,19 @@ def invoice_pdf(invoice_id):
     invoice = company_get(Invoice, invoice_id)
     company = get_company_info()
     filename = f'factura_{invoice_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
     app.logger.info("Generating invoice PDF %s", invoice_id)
-    generate_pdf('Factura', company, invoice.client, invoice.items,
-                 invoice.subtotal, invoice.itbis, invoice.total,
-                 ncf=invoice.ncf, seller=invoice.seller,
-                 payment_method=invoice.payment_method, bank=invoice.bank,
-                 purchase_order=invoice.order.customer_po if invoice.order else None,
-                 doc_number=invoice.id,
-                 invoice_type=invoice.invoice_type, note=invoice.note,
-                 output_path=pdf_path, date=invoice.date,
-                 footer=("Factura generada electrónicamente, válida sin firma ni sello. "
-                         "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
-                         "Gracias por su preferencia."))
-    return send_file(pdf_path, download_name=filename, as_attachment=True)
+    pdf_data = generate_pdf_bytes('Factura', company, invoice.client, invoice.items,
+                                  invoice.subtotal, invoice.itbis, invoice.total,
+                                  ncf=invoice.ncf, seller=invoice.seller,
+                                  payment_method=invoice.payment_method, bank=invoice.bank,
+                                  purchase_order=invoice.order.customer_po if invoice.order else None,
+                                  doc_number=invoice.id,
+                                  invoice_type=invoice.invoice_type, note=invoice.note,
+                                  date=invoice.date,
+                                  footer=("Factura generada electrónicamente, válida sin firma ni sello. "
+                                          "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
+                                          "Gracias por su preferencia."))
+    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
 
 @app.route('/pdfs/<path:filename>')
 def serve_pdf(filename):

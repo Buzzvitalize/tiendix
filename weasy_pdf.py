@@ -227,3 +227,32 @@ def generate_pdf(title: str, company: dict, client: dict, items: list,
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(output_path))
     return str(output_path)
+
+
+def generate_pdf_bytes(title: str, company: dict, client: dict, items: list,
+                       subtotal: float, itbis: float, total: float, ncf: str | None = None,
+                       seller: str | None = None, payment_method: str | None = None,
+                       bank: str | None = None, purchase_order: str | None = None,
+                       doc_number: int | None = None, invoice_type: str | None = None,
+                       note: str | None = None, date: datetime | None = None,
+                       valid_until: datetime | None = None, footer: str | None = None) -> bytes:
+    """Render a PDF and return raw bytes (faster for direct downloads/emails)."""
+    item_dicts = [_item_to_dict(i) for i in items]
+    client_dict = _client_to_dict(client)
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.add_page()
+
+    base_date = _to_dom_time(date or datetime.now(DOM_TZ))
+    _draw_header(pdf, title, company, base_date, doc_number, ncf, valid_until)
+    _draw_client_block(pdf, client_dict)
+    _draw_meta_block(pdf, seller, payment_method, bank, purchase_order)
+    _draw_items_table(pdf, item_dicts)
+    total_discount = sum(float(i.get('discount', 0) or 0) for i in item_dicts)
+    _draw_totals(pdf, subtotal, itbis, total, total_discount, note, footer)
+
+    payload = pdf.output()
+    if isinstance(payload, (bytes, bytearray)):
+        return bytes(payload)
+    return str(payload).encode('latin-1')
