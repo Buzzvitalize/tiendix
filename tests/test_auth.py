@@ -4,7 +4,7 @@ import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db
-from models import User
+from models import User, AuditLog
 
 
 @pytest.fixture
@@ -14,6 +14,8 @@ def client(tmp_path):
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
     with app.app_context():
         db.create_all()
+        User.query.delete()
+        db.session.commit()
         u = User(username='admin', first_name='Ad', last_name='Min', role='admin')
         u.set_password('363636')
         db.session.add(u)
@@ -29,3 +31,53 @@ def client(tmp_path):
 def test_login(client):
     resp = client.post('/login', data={'username': 'admin', 'password': '363636'})
     assert resp.status_code == 302
+
+
+
+def test_password_is_hashed(client):
+    with app.app_context():
+        user = User.query.filter_by(username='admin').first()
+        assert user.password != '363636'
+        assert ':' in user.password
+
+
+def test_sidebar_hides_contabilidad_menu(client):
+    client.post('/login', data={'username': 'admin', 'password': '363636'})
+    resp = client.get('/', follow_redirects=True)
+    assert b'Contabilidad' not in resp.data
+
+
+
+def test_dom_time_visible_after_login(client):
+    client.post('/login', data={'username': 'admin', 'password': '363636'})
+    resp = client.get('/', follow_redirects=True)
+    assert b'Hora RD:' in resp.data
+
+
+def test_login_writes_audit_success_and_failure(client):
+    client.post('/login', data={'username': 'admin', 'password': 'bad'})
+    client.post('/login', data={'username': 'admin', 'password': '363636'})
+    with app.app_context():
+        failed = AuditLog.query.filter_by(action='login_failed').first()
+        ok = AuditLog.query.filter_by(action='login_success').first()
+        assert failed is not None
+        assert failed.status == 'fail'
+        assert ok is not None
+        assert ok.status == 'ok'
+
+
+def test_login_accepts_uppercase_username(client):
+    resp = client.post('/login', data={'username': 'ADMIN', 'password': '363636'})
+    assert resp.status_code == 302
+
+
+def test_reset_password_requires_minimum_6(client):
+    with app.app_context():
+        user = User.query.filter_by(username='admin').first()
+        user.email = 'admin@example.com'
+        db.session.commit()
+        from auth import generate_reset_token
+        token = generate_reset_token(user)
+
+    resp = client.post(f'/reset/{token}', data={'password': '12345'}, follow_redirects=True)
+    assert b'minimo 6' in resp.data.lower() or b'm\xc3\xadnimo 6' in resp.data.lower()
