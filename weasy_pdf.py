@@ -180,8 +180,7 @@ def _draw_items_table(pdf: FPDF, items: list[dict]):
         pdf.ln()
 
 
-def _draw_totals(pdf: FPDF, subtotal: float, itbis: float, total: float, note: str | None, footer: str | None):
-    discount = 0.0
+def _draw_totals(pdf: FPDF, subtotal: float, itbis: float, total: float, discount: float, note: str | None, footer: str | None):
     pdf.ln(2)
     pdf.set_font('Helvetica', 'B', 10)
     pdf.cell(0, 6, f"Subtotal: {_fmt_money(subtotal)}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -221,7 +220,8 @@ def generate_pdf(title: str, company: dict, client: dict, items: list,
     _draw_client_block(pdf, client_dict)
     _draw_meta_block(pdf, seller, payment_method, bank, purchase_order)
     _draw_items_table(pdf, item_dicts)
-    _draw_totals(pdf, subtotal, itbis, total, note, footer)
+    total_discount = sum(float(i.get('discount', 0) or 0) for i in item_dicts)
+    _draw_totals(pdf, subtotal, itbis, total, total_discount, note, footer)
 
     output_path = Path(output_path or 'document.pdf')
     output_path.parent.mkdir(parents=True, exist_ok=True)

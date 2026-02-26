@@ -134,3 +134,17 @@ def test_account_request_approval_writes_audit(client, monkeypatch):
         row = AuditLog.query.filter_by(action='account_request_approve').order_by(AuditLog.id.desc()).first()
         assert row is not None
         assert row.entity == 'account_request'
+
+
+def test_suspicious_ips_counts_only_request_creation_action(client):
+    with app.app_context():
+        db.session.add_all([
+            AuditLog(action='account_request_approve', entity='account_request', ip='10.10.10.10', status='ok'),
+            AuditLog(action='account_request_reject', entity='account_request', ip='10.10.10.10', status='ok'),
+        ])
+        db.session.commit()
+
+    login(client, 'admin', '363636')
+    resp = client.get('/cpaneltx/auditoria')
+    assert resp.status_code == 200
+    assert b'No hay IPs repetidas en solicitudes de cuenta' in resp.data

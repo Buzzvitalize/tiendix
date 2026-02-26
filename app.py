@@ -1309,7 +1309,7 @@ def cpanel_auditoria():
 
     suspicious_ips = (
         db.session.query(AuditLog.ip, func.count(AuditLog.id))
-        .filter(AuditLog.entity == 'account_request')
+        .filter(AuditLog.action == 'account_request_create')
         .group_by(AuditLog.ip)
         .having(func.count(AuditLog.id) >= 2)
         .order_by(func.count(AuditLog.id).desc())
