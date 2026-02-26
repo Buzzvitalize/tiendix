@@ -61,36 +61,56 @@ def _client_to_dict(client) -> dict:
 
 
 def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_number: int | None, ncf: str | None, valid_until: datetime | None):
+    left_x = pdf.l_margin
+    top_y = 10
+    logo_box_w = 28
+    text_x = left_x + logo_box_w + 4
+
+    # Logo a la izquierda
     logo = company.get('logo')
+    logo_bottom_y = top_y
     if logo:
         logo_path = str(logo)
         if os.path.exists(logo_path):
-            pdf.image(logo_path, x=10, y=8, w=24)
-            pdf.set_xy(38, 10)
+            pdf.image(logo_path, x=left_x, y=top_y, w=logo_box_w)
+            logo_bottom_y = top_y + logo_box_w
 
+    # Nombre y dirección/web a la derecha del logo
+    pdf.set_xy(text_x, top_y)
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 18)
-    pdf.cell(0, 10, company.get('name', 'Tiendix'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 8, company.get('name', 'Tiendix'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Helvetica', '', 10)
     if company.get('address'):
-        pdf.cell(0, 5, company['address'], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_x(text_x)
+        pdf.multi_cell(0, 5, company['address'])
+    if company.get('website'):
+        pdf.set_x(text_x)
+        pdf.cell(0, 5, company['website'], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if company.get('phone'):
-        pdf.cell(0, 5, company['phone'], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_x(text_x)
+        pdf.cell(0, 5, f"Tel: {company['phone']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
-    pdf.ln(3)
+    company_block_bottom = max(pdf.get_y(), logo_bottom_y)
+    pdf.set_y(company_block_bottom + 15)  # 1.5 cm
+
+    # Bloque de documento y fechas
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 16)
     pdf.cell(0, 8, title, align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font('Helvetica', '', 9)
+    pdf.set_font('Helvetica', '', 10)
     if doc_number is not None:
         pdf.cell(0, 5, f"{title} N° {doc_number}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 5, date.strftime('%d/%m/%Y %I:%M %p'), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 5, f"Fecha de creación: {date.strftime('%d/%m/%Y %I:%M %p')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if ncf:
         pdf.cell(0, 5, f"NCF: {ncf}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if valid_until:
         pdf.cell(0, 5, f"Válido hasta: {valid_until.strftime('%d/%m/%Y')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    pdf.ln(15)  # 1.5 cm
 
 
 def _draw_client_block(pdf: FPDF, client: dict):
