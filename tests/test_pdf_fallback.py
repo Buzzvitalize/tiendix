@@ -28,6 +28,7 @@ def test_generate_pdf_creates_pdf_with_fpdf_renderer(tmp_path):
 class _DummyPdf:
     def __init__(self):
         self.lines = []
+        self.cell_calls = 0
 
     def ln(self, *_args, **_kwargs):
         return None
@@ -38,8 +39,12 @@ class _DummyPdf:
     def set_text_color(self, *_args, **_kwargs):
         return None
 
+    def set_fill_color(self, *_args, **_kwargs):
+        return None
+
     def cell(self, _w, _h, txt='', **_kwargs):
         self.lines.append(txt)
+        self.cell_calls += 1
 
     def multi_cell(self, _w, _h, txt='', **_kwargs):
         self.lines.append(txt)
@@ -58,3 +63,14 @@ def test_draw_totals_uses_real_discount_sum():
     )
 
     assert any('Descuento: RD$ 10.00' in line for line in pdf.lines)
+
+
+def test_items_table_adds_empty_rows_until_minimum():
+    pdf = _DummyPdf()
+    items = [
+        {'code': '01', 'reference': 'A1', 'product_name': 'Prod', 'unit': 'Unidad', 'unit_price': 100.0, 'quantity': 1, 'discount': 0.0}
+    ]
+    weasy_pdf._draw_items_table(pdf, items, min_rows=8)
+
+    # 8 encabezados + 8 filas * 8 columnas = 72 celdas
+    assert pdf.cell_calls == 72

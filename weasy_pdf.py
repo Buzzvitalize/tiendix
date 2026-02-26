@@ -148,7 +148,7 @@ def _draw_meta_block(pdf: FPDF, seller: str | None, payment_method: str | None, 
             pdf.cell(0, 5, line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
 
-def _draw_items_table(pdf: FPDF, items: list[dict]):
+def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 8):
     headers = ["Código", "Ref", "Producto", "Unidad", "Precio", "Cant.", "Desc.", "Total"]
     widths = [18, 18, 52, 18, 24, 14, 22, 24]
 
@@ -177,6 +177,14 @@ def _draw_items_table(pdf: FPDF, items: list[dict]):
         for idx, (text, w) in enumerate(zip(row, widths)):
             align = 'R' if idx in (4, 6, 7) else ('C' if idx == 5 else 'L')
             pdf.cell(w, 6, text, border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
+        pdf.ln()
+
+    # Añade filas vacías para que el documento no se vea vacío cuando hay pocos productos.
+    empty_rows = max(0, min_rows - len(items))
+    for _ in range(empty_rows):
+        for idx, w in enumerate(widths):
+            align = 'R' if idx in (4, 6, 7) else ('C' if idx == 5 else 'L')
+            pdf.cell(w, 6, '', border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.ln()
 
 
