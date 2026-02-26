@@ -50,6 +50,7 @@ from models import (
     dom_now,
 )
 from io import BytesIO, StringIO
+from urllib.parse import quote_plus
 import csv
 try:
     from openpyxl import Workbook
@@ -118,7 +119,38 @@ def _normalized_database_url(url: str | None) -> str | None:
     return url
 
 
-database_url = _normalized_database_url(os.getenv('DATABASE_URL'))
+def _database_url_from_parts() -> str | None:
+    """Build DATABASE_URL from simple DB_* env vars for easier cPanel setup."""
+    db_name = (os.getenv('DB_NAME') or '').strip()
+    db_user = (os.getenv('DB_USER') or '').strip()
+    db_password = os.getenv('DB_PASSWORD')
+    if not db_name or not db_user or db_password is None:
+        return None
+
+    db_driver = (os.getenv('DB_DRIVER', 'mysql+pymysql') or 'mysql+pymysql').strip()
+    db_host = (os.getenv('DB_HOST', 'localhost') or 'localhost').strip()
+    db_port = (os.getenv('DB_PORT') or '').strip()
+
+    host_part = db_host
+    if db_port:
+        host_part = f"{db_host}:{db_port}"
+
+    quoted_user = quote_plus(db_user)
+    quoted_password = quote_plus(db_password)
+    quoted_db_name = quote_plus(db_name)
+    return f"{db_driver}://{quoted_user}:{quoted_password}@{host_part}/{quoted_db_name}?charset=utf8mb4"
+
+
+def _resolve_database_url() -> tuple[str | None, str]:
+    database_url = os.getenv('DATABASE_URL')
+    source = 'DATABASE_URL'
+    if not database_url:
+        database_url = _database_url_from_parts()
+        source = 'DB_* variables' if database_url else 'default config'
+    return _normalized_database_url(database_url), source
+
+
+database_url, database_url_source = _resolve_database_url()
 if database_url:
     os.environ['DATABASE_URL'] = database_url
 
@@ -165,6 +197,10 @@ file_handler.setLevel(logging.INFO)
 app.logger.addHandler(file_handler)
 app.logger.setLevel(logging.INFO)
 app.logger.info('Tiendix startup')
+if database_url:
+    app.logger.info('Database configuration loaded from %s', database_url_source)
+else:
+    app.logger.info('Database configuration loaded from default config')
 
 MAIL_SERVER = os.getenv('MAIL_SERVER')
 MAIL_PORT = int(os.getenv('MAIL_PORT', 587))

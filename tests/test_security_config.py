@@ -63,3 +63,28 @@ def test_send_email_retries_and_metrics(monkeypatch):
 def test_normalized_database_url_for_mysql_scheme():
     assert app_module._normalized_database_url('mysql://u:p@localhost/db') == 'mysql+pymysql://u:p@localhost/db'
     assert app_module._normalized_database_url('mysql+pymysql://u:p@localhost/db') == 'mysql+pymysql://u:p@localhost/db'
+
+
+def test_database_url_from_parts_builds_mysql_url(monkeypatch):
+    monkeypatch.setenv('DB_NAME', 'cpanel_db')
+    monkeypatch.setenv('DB_USER', 'cpanel_user')
+    monkeypatch.setenv('DB_PASSWORD', 'my pass@123')
+    monkeypatch.setenv('DB_HOST', 'localhost')
+    monkeypatch.setenv('DB_PORT', '3306')
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+
+    built = app_module._database_url_from_parts()
+
+    assert built == 'mysql+pymysql://cpanel_user:my+pass%40123@localhost:3306/cpanel_db?charset=utf8mb4'
+
+
+def test_resolve_database_url_prioritizes_database_url(monkeypatch):
+    monkeypatch.setenv('DATABASE_URL', 'mysql://u:p@localhost/db')
+    monkeypatch.setenv('DB_NAME', 'ignored_db')
+    monkeypatch.setenv('DB_USER', 'ignored_user')
+    monkeypatch.setenv('DB_PASSWORD', 'ignored_password')
+
+    resolved, source = app_module._resolve_database_url()
+
+    assert resolved == 'mysql+pymysql://u:p@localhost/db'
+    assert source == 'DATABASE_URL'
