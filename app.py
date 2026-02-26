@@ -983,6 +983,47 @@ def get_company_info():
         'ncf_final': c.ncf_final,
         'ncf_fiscal': c.ncf_fiscal,
     }
+
+
+def _company_slug(name: str | None) -> str:
+    raw = (name or 'empresa').strip().lower()
+    slug = re.sub(r'[^a-z0-9]+', '-', raw).strip('-')
+    return slug or 'empresa'
+
+
+def _company_token(company_id: int) -> str:
+    pdf_root = Path(app.static_folder) / 'pdfs'
+    pdf_root.mkdir(parents=True, exist_ok=True)
+    token_file = pdf_root / '.company_tokens.json'
+    data = {}
+    if token_file.exists():
+        try:
+            data = json.loads(token_file.read_text(encoding='utf-8'))
+        except Exception:
+            data = {}
+    key = str(company_id)
+    token = data.get(key)
+    if not token:
+        alphabet = string.ascii_lowercase + string.digits
+        token = ''.join(secrets.choice(alphabet) for _ in range(6))
+        data[key] = token
+        token_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    return token
+
+
+def _company_pdf_dir(doc_type: str = 'general') -> Path:
+    cid = current_company_id()
+    company = db.session.get(CompanyInfo, cid) if cid else None
+    slug = _company_slug(company.name if company else None)
+    token = _company_token(cid or 0)
+    path = Path(app.static_folder) / 'pdfs' / slug / token / doc_type
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _company_pdf_path(doc_type: str, filename: str) -> str:
+    return str(_company_pdf_dir(doc_type) / filename)
+
 # Routes
 @app.before_request
 def require_login():
@@ -2720,7 +2761,13 @@ def invoice_pdf(invoice_id):
 
 @app.route('/pdfs/<path:filename>')
 def serve_pdf(filename):
-    return send_from_directory(os.path.join(app.static_folder, 'pdfs'), filename)
+    if '..' in filename or filename.startswith('/'):
+        return ('Not Found', 404)
+    base = _company_pdf_dir().parent.resolve()
+    file_path = (base / filename).resolve()
+    if not str(file_path).startswith(str(base.resolve())) or not file_path.exists():
+        return ('Not Found', 404)
+    return send_file(str(file_path), as_attachment=True)
 
 def _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria):
     """Return an invoice query filtered by the provided parameters."""
@@ -3166,7 +3213,7 @@ def account_statement_detail(client_id):
             'phone': client.phone,
             'email': client.email,
         }
-        pdf_path = generate_account_statement_pdf(company, client_dict, rows, totals, aging, overdue_pct)
+        pdf_path = generate_account_statement_pdf(company, client_dict, rows, totals, aging, overdue_pct, output_path=_company_pdf_path('estado_cuenta', f'estado_cuenta_{client.id}.pdf'))
         return send_file(pdf_path, as_attachment=True, download_name=f'estado_cuenta_{client.id}.pdf')
     return render_template('estado_cuenta_detalle.html', client=client, rows=rows, total=totals, aging=aging, overdue_pct=overdue_pct)
 
@@ -3408,7 +3455,7 @@ def export_reportes():
             0,
             subtotal,
             note=note,
-            output_path='reportes.pdf'
+            output_path=_company_pdf_path('reportes', 'reportes.pdf')
         )
         log_export(user, formato, tipo, filtros, 'success', file_path=pdf_path)
         return send_file(pdf_path, as_attachment=True, download_name='reportes.pdf')
