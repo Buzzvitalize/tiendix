@@ -11,3 +11,5 @@ pytest-xdist
 locust
 fpdf2
 PyMySQL
+mysqlclient
+mysql-connector-python
