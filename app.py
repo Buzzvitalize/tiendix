@@ -68,6 +68,7 @@ import os
 import re
 import json
 import uuid
+import importlib.util
 from ai import recommend_products
 from weasy_pdf import generate_pdf, generate_pdf_bytes
 from account_pdf import generate_account_statement_pdf
@@ -276,14 +277,6 @@ EMAIL_METRICS = {
 }
 _email_queue = ThreadQueue()
 
-EMAIL_METRICS = {
-    'queued': 0,
-    'sent': 0,
-    'failed': 0,
-    'retries': 0,
-    'skipped': 0,
-}
-_email_queue = ThreadQueue()
 
 def _deliver_email(to, subject, html, attachments=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
@@ -351,6 +344,35 @@ def _fmt_money(value):
 
 app.jinja_env.filters['money'] = _fmt_money
 
+
+
+def _module_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _ensure_mysql_driver_available(config: dict):
+    """Ensure selected MySQL driver exists; fallback to mysqldb if available."""
+    uri = config.get('SQLALCHEMY_DATABASE_URI') or ''
+    if not isinstance(uri, str):
+        return
+    if not uri.startswith('mysql+pymysql://'):
+        return
+
+    if _module_available('pymysql'):
+        return
+
+    if _module_available('MySQLdb'):
+        fallback_uri = uri.replace('mysql+pymysql://', 'mysql+mysqldb://', 1)
+        config['SQLALCHEMY_DATABASE_URI'] = fallback_uri
+        app.logger.warning('PyMySQL not installed; falling back to mysql+mysqldb driver')
+        return
+
+    raise RuntimeError(
+        'MySQL driver not found. Install PyMySQL in your cPanel virtualenv with: '
+        'pip install PyMySQL && restart the Python app.'
+    )
+
+_ensure_mysql_driver_available(app.config)
 db.init_app(app)
 migrate.init_app(app, db)
 csrf = CSRFProtect(app)
