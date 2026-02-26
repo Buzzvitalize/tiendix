@@ -44,30 +44,38 @@ from models import (
     ExportLog,
     NcfLog,
     Notification,
+    SystemAnnouncement,
+    ErrorReport,
+    AuditLog,
     dom_now,
 )
 from io import BytesIO, StringIO
+from urllib.parse import quote_plus
 import csv
 try:
     from openpyxl import Workbook
 except ModuleNotFoundError:  # pragma: no cover
     Workbook = None
 from datetime import datetime, timedelta
+from pathlib import Path
 from sqlalchemy import func, inspect, or_
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import load_only, joinedload
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
 from werkzeug.security import generate_password_hash
 import os
 import re
 import json
+import uuid
+import importlib.util
 from ai import recommend_products
-from weasy_pdf import generate_pdf
+from weasy_pdf import generate_pdf, generate_pdf_bytes
 from account_pdf import generate_account_statement_pdf
 from functools import wraps
 from auth import auth_bp, generate_reset_token
 from forms import AccountRequestForm
-from config import DevelopmentConfig
+from config import DevelopmentConfig, TestingConfig, ProductionConfig, validate_runtime_config
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:  # pragma: no cover
@@ -80,8 +88,11 @@ except Exception:  # pragma: no cover
     Queue = None
     Redis = None
 import threading
+from queue import Queue as ThreadQueue, Empty
+import time
 
 load_dotenv()
+
 # Load RNC data for company name lookup
 RNC_DATA = {}
 DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', 'DGII_RNC.TXT')
@@ -96,7 +107,144 @@ if os.path.exists(DATA_PATH):
                     RNC_DATA[rnc] = name
 
 app = Flask(__name__)
-app.config.from_object(DevelopmentConfig)
+APP_ENV = os.getenv('APP_ENV', 'development').strip().lower()
+
+
+APP_VERSION = os.getenv('APP_VERSION', '2.0.5').strip() or '2.0.5'
+APP_VERSION_HIGHLIGHTS = [
+    'Conexión MySQL/cPanel simplificada con soporte DB_* y DATABASE_URL.',
+    'Reportar Problema, anuncios del sistema y panel administrativo ampliado.',
+    'Renderizado PDF con fpdf2 para descargas más estables en hosting compartido.',
+    'Refuerzo de seguridad: validación runtime, bloqueo de rutas sensibles y mejoras de auditoría.',
+]
+
+def _normalized_database_url(url: str | None) -> str | None:
+    """Normalize DB URL so cPanel/MySQL strings work with SQLAlchemy.
+
+    cPanel users often set `mysql://...`; SQLAlchemy expects an explicit driver
+    such as `mysql+pymysql://...`.
+    """
+    if not url:
+        return url
+    if url.startswith('mysql://'):
+        return url.replace('mysql://', 'mysql+pymysql://', 1)
+    return url
+
+
+def _database_url_from_parts() -> str | None:
+    """Build DATABASE_URL from simple DB_* env vars for easier cPanel setup."""
+    db_name = (os.getenv('DB_NAME') or '').strip()
+    db_user = (os.getenv('DB_USER') or '').strip()
+    db_password = os.getenv('DB_PASSWORD')
+    if not db_name or not db_user or db_password is None:
+        return None
+
+    db_driver = (os.getenv('DB_DRIVER', 'mysql+pymysql') or 'mysql+pymysql').strip()
+    db_host = (os.getenv('DB_HOST', 'localhost') or 'localhost').strip()
+    db_port = (os.getenv('DB_PORT') or '').strip()
+
+    host_part = db_host
+    if db_port:
+        host_part = f"{db_host}:{db_port}"
+
+    quoted_user = quote_plus(db_user)
+    quoted_password = quote_plus(db_password)
+    quoted_db_name = quote_plus(db_name)
+    return f"{db_driver}://{quoted_user}:{quoted_password}@{host_part}/{quoted_db_name}?charset=utf8mb4"
+
+
+def _resolve_database_url() -> tuple[str | None, str]:
+    database_url = os.getenv('DATABASE_URL')
+    source = 'DATABASE_URL'
+    if not database_url:
+        database_url = _database_url_from_parts()
+        source = 'DB_* variables' if database_url else 'default config'
+    return _normalized_database_url(database_url), source
+
+
+database_url, database_url_source = _resolve_database_url()
+if database_url:
+    os.environ['DATABASE_URL'] = database_url
+
+
+def _apply_database_uri_override(config: dict, resolved_url: str | None):
+    """Ensure runtime config uses resolved DB URL even after class import-time defaults."""
+    if resolved_url:
+        config['SQLALCHEMY_DATABASE_URI'] = resolved_url
+
+
+config_map = {
+    'development': DevelopmentConfig,
+    'testing': TestingConfig,
+    'production': ProductionConfig,
+}
+app.config.from_object(config_map.get(APP_ENV, DevelopmentConfig))
+_apply_database_uri_override(app.config, database_url)
+app.config['APP_ENV'] = APP_ENV
+validate_runtime_config(app.config)
+
+SENSITIVE_PATHS = {
+    'app.py',
+    'auth.py',
+    'config.py',
+    'models.py',
+    'requirements.txt',
+    '.env',
+    '.env.example',
+    'database.sqlite',
+    'passenger_wsgi.py',
+}
+SENSITIVE_EXTENSIONS = (
+    '.py', '.pyc', '.sqlite', '.db', '.env', '.ini', '.pem', '.key', '.log',
+)
+
+
+@app.before_request
+def block_sensitive_paths():
+    requested = request.path.lstrip('/').lower()
+    if not requested:
+        return None
+    if requested in SENSITIVE_PATHS or requested.endswith(SENSITIVE_EXTENSIONS):
+        return ('Not Found', 404)
+    return None
+
+
+@app.before_request
+def attach_request_context_log():
+    g.request_id = uuid.uuid4().hex[:12]
+    g.request_started_at = time.time()
+    app.logger.info(
+        'REQ_START id=%s method=%s path=%s ip=%s ua=%s',
+        g.request_id,
+        request.method,
+        request.full_path,
+        request.remote_addr,
+        request.user_agent.string[:200] if request.user_agent else '',
+    )
+
+
+@app.after_request
+def log_response_result(response):
+    rid = getattr(g, 'request_id', '-')
+    started = getattr(g, 'request_started_at', None)
+    duration_ms = int((time.time() - started) * 1000) if started else -1
+    app.logger.info(
+        'REQ_END id=%s status=%s duration_ms=%s',
+        rid,
+        response.status_code,
+        duration_ms,
+    )
+    return response
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(exc):
+    if isinstance(exc, HTTPException):
+        return exc
+    rid = getattr(g, 'request_id', '-')
+    app.logger.exception('REQ_FAIL id=%s method=%s path=%s err=%s', rid, request.method, request.path, exc)
+    return render_template('error.html', request_id=rid), 500
+
 
 if not os.path.exists('logs'):
     os.makedirs('logs')
@@ -106,18 +254,36 @@ file_handler.setLevel(logging.INFO)
 app.logger.addHandler(file_handler)
 app.logger.setLevel(logging.INFO)
 app.logger.info('Tiendix startup')
+if database_url:
+    app.logger.info('Database configuration loaded from %s', database_url_source)
+    app.logger.info('Database URI override applied from resolved environment variables')
+else:
+    app.logger.info('Database configuration loaded from default config')
 
 MAIL_SERVER = os.getenv('MAIL_SERVER')
 MAIL_PORT = int(os.getenv('MAIL_PORT', 587))
 MAIL_USERNAME = os.getenv('MAIL_USERNAME')
 MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')
 MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', MAIL_USERNAME)
+MAIL_MAX_RETRIES = int(os.getenv('MAIL_MAX_RETRIES', 3))
+MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
+
+EMAIL_METRICS = {
+    'queued': 0,
+    'sent': 0,
+    'failed': 0,
+    'retries': 0,
+    'skipped': 0,
+}
+_email_queue = ThreadQueue()
 
 
-def send_email(to, subject, html, attachments=None):
+def _deliver_email(to, subject, html, attachments=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
+        EMAIL_METRICS['skipped'] += 1
         app.logger.warning('Email settings missing; skipping send to %s', to)
         return
+
     msg = MIMEMultipart()
     msg['Subject'] = subject
     msg['From'] = MAIL_DEFAULT_SENDER
@@ -128,14 +294,48 @@ def send_email(to, subject, html, attachments=None):
         part = MIMEApplication(data, Name=filename)
         part['Content-Disposition'] = f'attachment; filename="{filename}"'
         msg.attach(part)
-    try:
-        with smtplib.SMTP(MAIL_SERVER, MAIL_PORT) as s:
-            if MAIL_USERNAME and MAIL_PASSWORD:
-                s.starttls()
-                s.login(MAIL_USERNAME, MAIL_PASSWORD)
-            s.sendmail(MAIL_DEFAULT_SENDER, [to], msg.as_string())
-    except Exception as e:  # pragma: no cover
-        app.logger.error('Email send failed: %s', e)
+
+    for attempt in range(1, MAIL_MAX_RETRIES + 1):
+        try:
+            with smtplib.SMTP(MAIL_SERVER, MAIL_PORT) as s:
+                if MAIL_USERNAME and MAIL_PASSWORD:
+                    s.starttls()
+                    s.login(MAIL_USERNAME, MAIL_PASSWORD)
+                s.sendmail(MAIL_DEFAULT_SENDER, [to], msg.as_string())
+            EMAIL_METRICS['sent'] += 1
+            return
+        except Exception as e:  # pragma: no cover
+            if attempt < MAIL_MAX_RETRIES:
+                EMAIL_METRICS['retries'] += 1
+                app.logger.warning('Email send failed (attempt %s/%s) to %s: %s', attempt, MAIL_MAX_RETRIES, to, e)
+                time.sleep(MAIL_RETRY_DELAY_SEC)
+                continue
+            EMAIL_METRICS['failed'] += 1
+            app.logger.error('Email send failed after %s attempts to %s: %s', MAIL_MAX_RETRIES, to, e)
+
+
+def _email_worker():  # pragma: no cover - background helper
+    while True:
+        try:
+            payload = _email_queue.get(timeout=1)
+        except Empty:
+            continue
+        if payload is None:
+            break
+        _deliver_email(*payload)
+        _email_queue.task_done()
+
+
+_email_worker_thread = threading.Thread(target=_email_worker, daemon=True)
+_email_worker_thread.start()
+
+
+def send_email(to, subject, html, attachments=None, asynchronous=True):
+    if asynchronous:
+        EMAIL_METRICS['queued'] += 1
+        _email_queue.put((to, subject, html, attachments))
+        return
+    _deliver_email(to, subject, html, attachments)
 
 
 def _fmt_money(value):
@@ -144,6 +344,40 @@ def _fmt_money(value):
 
 app.jinja_env.filters['money'] = _fmt_money
 
+
+
+def _module_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _ensure_mysql_driver_available(config: dict):
+    """Ensure selected MySQL driver exists; fallback to available alternatives."""
+    uri = config.get('SQLALCHEMY_DATABASE_URI') or ''
+    if not isinstance(uri, str):
+        return
+    if not uri.startswith('mysql+pymysql://'):
+        return
+
+    if _module_available('pymysql'):
+        return
+
+    if _module_available('MySQLdb'):
+        config['SQLALCHEMY_DATABASE_URI'] = uri.replace('mysql+pymysql://', 'mysql+mysqldb://', 1)
+        app.logger.warning('PyMySQL not installed; falling back to mysql+mysqldb driver')
+        return
+
+    if _module_available('mysql.connector'):
+        config['SQLALCHEMY_DATABASE_URI'] = uri.replace('mysql+pymysql://', 'mysql+mysqlconnector://', 1)
+        app.logger.warning('PyMySQL not installed; falling back to mysql+mysqlconnector driver')
+        return
+
+    app.logger.error(
+        'MySQL driver not found (pymysql/mysqldb/mysqlconnector). '
+        'Falling back to sqlite temporarily. Install PyMySQL in cPanel virtualenv and restart.'
+    )
+    config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.sqlite'
+
+_ensure_mysql_driver_available(app.config)
 db.init_app(app)
 migrate.init_app(app, db)
 csrf = CSRFProtect(app)
@@ -287,12 +521,12 @@ def _export_job(app_obj, company_id, user, start, end, estado, categoria, format
                             float(inv.total),
                         ])
                 wb.save(path)
-            entry = ExportLog.query.get(entry_id)
+            entry = db.session.get(ExportLog, entry_id)
             entry.status = 'success'
             entry.file_path = path
             db.session.commit()
         except Exception as exc:  # pragma: no cover - hard to simulate failures
-            entry = ExportLog.query.get(entry_id)
+            entry = db.session.get(ExportLog, entry_id)
             entry.status = 'fail'
             entry.message = str(exc)
             db.session.commit()
@@ -369,9 +603,80 @@ def _migrate_legacy_schema():
         if 'valid_until' not in quote_cols:
             statements.append("ALTER TABLE quotation ADD COLUMN valid_until DATETIME")
 
+    if not inspector.has_table('audit_log'):
+        statements.append(
+            """CREATE TABLE audit_log (
+                id INTEGER PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                user_id INTEGER REFERENCES user(id),
+                username VARCHAR(80),
+                role VARCHAR(20),
+                company_id INTEGER,
+                action VARCHAR(80) NOT NULL,
+                entity VARCHAR(80) NOT NULL,
+                entity_id VARCHAR(80),
+                status VARCHAR(20),
+                details TEXT,
+                ip VARCHAR(45),
+                user_agent VARCHAR(255)
+            )"""
+        )
+
+    if not inspector.has_table('error_report'):
+        statements.append(
+            """CREATE TABLE error_report (
+                id INTEGER PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                user_id INTEGER REFERENCES user(id),
+                username VARCHAR(80),
+                company_id INTEGER,
+                title VARCHAR(180) NOT NULL,
+                module VARCHAR(80) NOT NULL,
+                severity VARCHAR(20) NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                page_url VARCHAR(255),
+                happened_at DATETIME,
+                expected_behavior TEXT,
+                actual_behavior TEXT NOT NULL,
+                steps_to_reproduce TEXT NOT NULL,
+                contact_email VARCHAR(120),
+                ip VARCHAR(45),
+                user_agent VARCHAR(255),
+                admin_notes TEXT
+            )"""
+        )
+
+    if not inspector.has_table('system_announcement'):
+        statements.append(
+            """CREATE TABLE system_announcement (
+                id INTEGER PRIMARY KEY,
+                title VARCHAR(180) NOT NULL,
+                message TEXT NOT NULL,
+                scheduled_for DATETIME,
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                created_by INTEGER REFERENCES user(id),
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )"""
+        )
+
+    if inspector.has_table('user'):
+        # Normaliza usuarios antiguos a minúsculas para evitar conflictos por mayúsculas.
+        db.session.execute(db.text("UPDATE user SET username = lower(username) WHERE username <> lower(username)"))
+
+    if inspector.has_table('account_request'):
+        db.session.execute(db.text("UPDATE account_request SET username = lower(username) WHERE username <> lower(username)"))
+
+    wrote_normalizations = False
+    if inspector.has_table('user'):
+        wrote_normalizations = True
+    if inspector.has_table('account_request'):
+        wrote_normalizations = True
+
     for stmt in statements:
         db.session.execute(db.text(stmt))
-    if statements:
+    if statements or wrote_normalizations:
         db.session.commit()
 
 
@@ -390,17 +695,6 @@ def run_auto_migrations():
             db.create_all()
         _migrate_legacy_schema()
 
-
-def ensure_admin():  # pragma: no cover - optional helper for deployments
-    with app.app_context():
-        run_auto_migrations()
-        inspector = inspect(db.engine)
-        if inspector.has_table('user') and not User.query.filter_by(username='admin').first():
-            admin = User(username='admin', role='admin', first_name='Admin', last_name='')
-            admin.set_password(os.environ.get('ADMIN_PASSWORD', '363636'))
-            db.session.add(admin)
-            db.session.commit()
-        db.session.remove()
 
 
 # Run migrations when the module is imported so that new fields are available
@@ -424,6 +718,18 @@ INVOICE_STATUSES = ('Pendiente', 'Pagada')
 MAX_EXPORT_ROWS = 50000
 
 
+QUOTATION_VALIDITY_OPTIONS = {
+    '15d': 15,
+    '1m': 30,
+    '2m': 60,
+    '3m': 90,
+}
+
+
+def _quotation_validity_days(value: str | None) -> int:
+    return QUOTATION_VALIDITY_OPTIONS.get(value or '1m', 30)
+
+
 def current_company_id():
     return session.get('company_id')
 
@@ -432,6 +738,28 @@ def notify(message):
     if current_company_id():
         db.session.add(Notification(company_id=current_company_id(), message=message))
         db.session.commit()
+
+
+def log_audit(action, entity, entity_id=None, status='ok', details=''):
+    """Persist audit trail events for CPanel review."""
+    try:
+        entry = AuditLog(
+            user_id=session.get('user_id'),
+            username=session.get('username') or session.get('full_name'),
+            role=session.get('role'),
+            company_id=current_company_id(),
+            action=action,
+            entity=entity,
+            entity_id=str(entity_id) if entity_id is not None else None,
+            status=status,
+            details=details,
+            ip=(request.headers.get('X-Forwarded-For', request.remote_addr) or '')[:45],
+            user_agent=(request.headers.get('User-Agent') or '')[:255],
+        )
+        db.session.add(entry)
+        db.session.commit()
+    except Exception as exc:  # pragma: no cover
+        app.logger.exception('Audit log write failed: %s', exc)
 
 
 def company_query(model):
@@ -638,33 +966,56 @@ def rnc_lookup(rnc):
 @app.before_request
 def load_company():
     cid = current_company_id()
-    g.company = CompanyInfo.query.get(cid) if cid else None
+    g.company = db.session.get(CompanyInfo, cid) if cid else None
 
 
 @app.context_processor
 def inject_company():
     notif_count = 0
+    active_announcement = None
     try:
-        if 'user_id' in session and current_company_id():
-            low_stock = (
-                company_query(ProductStock)
-                .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
-                .all()
-            )
-            for ps in low_stock:
-                msg = f"Stock bajo: {ps.product.name}"
-                if not Notification.query.filter_by(company_id=current_company_id(), message=msg).first():
-                    db.session.add(Notification(company_id=current_company_id(), message=msg))
-            if low_stock:
-                db.session.commit()
-            notif_count = Notification.query.filter_by(company_id=current_company_id(), is_read=False).count()
-    except Exception:
-        pass
-    return {'company': getattr(g, 'company', None), 'notification_count': notif_count}
+        cid = current_company_id()
+        if 'user_id' in session and cid:
+            # Avoid expensive inventory scans on every request.
+            # Refresh low-stock notifications at most once every 5 minutes per session.
+            now_ts = int(time.time())
+            last_scan = session.get('low_stock_scan_at', 0)
+            if now_ts - last_scan >= 300:
+                low_stock = (
+                    company_query(ProductStock)
+                    .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
+                    .all()
+                )
+                for ps in low_stock:
+                    msg = f"Stock bajo: {ps.product.name}"
+                    exists = Notification.query.filter_by(company_id=cid, message=msg).first()
+                    if not exists:
+                        db.session.add(Notification(company_id=cid, message=msg))
+                if low_stock:
+                    db.session.commit()
+                session['low_stock_scan_at'] = now_ts
+
+            notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
+        active_announcement = (
+            SystemAnnouncement.query
+            .filter_by(is_active=True)
+            .order_by(SystemAnnouncement.updated_at.desc())
+            .first()
+        )
+    except Exception as exc:
+        app.logger.exception('Failed to compute notifications: %s', exc)
+    return {
+        'company': getattr(g, 'company', None),
+        'notification_count': notif_count,
+        'current_dom_time': dom_now().strftime('%d/%m/%Y %I:%M %p'),
+        'active_announcement': active_announcement,
+        'app_version': APP_VERSION,
+        'app_version_highlights': APP_VERSION_HIGHLIGHTS,
+    }
 
 
 def get_company_info():
-    c = CompanyInfo.query.get(current_company_id())
+    c = db.session.get(CompanyInfo, current_company_id())
     if not c:
         return {}
     return {
@@ -673,7 +1024,7 @@ def get_company_info():
         'rnc': c.rnc,
         'phone': c.phone,
         'website': c.website,
-        'logo': os.path.join(app.static_folder, c.logo) if c.logo else None,
+        'logo': os.path.join(app.static_folder, c.logo if c.logo.startswith('uploads/') else f'uploads/{c.logo}') if c.logo else None,
         'ncf_final': c.ncf_final,
         'ncf_fiscal': c.ncf_fiscal,
     }
@@ -734,14 +1085,55 @@ def request_account():
                 'request',
             )
             return redirect(url_for('request_account'))
-        if request.form.get('password') != request.form.get('confirm_password'):
+        password = (request.form.get('password') or '')
+        if len(password) < 6:
+            flash('La contraseña debe tener mínimo 6 caracteres', 'request')
+            return redirect(url_for('request_account'))
+        if password != request.form.get('confirm_password'):
             flash('Las contraseñas no coinciden', 'request')
+            return redirect(url_for('request_account'))
+        username = (request.form.get('username') or '').strip().lower()
+        if not username:
+            flash('Debe ingresar un usuario válido', 'request')
+            return redirect(url_for('request_account'))
+        existing_user = User.query.filter(func.lower(User.username) == username).first()
+        pending_user = AccountRequest.query.filter(func.lower(AccountRequest.username) == username).first()
+        if existing_user or pending_user:
+            flash('Ese nombre de usuario ya existe, use otro.', 'request')
             return redirect(url_for('request_account'))
         account_type = request.form['account_type']
         identifier = request.form.get('identifier')
         if not identifier:
             flash('Debe ingresar RNC o Cédula', 'request')
             return redirect(url_for('request_account'))
+        if User.query.count() == 0:
+            company = CompanyInfo(
+                name=request.form['company'],
+                street=request.form.get('address') or '',
+                sector='',
+                province='',
+                phone=request.form['phone'],
+                rnc=identifier,
+                website=request.form.get('website'),
+                logo='',
+            )
+            db.session.add(company)
+            db.session.flush()
+            owner = User(
+                username=username,
+                first_name=request.form['first_name'],
+                last_name=request.form['last_name'],
+                role='admin',
+                company_id=company.id,
+                email=request.form['email'],
+            )
+            owner.password = generate_password_hash(password)
+            db.session.add(owner)
+            db.session.commit()
+            log_audit('owner_bootstrap', 'user', owner.id, details=f'company={company.id};username={username}')
+            flash('Cuenta principal creada: ahora eres Administrador (dueño).', 'login')
+            return redirect(url_for('auth.login'))
+
         req = AccountRequest(
             account_type=account_type,
             first_name=request.form['first_name'],
@@ -752,8 +1144,8 @@ def request_account():
             email=request.form['email'],
             address=request.form.get('address'),
             website=request.form.get('website'),
-            username=request.form['username'],
-            password=generate_password_hash(request.form['password']),
+            username=username,
+            password=generate_password_hash(password),
             accepted_terms=True,
             accepted_terms_at=dom_now(),
             accepted_terms_ip=request.remote_addr,
@@ -761,6 +1153,7 @@ def request_account():
         )
         db.session.add(req)
         db.session.commit()
+        log_audit('account_request_create', 'account_request', req.id, details=f'email={req.email};company={req.company}')
         flash('Solicitud enviada, espere aprobación', 'login')
         return redirect(url_for('auth.login'))
     elif request.method == 'POST':
@@ -810,7 +1203,10 @@ def clear_company():
 def approve_request(req_id):
     req = AccountRequest.query.get_or_404(req_id)
     role = request.form.get('role', 'company')
-    username = req.username
+    username = (req.username or '').lower()
+    if User.query.filter(func.lower(User.username) == username).first():
+        flash('No se puede aprobar: el usuario ya existe (mayúsculas/minúsculas).')
+        return redirect(url_for('admin_requests'))
     password = req.password
     email = req.email
     company = CompanyInfo(
@@ -842,6 +1238,7 @@ def approve_request(req_id):
         reset_url=url_for('auth.reset_password', token=token, _external=True),
     )
     send_email(email, 'Tu cuenta ha sido aprobada', html)
+    log_audit('account_request_approve', 'account_request', req_id, details=f'user={user.id};company={company.id}')
     flash('Cuenta aprobada')
     return redirect(url_for('admin_requests'))
 
@@ -852,9 +1249,81 @@ def reject_request(req_id):
     req = AccountRequest.query.get_or_404(req_id)
     db.session.delete(req)
     db.session.commit()
+    log_audit('account_request_reject', 'account_request', req.id)
     flash('Solicitud rechazada')
     return redirect(url_for('admin_requests'))
 
+
+
+
+@app.route('/reportar-error', methods=['GET', 'POST'])
+@app.route('/reportar-problema', methods=['GET', 'POST'])
+def report_error():
+    if 'user_id' not in session:
+        flash('Debe iniciar sesión para reportar un error')
+        return redirect(url_for('auth.login'))
+
+    modules = [
+        'Login / Acceso',
+        'Cotizaciones',
+        'Pedidos',
+        'Facturas',
+        'Inventario',
+        'Clientes',
+        'Reportes',
+        'PDF / Descargas',
+        'Configuración',
+        'Otro',
+    ]
+    severities = [('baja', 'Baja'), ('media', 'Media'), ('alta', 'Alta'), ('critica', 'Crítica')]
+
+    if request.method == 'POST':
+        title = (request.form.get('title') or '').strip()
+        module = request.form.get('module') or 'Otro'
+        severity = request.form.get('severity') or 'media'
+        page_url = (request.form.get('page_url') or '').strip()
+        expected_behavior = (request.form.get('expected_behavior') or '').strip()
+        actual_behavior = (request.form.get('actual_behavior') or '').strip()
+        steps_to_reproduce = (request.form.get('steps_to_reproduce') or '').strip()
+        contact_email = (request.form.get('contact_email') or '').strip()
+        happened_at_raw = (request.form.get('happened_at') or '').strip()
+
+        if not title or not actual_behavior or not steps_to_reproduce:
+            flash('Complete título, qué pasó y pasos para reproducir el error.')
+            return render_template('report_error.html', modules=modules, severities=severities)
+
+        happened_at = None
+        if happened_at_raw:
+            try:
+                happened_at = datetime.fromisoformat(happened_at_raw)
+            except ValueError:
+                flash('La fecha/hora del incidente no es válida.')
+                return render_template('report_error.html', modules=modules, severities=severities)
+
+        report = ErrorReport(
+            user_id=session.get('user_id'),
+            username=session.get('username') or session.get('full_name'),
+            company_id=current_company_id(),
+            title=title,
+            module=module,
+            severity=severity,
+            status='abierto',
+            page_url=page_url[:255] if page_url else None,
+            happened_at=happened_at,
+            expected_behavior=expected_behavior,
+            actual_behavior=actual_behavior,
+            steps_to_reproduce=steps_to_reproduce,
+            contact_email=contact_email[:120] if contact_email else None,
+            ip=(request.headers.get('X-Forwarded-For', request.remote_addr) or '')[:45],
+            user_agent=(request.headers.get('User-Agent') or '')[:255],
+        )
+        db.session.add(report)
+        db.session.commit()
+        log_audit('error_report_create', 'error_report', report.id, details=f'severity={severity};module={module}')
+        flash('Reporte enviado. Responderemos en un plazo de hasta 72 horas laborables (puede ser antes).')
+        return redirect(url_for('report_error'))
+
+    return render_template('report_error.html', modules=modules, severities=severities)
 
 # --- CPanel ---
 
@@ -863,6 +1332,55 @@ def reject_request(req_id):
 @admin_only
 def cpanel_home():
     return render_template('cpaneltx.html')
+
+
+@app.route('/cpaneltx/avisos', methods=['GET', 'POST'])
+@admin_only
+def cpanel_announcements():
+    if request.method == 'POST':
+        title = (request.form.get('title') or '').strip()
+        message = (request.form.get('message') or '').strip()
+        scheduled_for_raw = (request.form.get('scheduled_for') or '').strip()
+        is_active = request.form.get('is_active') == 'on'
+
+        if not title or not message:
+            flash('Título y mensaje son obligatorios')
+            return redirect(url_for('cpanel_announcements'))
+
+        scheduled_for = None
+        if scheduled_for_raw:
+            try:
+                scheduled_for = datetime.fromisoformat(scheduled_for_raw)
+            except ValueError:
+                flash('La fecha/hora programada no es válida')
+                return redirect(url_for('cpanel_announcements'))
+
+        ann = SystemAnnouncement(
+            title=title,
+            message=message,
+            scheduled_for=scheduled_for,
+            is_active=is_active,
+            created_by=session.get('user_id'),
+        )
+        db.session.add(ann)
+        db.session.commit()
+        log_audit('announcement_create', 'system_announcement', ann.id, details=f'active={is_active}')
+        flash('Aviso general creado')
+        return redirect(url_for('cpanel_announcements'))
+
+    announcements = SystemAnnouncement.query.order_by(SystemAnnouncement.updated_at.desc()).all()
+    return render_template('cpanel_announcements.html', announcements=announcements)
+
+
+@app.post('/cpaneltx/avisos/<int:ann_id>/estado')
+@admin_only
+def cpanel_announcement_status(ann_id):
+    ann = SystemAnnouncement.query.get_or_404(ann_id)
+    ann.is_active = request.form.get('is_active') == 'on'
+    db.session.commit()
+    log_audit('announcement_status', 'system_announcement', ann.id, details=f'active={ann.is_active}')
+    flash('Estado de aviso actualizado')
+    return redirect(url_for('cpanel_announcements'))
 
 
 @app.route('/cpaneltx/users')
@@ -886,8 +1404,12 @@ def cpanel_user_update(user_id):
     if email:
         user.email = email
     if password:
+        if len(password) < 6:
+            flash('La contraseña debe tener mínimo 6 caracteres')
+            return redirect(url_for('cpanel_users'))
         user.set_password(password)
     db.session.commit()
+    log_audit('cpanel_user_update', 'user', user_id, details=f'email={email or ""};password_changed={bool(password)}')
     flash('Usuario actualizado')
     return redirect(url_for('cpanel_users'))
 
@@ -901,6 +1423,7 @@ def cpanel_user_role(user_id):
         user.role = role
         db.session.commit()
         flash('Rol actualizado')
+        log_audit('cpanel_user_role', 'user', user_id, details=f'role={role}')
     return redirect(url_for('cpanel_users'))
 
 
@@ -911,6 +1434,7 @@ def cpanel_user_delete(user_id):
     db.session.delete(user)
     db.session.commit()
     flash('Usuario eliminado')
+    log_audit('cpanel_user_delete', 'user', user_id)
     return redirect(url_for('cpanel_users'))
 
 
@@ -926,6 +1450,27 @@ def cpanel_companies():
     return render_template('cpanel_companies.html', companies=companies, q=q)
 
 
+
+
+@app.get('/cpaneltx/companies/select/<int:company_id>')
+@admin_only
+def cpanel_company_select(company_id):
+    company = db.session.get(CompanyInfo, company_id)
+    if not company:
+        flash('Empresa no encontrada')
+        return redirect(url_for('cpanel_companies'))
+    session['company_id'] = company_id
+    flash(f'Ahora estás administrando la empresa: {company.name}')
+    return redirect(url_for('list_quotations'))
+
+
+@app.get('/cpaneltx/companies/clear')
+@admin_only
+def cpanel_company_clear():
+    session.pop('company_id', None)
+    flash('Vista global de administrador restaurada')
+    return redirect(url_for('cpanel_companies'))
+
 @app.post('/cpaneltx/companies/<int:cid>/delete')
 @admin_only
 def cpanel_company_delete(cid):
@@ -933,6 +1478,7 @@ def cpanel_company_delete(cid):
     db.session.delete(company)
     db.session.commit()
     flash('Empresa eliminada')
+    log_audit('cpanel_company_delete', 'company', cid)
     return redirect(url_for('cpanel_companies'))
 
 
@@ -950,6 +1496,7 @@ def cpanel_order_delete(oid):
     db.session.delete(order)
     db.session.commit()
     flash('Pedido eliminado')
+    log_audit('cpanel_order_delete', 'order', oid)
     return redirect(url_for('cpanel_orders'))
 
 
@@ -967,7 +1514,89 @@ def cpanel_invoice_delete(iid):
     db.session.delete(inv)
     db.session.commit()
     flash('Factura eliminada')
+    log_audit('cpanel_invoice_delete', 'invoice', iid)
     return redirect(url_for('cpanel_invoices'))
+
+
+
+
+
+@app.route('/cpaneltx/reportes-error')
+@admin_only
+def cpanel_error_reports():
+    status = request.args.get('status', '')
+    severity = request.args.get('severity', '')
+    q = request.args.get('q', '')
+    page = request.args.get('page', 1, type=int)
+
+    query = ErrorReport.query
+    if status:
+        query = query.filter(ErrorReport.status == status)
+    if severity:
+        query = query.filter(ErrorReport.severity == severity)
+    if q:
+        query = query.filter(or_(ErrorReport.title.ilike(f'%{q}%'), ErrorReport.username.ilike(f'%{q}%'), ErrorReport.ip.ilike(f'%{q}%')))
+
+    reports = query.order_by(ErrorReport.created_at.desc()).paginate(page=page, per_page=20, error_out=False)
+    return render_template('cpanel_error_reports.html', reports=reports, status=status, severity=severity, q=q)
+
+
+@app.post('/cpaneltx/reportes-error/<int:report_id>/estado')
+@admin_only
+def cpanel_error_report_status(report_id):
+    report = ErrorReport.query.get_or_404(report_id)
+    status = request.form.get('status')
+    if status in ('abierto', 'en_proceso', 'resuelto', 'cerrado'):
+        report.status = status
+        report.admin_notes = (request.form.get('admin_notes') or '').strip()
+        db.session.commit()
+        log_audit('error_report_status', 'error_report', report.id, details=f'status={status}')
+        flash('Estado del reporte actualizado')
+    else:
+        flash('Estado inválido')
+    return redirect(url_for('cpanel_error_reports'))
+
+@app.route('/cpaneltx/auditoria')
+@admin_only
+def cpanel_auditoria():
+    action = request.args.get('action', '')
+    status = request.args.get('status', '')
+    ip = request.args.get('ip', '')
+    user_q = request.args.get('user', '')
+    page = request.args.get('page', 1, type=int)
+
+    q = AuditLog.query
+    if action:
+        q = q.filter(AuditLog.action.ilike(f'%{action}%'))
+    if status:
+        q = q.filter(AuditLog.status == status)
+    if ip:
+        q = q.filter(AuditLog.ip.ilike(f'%{ip}%'))
+    if user_q:
+        q = q.filter(AuditLog.username.ilike(f'%{user_q}%'))
+
+    logs = q.order_by(AuditLog.created_at.desc()).paginate(page=page, per_page=30, error_out=False)
+
+    suspicious_ips = (
+        db.session.query(AuditLog.ip, func.count(AuditLog.id))
+        .filter(AuditLog.action == 'account_request_create')
+        .group_by(AuditLog.ip)
+        .having(func.count(AuditLog.id) >= 2)
+        .order_by(func.count(AuditLog.id).desc())
+        .limit(20)
+        .all()
+    )
+
+    return render_template(
+        'cpanel_auditoria.html',
+        logs=logs,
+        action=action,
+        status=status,
+        ip=ip,
+        user=user_q,
+        suspicious_ips=suspicious_ips,
+    )
+
 
 # Clients CRUD
 @app.route('/clientes', methods=['GET', 'POST'])
@@ -1624,7 +2253,8 @@ def new_quotation():
         payment_method = request.form.get('payment_method')
         bank = request.form.get('bank') if payment_method == 'Transferencia' else None
         date = dom_now()
-        valid_until = date + timedelta(days=30)
+        validity_days = _quotation_validity_days(request.form.get('validity_period'))
+        valid_until = date + timedelta(days=validity_days)
         quotation = Quotation(client_id=client.id, subtotal=subtotal, itbis=itbis, total=total,
                                seller=request.form.get('seller'), payment_method=payment_method,
                                bank=bank, note=request.form.get('note'),
@@ -1639,6 +2269,7 @@ def new_quotation():
         db.session.commit()
         flash('Cotización guardada')
         notify('Cotización guardada')
+        log_audit('quotation_create', 'quotation', quotation.id, details=f'client={client.id};total={total:.2f}')
         return redirect(url_for('list_quotations'))
     clients = company_query(Client).options(
         load_only(Client.id, Client.name, Client.identifier)
@@ -1648,7 +2279,7 @@ def new_quotation():
     ).all()
     warehouses = company_query(Warehouse).order_by(Warehouse.name).all()
     sellers = company_query(User).options(load_only(User.id, User.first_name, User.last_name)).all()
-    return render_template('cotizacion.html', clients=clients, products=products, warehouses=warehouses, sellers=sellers)
+    return render_template('cotizacion.html', clients=clients, products=products, warehouses=warehouses, sellers=sellers, validity_options=QUOTATION_VALIDITY_OPTIONS)
 
 @app.route('/cotizaciones/editar/<int:quotation_id>', methods=['GET', 'POST'])
 def edit_quotation(quotation_id):
@@ -1686,10 +2317,13 @@ def edit_quotation(quotation_id):
         quotation.payment_method = payment_method
         quotation.bank = bank
         quotation.note = request.form.get('note')
+        validity_days = _quotation_validity_days(request.form.get('validity_period'))
+        quotation.valid_until = (quotation.date or dom_now()) + timedelta(days=validity_days)
         for it in items:
             quotation.items.append(QuotationItem(**it))
         db.session.commit()
         flash('Cotización actualizada')
+        log_audit('quotation_update', 'quotation', quotation.id, details=f'total={total:.2f}')
         return redirect(url_for('list_quotations'))
     products = company_query(Product).options(
         load_only(Product.id, Product.code, Product.name, Product.unit, Product.price)
@@ -1713,6 +2347,7 @@ def edit_quotation(quotation_id):
         products=products,
         items=items,
         sellers=sellers,
+        validity_options=QUOTATION_VALIDITY_OPTIONS,
     )
 
 
@@ -1725,7 +2360,7 @@ def settings():
 @app.route('/ajustes/empresa', methods=['GET', 'POST'])
 @manager_only
 def settings_company():
-    company = CompanyInfo.query.get(current_company_id())
+    company = db.session.get(CompanyInfo, current_company_id())
     if not company:
         flash('Seleccione una empresa')
         return redirect(url_for('admin_companies'))
@@ -1798,21 +2433,32 @@ def settings_company():
 @app.route('/ajustes/usuarios/agregar', methods=['GET', 'POST'])
 @manager_only
 def settings_add_user():
-    company = CompanyInfo.query.get(current_company_id())
+    company = db.session.get(CompanyInfo, current_company_id())
     if request.method == 'POST':
         if session.get('role') == 'manager':
             count = User.query.filter_by(company_id=company.id, role='company').count()
             if count >= 2:
                 flash('Los managers solo pueden crear 2 usuarios')
                 return redirect(url_for('settings_add_user'))
+        username = (request.form.get('username') or '').strip().lower()
+        password = request.form.get('password') or ''
+        if not username:
+            flash('Debe ingresar un usuario válido')
+            return redirect(url_for('settings_add_user'))
+        if len(password) < 6:
+            flash('La contraseña debe tener mínimo 6 caracteres')
+            return redirect(url_for('settings_add_user'))
+        if User.query.filter(func.lower(User.username) == username).first():
+            flash('Ese usuario ya existe')
+            return redirect(url_for('settings_add_user'))
         user = User(
-            username=request.form['username'],
+            username=username,
             first_name=request.form['first_name'],
             last_name=request.form['last_name'],
             role='company',
             company_id=company.id,
         )
-        user.set_password(request.form['password'])
+        user.set_password(password)
         db.session.add(user)
         db.session.commit()
         flash('Usuario creado')
@@ -1835,7 +2481,15 @@ def settings_manage_users():
             return redirect(url_for('settings_manage_users'))
         user.first_name = request.form.get('first_name', user.first_name)
         user.last_name = request.form.get('last_name', user.last_name)
-        user.username = request.form.get('username', user.username)
+        new_username = (request.form.get('username', user.username) or '').strip().lower()
+        if not new_username:
+            flash('Usuario inválido')
+            return redirect(url_for('settings_manage_users'))
+        conflict = User.query.filter(func.lower(User.username) == new_username, User.id != user.id).first()
+        if conflict:
+            flash('Ese usuario ya existe')
+            return redirect(url_for('settings_manage_users'))
+        user.username = new_username
         new_role = request.form.get('role', user.role)
         if new_role in ('company', 'manager'):
             user.role = new_role
@@ -1854,19 +2508,16 @@ def quotation_pdf(quotation_id):
     quotation = company_get(Quotation, quotation_id)
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
     app.logger.info("Generating quotation PDF %s", quotation_id)
-    generate_pdf('Cotización', company, quotation.client, quotation.items,
-                 quotation.subtotal, quotation.itbis, quotation.total,
-                 seller=quotation.seller, payment_method=quotation.payment_method,
-                 bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
-                 output_path=pdf_path,
-                 date=quotation.date, valid_until=quotation.valid_until,
-                 footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
-                         "Los precios están sujetos a cambios sin previo aviso. "
-                         "El ITBIS ha sido calculado conforme a la ley vigente."))
-    return send_file(pdf_path, download_name=filename, as_attachment=True)
+    pdf_data = generate_pdf_bytes('Cotización', company, quotation.client, quotation.items,
+                                  quotation.subtotal, quotation.itbis, quotation.total,
+                                  seller=quotation.seller, payment_method=quotation.payment_method,
+                                  bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
+                                  date=quotation.date, valid_until=quotation.valid_until,
+                                  footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
+                                          "Los precios están sujetos a cambios sin previo aviso. "
+                                          "El ITBIS ha sido calculado conforme a la ley vigente."))
+    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -1878,19 +2529,14 @@ def send_quotation_email(quotation_id):
         return redirect(url_for('list_quotations'))
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
-    generate_pdf('Cotización', company, client, quotation.items,
-                 quotation.subtotal, quotation.itbis, quotation.total,
-                 seller=quotation.seller, payment_method=quotation.payment_method,
-                 bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
-                 output_path=pdf_path,
-                 date=quotation.date, valid_until=quotation.valid_until,
-                 footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
-                         "Los precios están sujetos a cambios sin previo aviso. "
-                         "El ITBIS ha sido calculado conforme a la ley vigente."))
-    with open(pdf_path, 'rb') as f:
-        pdf_data = f.read()
+    pdf_data = generate_pdf_bytes('Cotización', company, client, quotation.items,
+                                  quotation.subtotal, quotation.itbis, quotation.total,
+                                  seller=quotation.seller, payment_method=quotation.payment_method,
+                                  bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
+                                  date=quotation.date, valid_until=quotation.valid_until,
+                                  footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
+                                          "Los precios están sujetos a cambios sin previo aviso. "
+                                          "El ITBIS ha sido calculado conforme a la ley vigente."))
     html = render_template('emails/quotation.html', client=client, company=company, quotation=quotation)
     send_email(client.email, 'Cotización', html, attachments=[(filename, pdf_data)])
     flash(f'Cotización enviada con éxito a {client.email}')
@@ -1993,7 +2639,7 @@ def list_orders():
 @app.route('/pedidos/<int:order_id>/facturar')
 def order_to_invoice(order_id):
     order = company_get(Order, order_id)
-    company = CompanyInfo.query.get(current_company_id())
+    company = db.session.get(CompanyInfo, current_company_id())
     if order.client.is_final_consumer:
         prefix, counter = "B02", "ncf_final"
     else:
@@ -2046,6 +2692,7 @@ def order_to_invoice(order_id):
     db.session.commit()
     flash('Factura generada')
     notify('Factura generada')
+    log_audit('invoice_create', 'invoice', invoice.id, details=f'from_order={order.id};total={invoice.total:.2f}')
     return redirect(url_for('list_invoices'))
 
 @app.route('/pedidos/<int:order_id>/pdf')
@@ -2053,18 +2700,15 @@ def order_pdf(order_id):
     order = company_get(Order, order_id)
     company = get_company_info()
     filename = f'pedido_{order_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
     app.logger.info("Generating order PDF %s", order_id)
-    generate_pdf('Pedido', company, order.client, order.items,
-                 order.subtotal, order.itbis, order.total,
-                 seller=order.seller, payment_method=order.payment_method,
-                 bank=order.bank, doc_number=order.id, note=order.note,
-                 output_path=pdf_path,
-                date=order.date,
-                footer=("Este pedido será procesado tras la confirmación de pago. "
-                        "Tiempo estimado de entrega: 3 a 5 días hábiles."))
-    return send_file(pdf_path, download_name=filename, as_attachment=True)
+    pdf_data = generate_pdf_bytes('Pedido', company, order.client, order.items,
+                                  order.subtotal, order.itbis, order.total,
+                                  seller=order.seller, payment_method=order.payment_method,
+                                  bank=order.bank, doc_number=order.id, note=order.note,
+                                  date=order.date,
+                                  footer=("Este pedido será procesado tras la confirmación de pago. "
+                                          "Tiempo estimado de entrega: 3 a 5 días hábiles."))
+    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
 
 # Invoices
 @app.route('/facturas')
@@ -2083,6 +2727,7 @@ def pay_invoice(invoice_id):
     invoice.status = 'Pagada'
     db.session.commit()
     flash('Factura marcada como pagada')
+    log_audit('invoice_paid', 'invoice', invoice.id, details=f'total={invoice.total:.2f}')
     return redirect(url_for('list_invoices'))
 
 
@@ -2104,21 +2749,19 @@ def invoice_pdf(invoice_id):
     invoice = company_get(Invoice, invoice_id)
     company = get_company_info()
     filename = f'factura_{invoice_id}.pdf'
-    pdf_path = os.path.join(app.static_folder, 'pdfs', filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
     app.logger.info("Generating invoice PDF %s", invoice_id)
-    generate_pdf('Factura', company, invoice.client, invoice.items,
-                 invoice.subtotal, invoice.itbis, invoice.total,
-                 ncf=invoice.ncf, seller=invoice.seller,
-                 payment_method=invoice.payment_method, bank=invoice.bank,
-                 purchase_order=invoice.order.customer_po if invoice.order else None,
-                 doc_number=invoice.id,
-                 invoice_type=invoice.invoice_type, note=invoice.note,
-                 output_path=pdf_path, date=invoice.date,
-                 footer=("Factura generada electrónicamente, válida sin firma ni sello. "
-                         "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
-                         "Gracias por su preferencia."))
-    return send_file(pdf_path, download_name=filename, as_attachment=True)
+    pdf_data = generate_pdf_bytes('Factura', company, invoice.client, invoice.items,
+                                  invoice.subtotal, invoice.itbis, invoice.total,
+                                  ncf=invoice.ncf, seller=invoice.seller,
+                                  payment_method=invoice.payment_method, bank=invoice.bank,
+                                  purchase_order=invoice.order.customer_po if invoice.order else None,
+                                  doc_number=invoice.id,
+                                  invoice_type=invoice.invoice_type, note=invoice.note,
+                                  date=invoice.date,
+                                  footer=("Factura generada electrónicamente, válida sin firma ni sello. "
+                                          "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
+                                          "Gracias por su preferencia."))
+    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
 
 @app.route('/pdfs/<path:filename>')
 def serve_pdf(filename):
@@ -2522,7 +3165,7 @@ def account_statement_detail(client_id):
     rows = []
     totals = 0
     aging = {'0-30': 0, '31-60': 0, '61-90': 0, '91-120': 0, '121+': 0}
-    now = datetime.utcnow()
+    now = dom_now()
     for inv in invoices:
         balance = _invoice_balance(inv)
         if balance <= 0:
@@ -2623,7 +3266,7 @@ def export_reportes():
     header = [
         f"Empresa: {company.get('name', '')}",
         f"Rango: {(fecha_inicio or 'Todas')} - {(fecha_fin or 'Todas')}",
-        f"Generado: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} por {user}",
+        f"Generado: {dom_now().strftime('%Y-%m-%d %H:%M')} por {user}",
     ]
     current_app.logger.info(
         "export user=%s company=%s formato=%s tipo=%s filtros=%s",
@@ -2925,9 +3568,10 @@ def contab_dgii():
 @app.route('/api/recommendations')
 def api_recommendations():
     """Return top product recommendations based on past orders."""
-    return jsonify({'products': recommend_products()})
+    return jsonify({'products': recommend_products(current_company_id())})
 
 if __name__ == '__main__':
-    with app.app_context():
-        ensure_admin()
-    app.run(debug=True)
+    debug = os.environ.get('FLASK_DEBUG', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+    host = os.environ.get('HOST', '127.0.0.1')
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host=host, port=port, debug=debug)

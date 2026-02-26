@@ -4,7 +4,7 @@ import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db
-from models import User, CompanyInfo, AccountRequest
+from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement
 from werkzeug.security import generate_password_hash
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def test_admin_access_and_role_change(client):
         user = User.query.filter_by(username='user').first()
     client.post(f'/cpaneltx/users/{user.id}/role', data={'role': 'manager'})
     with app.app_context():
-        assert User.query.get(user.id).role == 'manager'
+        assert db.session.get(User, user.id).role == 'manager'
 
 
 def test_admin_update_email_password(client):
@@ -53,7 +53,7 @@ def test_admin_update_email_password(client):
         user = User.query.filter_by(username='user').first()
     client.post(f'/cpaneltx/users/{user.id}/update', data={'email': 'new@ex.com', 'password': 'newpass'})
     with app.app_context():
-        u = User.query.get(user.id)
+        u = db.session.get(User, user.id)
         assert u.email == 'new@ex.com'
         assert u.check_password('newpass')
 
@@ -99,3 +99,87 @@ def test_account_approval_sends_email(client, monkeypatch):
         # El hash nunca debe aparecer en el correo
         assert user.password not in sent['html']
         assert '/reset/' in sent['html']
+
+
+def test_cpanel_auditoria_view(client):
+    login(client, 'admin', '363636')
+    r = client.get('/cpaneltx/auditoria')
+    assert r.status_code == 200
+    assert b'Auditor' in r.data
+
+
+def test_account_request_approval_writes_audit(client, monkeypatch):
+    with app.app_context():
+        req = AccountRequest(
+            account_type='personal',
+            first_name='Luis',
+            last_name='Doe',
+            company='LuisCo',
+            identifier='002',
+            phone='123',
+            email='luis@example.com',
+            username='luis',
+            password=generate_password_hash('pw'),
+            accepted_terms=True,
+        )
+        db.session.add(req)
+        db.session.commit()
+        rid = req.id
+
+    monkeypatch.setattr('app.send_email', lambda *args, **kwargs: None)
+    login(client, 'admin', '363636')
+    client.post(f'/admin/solicitudes/{rid}/aprobar', data={'role': 'company'})
+
+    with app.app_context():
+        row = AuditLog.query.filter_by(action='account_request_approve').order_by(AuditLog.id.desc()).first()
+        assert row is not None
+        assert row.entity == 'account_request'
+
+
+def test_suspicious_ips_counts_only_request_creation_action(client):
+    with app.app_context():
+        db.session.add_all([
+            AuditLog(action='account_request_approve', entity='account_request', ip='10.10.10.10', status='ok'),
+            AuditLog(action='account_request_reject', entity='account_request', ip='10.10.10.10', status='ok'),
+        ])
+        db.session.commit()
+
+    login(client, 'admin', '363636')
+    resp = client.get('/cpaneltx/auditoria')
+    assert resp.status_code == 200
+    assert b'No hay IPs repetidas en solicitudes de cuenta' in resp.data
+
+
+def test_admin_can_create_system_announcement(client):
+    login(client, 'admin', '363636')
+    resp = client.post('/cpaneltx/avisos', data={
+        'title': 'Mantenimiento',
+        'message': 'Evite registrar cambios entre 10pm y 11pm',
+        'is_active': 'on',
+    }, follow_redirects=True)
+    assert resp.status_code == 200
+    with app.app_context():
+        ann = SystemAnnouncement.query.first()
+        assert ann is not None
+        assert ann.is_active is True
+
+
+
+def test_cpanel_companies_can_select_company_context(client):
+    with app.app_context():
+        other = CompanyInfo(name='Otra', street='', sector='', province='', phone='', rnc='')
+        db.session.add(other)
+        db.session.commit()
+        other_id = other.id
+
+    login(client, 'admin', '363636')
+    r = client.get(f'/cpaneltx/companies/select/{other_id}', follow_redirects=False)
+    assert r.status_code == 302
+
+    with client.session_transaction() as sess:
+        assert sess.get('company_id') == other_id
+
+    clear_resp = client.get('/cpaneltx/companies/clear', follow_redirects=False)
+    assert clear_resp.status_code == 302
+    with client.session_transaction() as sess:
+        assert sess.get('company_id') is None
