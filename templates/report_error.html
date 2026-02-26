@@ -1,0 +1,70 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="max-w-3xl mx-auto bg-white rounded-xl shadow p-6 space-y-4">
+  <div>
+    <h1 class="text-2xl font-bold text-gray-800">Reportar Problema</h1>
+    <p class="text-sm text-gray-600 mt-1">Cuéntanos qué pasó. Te responderemos en un plazo de hasta <strong>72 horas laborables</strong> (puede ser antes).</p>
+  </div>
+
+  <form method="post" class="space-y-4">
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Título del problema *</label>
+      <input name="title" required maxlength="180" class="w-full border rounded-lg px-3 py-2" placeholder="Ej.: No descarga el PDF en facturas" />
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Módulo *</label>
+        <select name="module" class="w-full border rounded-lg px-3 py-2" required>
+          {% for option in modules %}
+          <option value="{{ option }}">{{ option }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Severidad *</label>
+        <select name="severity" class="w-full border rounded-lg px-3 py-2" required>
+          {% for value, label in severities %}
+          <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Página donde pasó (URL)</label>
+        <input name="page_url" class="w-full border rounded-lg px-3 py-2" placeholder="/facturas/15/pdf" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Fecha y hora aproximada</label>
+        <input type="datetime-local" name="happened_at" class="w-full border rounded-lg px-3 py-2" />
+      </div>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">¿Qué esperabas que pasara?</label>
+      <textarea name="expected_behavior" rows="3" class="w-full border rounded-lg px-3 py-2" placeholder="Ej.: Que descargara la factura en PDF"></textarea>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">¿Qué pasó realmente? *</label>
+      <textarea name="actual_behavior" rows="4" required class="w-full border rounded-lg px-3 py-2" placeholder="Ej.: Sale Internal Server Error"></textarea>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Pasos para reproducirlo *</label>
+      <textarea name="steps_to_reproduce" rows="4" required class="w-full border rounded-lg px-3 py-2" placeholder="1) Iniciar sesión 2) Ir a Facturas 3) Clic en PDF..."></textarea>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Correo de contacto (opcional)</label>
+      <input type="email" name="contact_email" class="w-full border rounded-lg px-3 py-2" placeholder="tu-correo@empresa.com" />
+    </div>
+
+    <div class="pt-2">
+      <button class="bg-blue-700 hover:bg-blue-800 text-white font-semibold rounded-lg px-5 py-2.5 transition">Enviar reporte</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
