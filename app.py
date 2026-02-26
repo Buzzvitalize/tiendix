@@ -351,7 +351,7 @@ def _module_available(module_name: str) -> bool:
 
 
 def _ensure_mysql_driver_available(config: dict):
-    """Ensure selected MySQL driver exists; fallback to mysqldb if available."""
+    """Ensure selected MySQL driver exists; fallback to available alternatives."""
     uri = config.get('SQLALCHEMY_DATABASE_URI') or ''
     if not isinstance(uri, str):
         return
@@ -362,15 +362,20 @@ def _ensure_mysql_driver_available(config: dict):
         return
 
     if _module_available('MySQLdb'):
-        fallback_uri = uri.replace('mysql+pymysql://', 'mysql+mysqldb://', 1)
-        config['SQLALCHEMY_DATABASE_URI'] = fallback_uri
+        config['SQLALCHEMY_DATABASE_URI'] = uri.replace('mysql+pymysql://', 'mysql+mysqldb://', 1)
         app.logger.warning('PyMySQL not installed; falling back to mysql+mysqldb driver')
         return
 
-    raise RuntimeError(
-        'MySQL driver not found. Install PyMySQL in your cPanel virtualenv with: '
-        'pip install PyMySQL && restart the Python app.'
+    if _module_available('mysql.connector'):
+        config['SQLALCHEMY_DATABASE_URI'] = uri.replace('mysql+pymysql://', 'mysql+mysqlconnector://', 1)
+        app.logger.warning('PyMySQL not installed; falling back to mysql+mysqlconnector driver')
+        return
+
+    app.logger.error(
+        'MySQL driver not found (pymysql/mysqldb/mysqlconnector). '
+        'Falling back to sqlite temporarily. Install PyMySQL in cPanel virtualenv and restart.'
     )
+    config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.sqlite'
 
 _ensure_mysql_driver_available(app.config)
 db.init_app(app)

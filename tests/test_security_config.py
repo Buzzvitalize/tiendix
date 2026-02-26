@@ -133,10 +133,21 @@ def test_ensure_mysql_driver_available_switches_to_mysqldb(monkeypatch):
     assert cfg['SQLALCHEMY_DATABASE_URI'].startswith('mysql+mysqldb://')
 
 
-def test_ensure_mysql_driver_available_raises_when_no_driver(monkeypatch):
+def test_ensure_mysql_driver_available_falls_back_to_sqlite_when_no_driver(monkeypatch):
     cfg = {'SQLALCHEMY_DATABASE_URI': 'mysql+pymysql://u:p@localhost/db'}
 
     monkeypatch.setattr(app_module, '_module_available', lambda _name: False)
 
-    with pytest.raises(RuntimeError, match='Install PyMySQL'):
-        app_module._ensure_mysql_driver_available(cfg)
+    app_module._ensure_mysql_driver_available(cfg)
+
+    assert cfg['SQLALCHEMY_DATABASE_URI'] == 'sqlite:///database.sqlite'
+
+
+def test_ensure_mysql_driver_available_switches_to_mysqlconnector(monkeypatch):
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'mysql+pymysql://u:p@localhost/db'}
+
+    monkeypatch.setattr(app_module, '_module_available', lambda name: name == 'mysql.connector')
+
+    app_module._ensure_mysql_driver_available(cfg)
+
+    assert cfg['SQLALCHEMY_DATABASE_URI'].startswith('mysql+mysqlconnector://')
