@@ -164,6 +164,14 @@ EMAIL_METRICS = {
 }
 _email_queue = ThreadQueue()
 
+EMAIL_METRICS = {
+    'queued': 0,
+    'sent': 0,
+    'failed': 0,
+    'retries': 0,
+    'skipped': 0,
+}
+_email_queue = ThreadQueue()
 
 def _deliver_email(to, subject, html, attachments=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
