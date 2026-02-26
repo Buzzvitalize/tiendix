@@ -1366,6 +1366,27 @@ def cpanel_companies():
     return render_template('cpanel_companies.html', companies=companies, q=q)
 
 
+
+
+@app.get('/cpaneltx/companies/select/<int:company_id>')
+@admin_only
+def cpanel_company_select(company_id):
+    company = db.session.get(CompanyInfo, company_id)
+    if not company:
+        flash('Empresa no encontrada')
+        return redirect(url_for('cpanel_companies'))
+    session['company_id'] = company_id
+    flash(f'Ahora estás administrando la empresa: {company.name}')
+    return redirect(url_for('list_quotations'))
+
+
+@app.get('/cpaneltx/companies/clear')
+@admin_only
+def cpanel_company_clear():
+    session.pop('company_id', None)
+    flash('Vista global de administrador restaurada')
+    return redirect(url_for('cpanel_companies'))
+
 @app.post('/cpaneltx/companies/<int:cid>/delete')
 @admin_only
 def cpanel_company_delete(cid):
