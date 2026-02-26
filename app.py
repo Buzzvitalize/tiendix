@@ -347,7 +347,10 @@ app.jinja_env.filters['money'] = _fmt_money
 
 
 def _module_available(module_name: str) -> bool:
-    return importlib.util.find_spec(module_name) is not None
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ModuleNotFoundError, ValueError):
+        return False
 
 
 def _ensure_mysql_driver_available(config: dict):
@@ -366,13 +369,8 @@ def _ensure_mysql_driver_available(config: dict):
         app.logger.warning('PyMySQL not installed; falling back to mysql+mysqldb driver')
         return
 
-    if _module_available('mysql.connector'):
-        config['SQLALCHEMY_DATABASE_URI'] = uri.replace('mysql+pymysql://', 'mysql+mysqlconnector://', 1)
-        app.logger.warning('PyMySQL not installed; falling back to mysql+mysqlconnector driver')
-        return
-
     app.logger.error(
-        'MySQL driver not found (pymysql/mysqldb/mysqlconnector). '
+        'MySQL driver not found (pymysql/mysqldb). '
         'Falling back to sqlite temporarily. Install PyMySQL in cPanel virtualenv and restart.'
     )
     config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.sqlite'
