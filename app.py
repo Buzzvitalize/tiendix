@@ -61,10 +61,12 @@ from sqlalchemy import func, inspect, or_
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import load_only, joinedload
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
 from werkzeug.security import generate_password_hash
 import os
 import re
 import json
+import uuid
 from ai import recommend_products
 from weasy_pdf import generate_pdf, generate_pdf_bytes
 from account_pdf import generate_account_statement_pdf
@@ -195,6 +197,43 @@ def block_sensitive_paths():
     if requested in SENSITIVE_PATHS or requested.endswith(SENSITIVE_EXTENSIONS):
         return ('Not Found', 404)
     return None
+
+
+@app.before_request
+def attach_request_context_log():
+    g.request_id = uuid.uuid4().hex[:12]
+    g.request_started_at = time.time()
+    app.logger.info(
+        'REQ_START id=%s method=%s path=%s ip=%s ua=%s',
+        g.request_id,
+        request.method,
+        request.full_path,
+        request.remote_addr,
+        request.user_agent.string[:200] if request.user_agent else '',
+    )
+
+
+@app.after_request
+def log_response_result(response):
+    rid = getattr(g, 'request_id', '-')
+    started = getattr(g, 'request_started_at', None)
+    duration_ms = int((time.time() - started) * 1000) if started else -1
+    app.logger.info(
+        'REQ_END id=%s status=%s duration_ms=%s',
+        rid,
+        response.status_code,
+        duration_ms,
+    )
+    return response
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(exc):
+    if isinstance(exc, HTTPException):
+        return exc
+    rid = getattr(g, 'request_id', '-')
+    app.logger.exception('REQ_FAIL id=%s method=%s path=%s err=%s', rid, request.method, request.path, exc)
+    return render_template('error.html', request_id=rid), 500
 
 
 if not os.path.exists('logs'):

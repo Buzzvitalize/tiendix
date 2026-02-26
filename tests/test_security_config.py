@@ -94,3 +94,17 @@ def test_app_version_metadata_present():
     assert app_module.APP_VERSION
     assert isinstance(app_module.APP_VERSION_HIGHLIGHTS, list)
     assert app_module.APP_VERSION_HIGHLIGHTS
+
+
+def test_unhandled_exception_returns_custom_500_page():
+    endpoint = 'test_force_500_runtime'
+    if endpoint not in app_module.app.view_functions:
+        app_module.app.add_url_rule('/_test/force-500', endpoint, lambda: (_ for _ in ()).throw(RuntimeError('boom')))
+
+    client = app_module.app.test_client()
+    with client.session_transaction() as sess:
+        sess['user_id'] = 1
+    resp = client.get('/_test/force-500')
+
+    assert resp.status_code == 500
+    assert b'ID de error' in resp.data
