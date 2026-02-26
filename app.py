@@ -44,6 +44,7 @@ from models import (
     ExportLog,
     NcfLog,
     Notification,
+    SystemAnnouncement,
     ErrorReport,
     AuditLog,
     dom_now,
@@ -499,6 +500,20 @@ def _migrate_legacy_schema():
             )"""
         )
 
+    if not inspector.has_table('system_announcement'):
+        statements.append(
+            """CREATE TABLE system_announcement (
+                id INTEGER PRIMARY KEY,
+                title VARCHAR(180) NOT NULL,
+                message TEXT NOT NULL,
+                scheduled_for DATETIME,
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                created_by INTEGER REFERENCES user(id),
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            )"""
+        )
+
     if inspector.has_table('user'):
         # Normaliza usuarios antiguos a minúsculas para evitar conflictos por mayúsculas.
         db.session.execute(db.text("UPDATE user SET username = lower(username) WHERE username <> lower(username)"))
@@ -506,9 +521,15 @@ def _migrate_legacy_schema():
     if inspector.has_table('account_request'):
         db.session.execute(db.text("UPDATE account_request SET username = lower(username) WHERE username <> lower(username)"))
 
+    wrote_normalizations = False
+    if inspector.has_table('user'):
+        wrote_normalizations = True
+    if inspector.has_table('account_request'):
+        wrote_normalizations = True
+
     for stmt in statements:
         db.session.execute(db.text(stmt))
-    if statements:
+    if statements or wrote_normalizations:
         db.session.commit()
 
 
@@ -815,6 +836,7 @@ def load_company():
 @app.context_processor
 def inject_company():
     notif_count = 0
+    active_announcement = None
     try:
         cid = current_company_id()
         if 'user_id' in session and cid:
@@ -838,9 +860,20 @@ def inject_company():
                 session['low_stock_scan_at'] = now_ts
 
             notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
+        active_announcement = (
+            SystemAnnouncement.query
+            .filter_by(is_active=True)
+            .order_by(SystemAnnouncement.updated_at.desc())
+            .first()
+        )
     except Exception as exc:
         app.logger.exception('Failed to compute notifications: %s', exc)
-    return {'company': getattr(g, 'company', None), 'notification_count': notif_count, 'current_dom_time': dom_now().strftime('%d/%m/%Y %I:%M %p')}
+    return {
+        'company': getattr(g, 'company', None),
+        'notification_count': notif_count,
+        'current_dom_time': dom_now().strftime('%d/%m/%Y %I:%M %p'),
+        'active_announcement': active_announcement,
+    }
 
 
 def get_company_info():
@@ -1058,6 +1091,7 @@ def reject_request(req_id):
 
 
 @app.route('/reportar-error', methods=['GET', 'POST'])
+@app.route('/reportar-problema', methods=['GET', 'POST'])
 def report_error():
     if 'user_id' not in session:
         flash('Debe iniciar sesión para reportar un error')
@@ -1132,6 +1166,55 @@ def report_error():
 @admin_only
 def cpanel_home():
     return render_template('cpaneltx.html')
+
+
+@app.route('/cpaneltx/avisos', methods=['GET', 'POST'])
+@admin_only
+def cpanel_announcements():
+    if request.method == 'POST':
+        title = (request.form.get('title') or '').strip()
+        message = (request.form.get('message') or '').strip()
+        scheduled_for_raw = (request.form.get('scheduled_for') or '').strip()
+        is_active = request.form.get('is_active') == 'on'
+
+        if not title or not message:
+            flash('Título y mensaje son obligatorios')
+            return redirect(url_for('cpanel_announcements'))
+
+        scheduled_for = None
+        if scheduled_for_raw:
+            try:
+                scheduled_for = datetime.fromisoformat(scheduled_for_raw)
+            except ValueError:
+                flash('La fecha/hora programada no es válida')
+                return redirect(url_for('cpanel_announcements'))
+
+        ann = SystemAnnouncement(
+            title=title,
+            message=message,
+            scheduled_for=scheduled_for,
+            is_active=is_active,
+            created_by=session.get('user_id'),
+        )
+        db.session.add(ann)
+        db.session.commit()
+        log_audit('announcement_create', 'system_announcement', ann.id, details=f'active={is_active}')
+        flash('Aviso general creado')
+        return redirect(url_for('cpanel_announcements'))
+
+    announcements = SystemAnnouncement.query.order_by(SystemAnnouncement.updated_at.desc()).all()
+    return render_template('cpanel_announcements.html', announcements=announcements)
+
+
+@app.post('/cpaneltx/avisos/<int:ann_id>/estado')
+@admin_only
+def cpanel_announcement_status(ann_id):
+    ann = SystemAnnouncement.query.get_or_404(ann_id)
+    ann.is_active = request.form.get('is_active') == 'on'
+    db.session.commit()
+    log_audit('announcement_status', 'system_announcement', ann.id, details=f'active={ann.is_active}')
+    flash('Estado de aviso actualizado')
+    return redirect(url_for('cpanel_announcements'))
 
 
 @app.route('/cpaneltx/users')

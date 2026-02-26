@@ -38,7 +38,7 @@
       </details>
 
       <a href="{{ url_for('reportes') }}" class="nav-link">Reportes</a>
-      <a href="{{ url_for('report_error') }}" class="block px-3 py-2 rounded-md font-semibold bg-blue-600/90 hover:bg-blue-500 text-white shadow-sm transition duration-150">Reportar Error</a>
+      <a href="{{ url_for('report_error') }}" class="block px-3 py-2 rounded-md font-semibold bg-cyan-800 hover:bg-cyan-700 text-cyan-50 shadow-sm transition duration-150 flex items-center gap-2"><span>🛟</span><span>Reportar Problema</span></a>
       {% if session.get('role') == 'admin' %}
       <a href="{{ url_for('cpanel_home') }}" class="nav-link">CPanel</a>
       <a href="{{ url_for('admin_requests') }}" class="nav-link">Solicitudes</a>
@@ -63,6 +63,17 @@
       </a>
     </header>
     <section class="flex-1 p-4 md:p-6 overflow-y-auto">
+      {% if active_announcement %}
+      <div class="max-w-7xl mx-auto mb-3">
+        <div class="rounded-lg border border-amber-300 bg-amber-50 text-amber-900 px-4 py-3 shadow-sm">
+          <div class="font-semibold">📢 {{ active_announcement.title }}</div>
+          <div class="text-sm">{{ active_announcement.message }}</div>
+          {% if active_announcement.scheduled_for %}
+          <div class="text-xs mt-1 font-medium">Horario programado: {{ active_announcement.scheduled_for.strftime('%d/%m/%Y %I:%M %p') }}</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
       <div class="flex justify-end items-center gap-3 mb-2 hidden md:flex">
         {% if session.get('user_id') %}<span class="text-sm font-medium bg-white border border-gray-200 shadow-sm rounded-full px-3 py-1 text-gray-700 hover:shadow transition" title="Hora República Dominicana">🇩🇴 Hora RD: {{ current_dom_time }}</span>{% endif %}
         <a href="{{ url_for('notifications_view') }}" class="relative">

@@ -37,7 +37,7 @@ def login(c, username='user', password='123'):
 
 def test_report_error_form_submit(client):
     login(client)
-    resp = client.post('/reportar-error', data={
+    resp = client.post('/reportar-problema', data={
         'title': 'Error al generar PDF',
         'module': 'PDF / Descargas',
         'severity': 'alta',
@@ -53,14 +53,14 @@ def test_report_error_form_submit(client):
 
 
 def test_report_error_requires_login(client):
-    resp = client.get('/reportar-error', follow_redirects=True)
+    resp = client.get('/reportar-problema', follow_redirects=True)
     assert resp.status_code == 200
     assert b'login' in resp.data.lower()
 
 
 def test_admin_can_view_error_reports(client):
     login(client)
-    client.post('/reportar-error', data={
+    client.post('/reportar-problema', data={
         'title': 'Error login',
         'module': 'Login / Acceso',
         'severity': 'media',

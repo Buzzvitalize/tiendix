@@ -4,7 +4,7 @@ import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db
-from models import User, CompanyInfo, AccountRequest, AuditLog
+from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement
 from werkzeug.security import generate_password_hash
 
 @pytest.fixture
@@ -148,3 +148,17 @@ def test_suspicious_ips_counts_only_request_creation_action(client):
     resp = client.get('/cpaneltx/auditoria')
     assert resp.status_code == 200
     assert b'No hay IPs repetidas en solicitudes de cuenta' in resp.data
+
+
+def test_admin_can_create_system_announcement(client):
+    login(client, 'admin', '363636')
+    resp = client.post('/cpaneltx/avisos', data={
+        'title': 'Mantenimiento',
+        'message': 'Evite registrar cambios entre 10pm y 11pm',
+        'is_active': 'on',
+    }, follow_redirects=True)
+    assert resp.status_code == 200
+    with app.app_context():
+        ann = SystemAnnouncement.query.first()
+        assert ann is not None
+        assert ann.is_active is True

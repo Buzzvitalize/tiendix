@@ -319,6 +319,17 @@ class ErrorReport(db.Model):
     user_agent = db.Column(db.String(255))
     admin_notes = db.Column(db.Text)
 
+
+class SystemAnnouncement(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(180), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    scheduled_for = db.Column(db.DateTime)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
+
 class AuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
