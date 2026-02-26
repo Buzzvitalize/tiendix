@@ -88,3 +88,9 @@ def test_resolve_database_url_prioritizes_database_url(monkeypatch):
 
     assert resolved == 'mysql+pymysql://u:p@localhost/db'
     assert source == 'DATABASE_URL'
+
+
+def test_app_version_metadata_present():
+    assert app_module.APP_VERSION
+    assert isinstance(app_module.APP_VERSION_HIGHLIGHTS, list)
+    assert app_module.APP_VERSION_HIGHLIGHTS

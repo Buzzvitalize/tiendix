@@ -61,6 +61,9 @@
         <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
         {% if notification_count %}<span class="absolute -top-1 -right-1 bg-red-600 rounded-full text-xs w-4 h-4 flex items-center justify-center">{{ notification_count }}</span>{% endif %}
       </a>
+      <button type="button" onclick="openVersionModal()" class="ml-2 text-[11px] font-semibold bg-cyan-800/80 border border-cyan-500/50 rounded-full px-2 py-1 text-cyan-100 hover:bg-cyan-700 transition" title="Ver información de versión">
+        v{{ app_version }} log
+      </button>
     </header>
     <section class="flex-1 p-4 md:p-6 overflow-y-auto">
       {% if active_announcement %}
@@ -80,6 +83,9 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
           {% if notification_count %}<span class="absolute -top-1 -right-1 bg-red-600 rounded-full text-xs w-4 h-4 flex items-center justify-center">{{ notification_count }}</span>{% endif %}
         </a>
+        <button type="button" onclick="openVersionModal()" class="text-xs font-semibold bg-cyan-900 text-cyan-100 border border-cyan-700 rounded-full px-3 py-1 hover:bg-cyan-800 transition shadow-sm" title="Ver cambios de la versión">
+          versión {{ app_version }} log
+        </button>
       </div>
       <div class="max-w-7xl mx-auto">
         {% with messages = get_flashed_messages() %}
@@ -99,6 +105,30 @@
   </div>
   <div id="overlay" class="fixed inset-0 bg-black/50 hidden z-30 md:hidden"></div>
 
+  <div id="version-modal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/50" onclick="closeVersionModal()"></div>
+    <div class="relative max-w-2xl mx-auto mt-20 bg-white rounded-xl shadow-2xl border border-gray-200 p-5">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h3 class="text-lg font-bold text-gray-900">Tiendix versión {{ app_version }}</h3>
+          <p class="text-sm text-gray-600">Detalle interactivo de esta versión del proyecto.</p>
+        </div>
+        <button type="button" onclick="closeVersionModal()" class="text-gray-500 hover:text-gray-800 text-xl leading-none">&times;</button>
+      </div>
+      <div class="mt-4 rounded-lg bg-cyan-50 border border-cyan-100 p-4">
+        <h4 class="font-semibold text-cyan-900 mb-2">¿Qué incluye esta versión?</h4>
+        <ul class="list-disc pl-6 space-y-1 text-sm text-cyan-950">
+          {% for item in app_version_highlights %}
+          <li>{{ item }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      <div class="mt-4 flex justify-end">
+        <button type="button" onclick="closeVersionModal()" class="px-4 py-2 rounded-md bg-gray-900 text-white hover:bg-black">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     function openSidebar(){
       document.getElementById('sidebar').classList.remove('-translate-x-full');
@@ -107,6 +137,12 @@
     function closeSidebar(){
       document.getElementById('sidebar').classList.add('-translate-x-full');
       document.getElementById('overlay').classList.add('hidden');
+    }
+    function openVersionModal(){
+      document.getElementById('version-modal').classList.remove('hidden');
+    }
+    function closeVersionModal(){
+      document.getElementById('version-modal').classList.add('hidden');
     }
     document.getElementById('overlay').addEventListener('click', closeSidebar);
     function formatPhone(v){

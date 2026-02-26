@@ -106,6 +106,14 @@ app = Flask(__name__)
 APP_ENV = os.getenv('APP_ENV', 'development').strip().lower()
 
 
+APP_VERSION = os.getenv('APP_VERSION', '2.0.5').strip() or '2.0.5'
+APP_VERSION_HIGHLIGHTS = [
+    'Conexión MySQL/cPanel simplificada con soporte DB_* y DATABASE_URL.',
+    'Reportar Problema, anuncios del sistema y panel administrativo ampliado.',
+    'Renderizado PDF con fpdf2 para descargas más estables en hosting compartido.',
+    'Refuerzo de seguridad: validación runtime, bloqueo de rutas sensibles y mejoras de auditoría.',
+]
+
 def _normalized_database_url(url: str | None) -> str | None:
     """Normalize DB URL so cPanel/MySQL strings work with SQLAlchemy.
 
@@ -928,6 +936,8 @@ def inject_company():
         'notification_count': notif_count,
         'current_dom_time': dom_now().strftime('%d/%m/%Y %I:%M %p'),
         'active_announcement': active_announcement,
+        'app_version': APP_VERSION,
+        'app_version_highlights': APP_VERSION_HIGHLIGHTS,
     }
 
 

@@ -180,3 +180,57 @@ Opcional:
 - Puedes importar `CPANEL_MYSQL_BASE.sql` desde phpMyAdmin para dejar la base
   con configuración inicial de charset/collation.
 - Luego SIEMPRE ejecuta `flask db upgrade` para crear/actualizar tablas.
+
+13) Checklist cPanel (clic por clic) en 5–10 minutos
+---------------------------------------------------
+Ejemplo real (reemplaza `usuariocpanel` por tu usuario real):
+- DB Name: `usuariocpanel_tiendix`
+- DB User: `usuariocpanel_tiendix_user`
+- Dominio app: `app.tudominio.com`
+
+Paso 1: Crear BD y usuario
+1. cPanel > MySQL Databases.
+2. En "Create New Database" crea: `tiendix` (cPanel le pondrá prefijo).
+3. En "MySQL Users" crea usuario: `tiendix_user`.
+4. En "Add User To Database" enlaza usuario + base y marca "ALL PRIVILEGES".
+
+Paso 2: Configurar Python App
+1. cPanel > Setup Python App.
+2. Click "Create Application".
+3. Python version: 3.10+.
+4. Application root: `tiendix`.
+5. Application URL: tu subdominio.
+6. Startup file: `passenger_wsgi.py`.
+7. Guarda y copia comando de activación del entorno.
+
+Paso 3: Variables de entorno (recomendado DB_*)
+En Setup Python App > Environment Variables agrega:
+- `APP_ENV=production`
+- `SECRET_KEY=` (larga y privada)
+- `DB_DRIVER=mysql+pymysql`
+- `DB_HOST=localhost`
+- `DB_PORT=3306`
+- `DB_NAME=usuariocpanel_tiendix`
+- `DB_USER=usuariocpanel_tiendix_user`
+- `DB_PASSWORD=TU_PASSWORD_DB`
+
+Paso 4: Instalar y migrar
+1. Terminal de cPanel.
+2. Ejecuta el comando de activación del venv que te da Setup Python App.
+3. Entra al proyecto: `cd ~/tiendix`
+4. Instala: `pip install -r requirements.txt`
+5. Migra: `flask db upgrade`
+
+Paso 5: Reiniciar y validar
+1. Regresa a Setup Python App > Restart.
+2. Abre la URL de la app.
+3. Verifica login y que puedas crear una cotización.
+4. Si falla conexión DB, revisa nombre final con prefijo y contraseña.
+
+Checklist rápido final:
+- [ ] Base y usuario creados con prefijo cPanel.
+- [ ] Usuario agregado a base con ALL PRIVILEGES.
+- [ ] Variables `DB_*` o `DATABASE_URL` configuradas.
+- [ ] `flask db upgrade` ejecutado sin error.
+- [ ] App reiniciada y funcionando.
+
