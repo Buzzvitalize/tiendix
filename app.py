@@ -165,12 +165,20 @@ database_url, database_url_source = _resolve_database_url()
 if database_url:
     os.environ['DATABASE_URL'] = database_url
 
+
+def _apply_database_uri_override(config: dict, resolved_url: str | None):
+    """Ensure runtime config uses resolved DB URL even after class import-time defaults."""
+    if resolved_url:
+        config['SQLALCHEMY_DATABASE_URI'] = resolved_url
+
+
 config_map = {
     'development': DevelopmentConfig,
     'testing': TestingConfig,
     'production': ProductionConfig,
 }
 app.config.from_object(config_map.get(APP_ENV, DevelopmentConfig))
+_apply_database_uri_override(app.config, database_url)
 app.config['APP_ENV'] = APP_ENV
 validate_runtime_config(app.config)
 
@@ -247,6 +255,7 @@ app.logger.setLevel(logging.INFO)
 app.logger.info('Tiendix startup')
 if database_url:
     app.logger.info('Database configuration loaded from %s', database_url_source)
+    app.logger.info('Database URI override applied from resolved environment variables')
 else:
     app.logger.info('Database configuration loaded from default config')
 
@@ -267,6 +276,14 @@ EMAIL_METRICS = {
 }
 _email_queue = ThreadQueue()
 
+EMAIL_METRICS = {
+    'queued': 0,
+    'sent': 0,
+    'failed': 0,
+    'retries': 0,
+    'skipped': 0,
+}
+_email_queue = ThreadQueue()
 
 def _deliver_email(to, subject, html, attachments=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:

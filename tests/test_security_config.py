@@ -108,3 +108,16 @@ def test_unhandled_exception_returns_custom_500_page():
 
     assert resp.status_code == 500
     assert b'ID de error' in resp.data
+
+
+
+def test_apply_database_uri_override_sets_uri():
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'sqlite:///database.sqlite'}
+    app_module._apply_database_uri_override(cfg, 'mysql+pymysql://u:p@localhost/db?charset=utf8mb4')
+    assert cfg['SQLALCHEMY_DATABASE_URI'] == 'mysql+pymysql://u:p@localhost/db?charset=utf8mb4'
+
+
+def test_apply_database_uri_override_keeps_existing_when_none():
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'sqlite:///database.sqlite'}
+    app_module._apply_database_uri_override(cfg, None)
+    assert cfg['SQLALCHEMY_DATABASE_URI'] == 'sqlite:///database.sqlite'
