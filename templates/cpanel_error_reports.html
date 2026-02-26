@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="p-4 space-y-4">
+  <h1 class="text-2xl font-semibold">Reportes de errores</h1>
+
+  <form method="get" class="grid gap-3 md:grid-cols-4 bg-white p-4 rounded shadow">
+    <input type="text" name="q" value="{{ q }}" placeholder="Buscar por título, usuario o IP" class="border rounded px-3 py-2" />
+    <select name="severity" class="border rounded px-3 py-2">
+      <option value="">Severidad (todas)</option>
+      {% for v,l in [('baja','Baja'),('media','Media'),('alta','Alta'),('critica','Crítica')] %}
+      <option value="{{ v }}" {% if severity == v %}selected{% endif %}>{{ l }}</option>
+      {% endfor %}
+    </select>
+    <select name="status" class="border rounded px-3 py-2">
+      <option value="">Estado (todos)</option>
+      {% for v,l in [('abierto','Abierto'),('en_proceso','En proceso'),('resuelto','Resuelto'),('cerrado','Cerrado')] %}
+      <option value="{{ v }}" {% if status == v %}selected{% endif %}>{{ l }}</option>
+      {% endfor %}
+    </select>
+    <button class="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-2">Filtrar</button>
+  </form>
+
+  <div class="space-y-3">
+    {% for row in reports.items %}
+    <div class="bg-white rounded shadow p-4">
+      <div class="flex flex-wrap justify-between gap-2">
+        <div>
+          <h3 class="font-semibold text-lg">#{{ row.id }} · {{ row.title }}</h3>
+          <p class="text-sm text-gray-600">{{ row.created_at.strftime('%Y-%m-%d %H:%M:%S') }} · {{ row.module }} · Usuario: {{ row.username or '-' }} · IP: <span class="font-mono">{{ row.ip }}</span></p>
+        </div>
+        <div class="text-sm">
+          <span class="px-2 py-1 rounded bg-red-100 text-red-700">{{ row.severity }}</span>
+          <span class="px-2 py-1 rounded bg-blue-100 text-blue-700">{{ row.status }}</span>
+        </div>
+      </div>
+
+      <div class="mt-3 grid md:grid-cols-2 gap-3 text-sm">
+        <div><strong>Qué pasó:</strong><br>{{ row.actual_behavior }}</div>
+        <div><strong>Pasos:</strong><br>{{ row.steps_to_reproduce }}</div>
+      </div>
+
+      <form method="post" action="{{ url_for('cpanel_error_report_status', report_id=row.id) }}" class="mt-3 grid md:grid-cols-3 gap-2">
+        <select name="status" class="border rounded px-3 py-2">
+          {% for v,l in [('abierto','Abierto'),('en_proceso','En proceso'),('resuelto','Resuelto'),('cerrado','Cerrado')] %}
+          <option value="{{ v }}" {% if row.status == v %}selected{% endif %}>{{ l }}</option>
+          {% endfor %}
+        </select>
+        <input name="admin_notes" value="{{ row.admin_notes or '' }}" class="border rounded px-3 py-2" placeholder="Notas internas" />
+        <button class="bg-gray-900 hover:bg-black text-white rounded px-3 py-2">Guardar estado</button>
+      </form>
+    </div>
+    {% else %}
+    <div class="bg-white rounded shadow p-4 text-gray-600">No hay reportes.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
