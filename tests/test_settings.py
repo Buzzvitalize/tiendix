@@ -81,5 +81,5 @@ def test_manager_can_promote_user(client):
         uid = User.query.filter_by(username='u1').first().id
     client.post('/ajustes/usuarios', data={"user_id": uid, "first_name": "A", "last_name": "B", "username": "u1", "role": "manager", "action": "update"})
     with app.app_context():
-        assert User.query.get(uid).role == 'manager'
+        assert db.session.get(User, uid).role == 'manager'
 
