@@ -1,0 +1,10 @@
+# Security hardening for Apache/cPanel deployments
+# Blocks direct download of source code and sensitive files.
+
+<FilesMatch "(?i)^(app\.py|auth\.py|config\.py|models\.py|requirements\.txt|passenger_wsgi\.py|\.env|\.env\.example|database\.sqlite)$">
+  Require all denied
+</FilesMatch>
+
+<FilesMatch "(?i)\.(py|pyc|sqlite|db|env|ini|pem|key|log)$">
+  Require all denied
+</FilesMatch>

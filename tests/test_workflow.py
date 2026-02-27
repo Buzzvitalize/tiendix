@@ -163,3 +163,23 @@ def test_new_quotation_with_warehouse(client):
     with app.app_context():
         ps = ProductStock.query.filter_by(product_id=1, warehouse_id=1).first()
         assert ps.stock == 8
+
+
+
+def test_new_quotation_validity_period(client):
+    login(client, 'user1', 'pass')
+    resp = client.post('/cotizaciones/nueva', data={
+        'client_id': '1',
+        'seller': 'User One',
+        'payment_method': 'Efectivo',
+        'warehouse_id': '1',
+        'validity_period': '15d',
+        'product_id[]': ['1'],
+        'product_quantity[]': ['1'],
+        'product_discount[]': ['0'],
+    }, follow_redirects=True)
+    assert resp.status_code == 200
+    with app.app_context():
+        q = Quotation.query.order_by(Quotation.id.desc()).first()
+        assert q is not None
+        assert (q.valid_until - q.date).days == 15
