@@ -2149,6 +2149,25 @@ def cpanel_company_delete(cid):
     return redirect(url_for('cpanel_companies'))
 
 
+
+
+@app.route('/cpaneltx/quotations')
+@admin_only
+def cpanel_quotations():
+    quotations = Quotation.query.options(joinedload(Quotation.client)).all()
+    return render_template('cpanel_quotations.html', quotations=quotations)
+
+
+@app.post('/cpaneltx/quotations/<int:qid>/delete')
+@admin_only
+def cpanel_quotation_delete(qid):
+    quotation = Quotation.query.get_or_404(qid)
+    db.session.delete(quotation)
+    db.session.commit()
+    flash('Cotización eliminada')
+    log_audit('cpanel_quotation_delete', 'quotation', qid)
+    return redirect(url_for('cpanel_quotations'))
+
 @app.route('/cpaneltx/orders')
 @admin_only
 def cpanel_orders():
