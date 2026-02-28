@@ -272,6 +272,19 @@ def generate_pdf(title: str, company: dict, client: dict, items: list,
     return str(output_path)
 
 
+def _output_pdf_bytes(pdf: FPDF) -> bytes:
+    """Return bytes for both fpdf2 and legacy pyfpdf implementations."""
+    try:
+        payload = pdf.output(dest='S')
+    except TypeError:
+        payload = pdf.output()
+    if isinstance(payload, (bytes, bytearray)):
+        return bytes(payload)
+    if isinstance(payload, str):
+        return payload.encode('latin-1', 'replace')
+    return bytes(payload)
+
+
 def generate_pdf_bytes(title: str, company: dict, client: dict, items: list,
                        subtotal: float, itbis: float, total: float, ncf: str | None = None,
                        seller: str | None = None, payment_method: str | None = None,
@@ -295,7 +308,4 @@ def generate_pdf_bytes(title: str, company: dict, client: dict, items: list,
     total_discount = sum(float(i.get('discount', 0) or 0) for i in item_dicts)
     _draw_totals(pdf, subtotal, itbis, total, total_discount, note, footer)
 
-    payload = pdf.output()
-    if isinstance(payload, (bytes, bytearray)):
-        return bytes(payload)
-    return str(payload).encode('latin-1')
+    return _output_pdf_bytes(pdf)

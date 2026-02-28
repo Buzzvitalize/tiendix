@@ -35,3 +35,27 @@ def test_generate_pdf_bytes_handles_accented_text_without_ascii_crash(monkeypatc
         doc_number=2,
     )
     assert data.startswith(b'%PDF')
+
+
+def test_generate_pdf_bytes_prefers_dest_s_output(monkeypatch):
+    called = {'dest': None}
+    original = weasy_pdf.FPDF.output
+
+    def _wrapped(self, *args, **kwargs):
+        if 'dest' in kwargs:
+            called['dest'] = kwargs['dest']
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(weasy_pdf.FPDF, 'output', _wrapped)
+    data = weasy_pdf.generate_pdf_bytes(
+        'Cotizacion',
+        {'name': 'CompA', 'address': 'Dir', 'phone': '809', 'website': 'x.com', 'logo': None},
+        {'name': 'Cliente', 'address': 'A', 'phone': '809', 'identifier': '001', 'email': 'a@b.com'},
+        [{'code': 'P1', 'reference': 'R1', 'product_name': 'Prod', 'unit': 'Unidad', 'unit_price': 100, 'quantity': 1, 'discount': 0}],
+        100,
+        18,
+        118,
+        doc_number=3,
+    )
+    assert data.startswith(b'%PDF')
+    assert called['dest'] == 'S'
