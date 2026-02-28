@@ -4,8 +4,9 @@ import pytest
 from io import BytesIO
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+import app as app_module
 from app import app, db
-from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement, AppSetting, RNCRegistry
+from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement, AppSetting, RNCRegistry, Client, Quotation
 from werkzeug.security import generate_password_hash
 
 @pytest.fixture
@@ -275,3 +276,24 @@ def test_rnc_lookup_reads_registry_table(client):
     resp = client.get('/api/rnc/303-03030-3')
     assert resp.status_code == 200
     assert resp.get_json().get('name') == 'Empresa Registry'
+
+
+def test_admin_can_delete_quotation_from_cpanel(client):
+    with app.app_context():
+        company = CompanyInfo.query.first()
+        cli = Client(name='CliQ', company_id=company.id)
+        db.session.add(cli)
+        db.session.flush()
+        q = Quotation(client_id=cli.id, subtotal=10, itbis=1.8, total=11.8, company_id=company.id, valid_until=app_module.dom_now())
+        db.session.add(q)
+        db.session.commit()
+        qid = q.id
+
+    login(client, 'admin', '363636')
+    resp = client.get('/cpaneltx/quotations')
+    assert resp.status_code == 200
+    del_resp = client.post(f'/cpaneltx/quotations/{qid}/delete', follow_redirects=True)
+    assert del_resp.status_code == 200
+
+    with app.app_context():
+        assert db.session.get(Quotation, qid) is None

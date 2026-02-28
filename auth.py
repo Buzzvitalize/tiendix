@@ -38,6 +38,7 @@ def verify_reset_token(token, max_age=3600):
 
 
 @auth_bp.route('/reset', methods=['GET', 'POST'])
+@auth_bp.route('/recovery-request', methods=['GET', 'POST'])
 def reset_request():
     form = ResetRequestForm()
     if form.validate_on_submit():
@@ -45,10 +46,15 @@ def reset_request():
         user = User.query.filter_by(email=email).first()
         if user:
             token = generate_reset_token(user)
-            reset_url = url_for('auth.reset_password', token=token, _external=True)
+            reset_url = url_for('auth.recovery_password', token=token, _external=True)
             from app import send_email
             html = render_template('emails/password_reset.html', reset_url=reset_url)
-            send_email(email, 'Restablecer contraseña', html)
+            send_email(
+                email,
+                '[Tiendix] - recuperacion de contraseña',
+                html,
+                asynchronous=False,
+            )
         flash('Si el correo existe, se enviará un enlace de restablecimiento', 'login')
         return redirect(url_for('auth.login'))
     return render_template('reset_request.html', form=form)
@@ -82,7 +88,8 @@ def logout():
     return redirect(url_for('auth.login'))
 
 
-@auth_bp.route('/reset/<token>', methods=['GET', 'POST'])
+@auth_bp.route('/reset/<token>', methods=['GET', 'POST'], endpoint='reset_password')
+@auth_bp.route('/recovery/<token>', methods=['GET', 'POST'], endpoint='recovery_password')
 def reset_password(token):
     user = verify_reset_token(token)
     if not user:

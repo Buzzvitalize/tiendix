@@ -6,16 +6,43 @@ but renders directly with fpdf2 to avoid native WeasyPrint dependencies.
 from __future__ import annotations
 
 from datetime import datetime
+import inspect
 import os
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from fpdf import FPDF
-from fpdf.enums import XPos, YPos
+try:
+    from fpdf.enums import XPos, YPos
+except Exception:  # pragma: no cover
+    class XPos:
+        LMARGIN = 'LMARGIN'
+        RIGHT = 'RIGHT'
+
+    class YPos:
+        NEXT = 'NEXT'
+        TOP = 'TOP'
 
 BLUE = (30, 58, 138)
 
 DOM_TZ = ZoneInfo("America/Santo_Domingo")
+
+
+
+
+_CELL_SUPPORTS_NEW_X = 'new_x' in inspect.signature(FPDF.cell).parameters
+
+
+def _cell(pdf: FPDF, w, h=0, txt='', border=0, align='', fill=False, new_x=None, new_y=None):
+    """Compatibility wrapper for fpdf2 and legacy pyfpdf cell signatures."""
+    if _CELL_SUPPORTS_NEW_X:
+        return pdf.cell(w, h, txt, border=border, align=align, fill=fill, new_x=new_x, new_y=new_y)
+
+    ln = 1 if new_y == YPos.NEXT else 0
+    result = pdf.cell(w, h, txt, border=border, align=align, fill=fill, ln=ln)
+    if new_x == XPos.LMARGIN:
+        pdf.set_x(pdf.l_margin)
+    return result
 
 
 def _to_dom_time(value: datetime) -> datetime:
@@ -29,10 +56,18 @@ def _fmt_money(value: float) -> str:
 
 
 def _safe_text(value) -> str:
-    """Return latin-1-safe text for built-in FPDF fonts."""
+    """Return latin-1-safe text for built-in fonts (keeps Spanish accents)."""
     text = '' if value is None else str(value)
     return text.encode('latin-1', 'replace').decode('latin-1')
 
+
+
+
+def _clean_optional(value) -> str:
+    if value is None:
+        return ''
+    text = str(value).strip()
+    return '' if text.lower() == 'none' else text
 
 def _item_to_dict(item) -> dict:
     if isinstance(item, dict):
@@ -50,19 +85,30 @@ def _item_to_dict(item) -> dict:
 
 def _client_to_dict(client) -> dict:
     if isinstance(client, dict):
-        return client
+        return {
+            'name': _clean_optional(client.get('name')),
+            'address': _clean_optional(client.get('address')),
+            'phone': _clean_optional(client.get('phone')),
+            'identifier': _clean_optional(client.get('identifier')),
+            'email': _clean_optional(client.get('email')),
+        }
+
     address = ", ".join(
-        filter(None, [getattr(client, 'street', None), getattr(client, 'sector', None), getattr(client, 'province', None)])
+        part for part in [
+            _clean_optional(getattr(client, 'street', None)),
+            _clean_optional(getattr(client, 'sector', None)),
+            _clean_optional(getattr(client, 'province', None)),
+        ] if part
     )
-    name = getattr(client, 'name', '')
-    last = getattr(client, 'last_name', '')
+    name = _clean_optional(getattr(client, 'name', ''))
+    last = _clean_optional(getattr(client, 'last_name', ''))
     full_name = f"{name} {last}".strip()
     return {
         'name': full_name,
         'address': address,
-        'phone': getattr(client, 'phone', '') or '',
-        'identifier': getattr(client, 'identifier', '') or '',
-        'email': getattr(client, 'email', '') or '',
+        'phone': _clean_optional(getattr(client, 'phone', '')),
+        'identifier': _clean_optional(getattr(client, 'identifier', '')),
+        'email': _clean_optional(getattr(client, 'email', '')),
     }
 
 
@@ -85,7 +131,7 @@ def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_numbe
     pdf.set_xy(text_x, top_y)
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 18)
-    pdf.cell(0, 8, _safe_text(company.get('name', 'Tiendix')), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    _cell(pdf, 0, 8, _safe_text(company.get('name', 'Tiendix')), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Helvetica', '', 10)
@@ -94,10 +140,10 @@ def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_numbe
         pdf.multi_cell(0, 5, _safe_text(company['address']))
     if company.get('website'):
         pdf.set_x(text_x)
-        pdf.cell(0, 5, _safe_text(company['website']), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(company['website']), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if company.get('phone'):
         pdf.set_x(text_x)
-        pdf.cell(0, 5, _safe_text(f"Tel: {company['phone']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Tel: {company['phone']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     company_block_bottom = max(pdf.get_y(), logo_bottom_y)
     pdf.set_y(company_block_bottom + 15)  # 1.5 cm
@@ -105,16 +151,16 @@ def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_numbe
     # Bloque de documento y fechas
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 16)
-    pdf.cell(0, 8, _safe_text(title), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    _cell(pdf, 0, 8, _safe_text(title), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Helvetica', '', 10)
     if doc_number is not None:
-        pdf.cell(0, 5, _safe_text(f"{title} N° {doc_number}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 5, _safe_text(f"Fecha de creación: {date.strftime('%d/%m/%Y %I:%M %p')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"{title} N° {doc_number}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    _cell(pdf, 0, 5, _safe_text(f"Fecha de creación: {date.strftime('%d/%m/%Y %I:%M %p')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if ncf:
-        pdf.cell(0, 5, _safe_text(f"NCF: {ncf}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"NCF: {ncf}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if valid_until:
-        pdf.cell(0, 5, _safe_text(f"Válido hasta: {valid_until.strftime('%d/%m/%Y')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Valido hasta: {valid_until.strftime('%d/%m/%Y')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.ln(15)  # 1.5 cm
 
@@ -122,17 +168,17 @@ def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_numbe
 def _draw_client_block(pdf: FPDF, client: dict):
     pdf.ln(2)
     pdf.set_font('Helvetica', 'B', 11)
-    pdf.cell(0, 6, _safe_text('Detalles del cliente'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    _cell(pdf, 0, 6, _safe_text('Detalles del cliente'), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_font('Helvetica', '', 10)
-    pdf.cell(0, 5, _safe_text(f"Nombre: {client.get('name','')}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    _cell(pdf, 0, 5, _safe_text(f"Nombre: {client.get('name','')}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('identifier'):
-        pdf.cell(0, 5, _safe_text(f"Cédula/RNC: {client['identifier']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Cedula/RNC: {client['identifier']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('address'):
-        pdf.cell(0, 5, _safe_text(f"Dirección: {client['address']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Direccion: {client['address']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('phone'):
-        pdf.cell(0, 5, _safe_text(f"Teléfono: {client['phone']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Telefono: {client['phone']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('email'):
-        pdf.cell(0, 5, _safe_text(f"Correo: {client['email']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Correo: {client['email']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
 
 def _draw_meta_block(pdf: FPDF, seller: str | None, payment_method: str | None, bank: str | None, purchase_order: str | None):
@@ -140,7 +186,7 @@ def _draw_meta_block(pdf: FPDF, seller: str | None, payment_method: str | None, 
     if seller:
         details.append(f"Vendedor: {seller}")
     if payment_method:
-        pay = f"Método de pago: {payment_method}"
+        pay = f"Metodo de pago: {payment_method}"
         if bank:
             pay += f" - {bank}"
         details.append(pay)
@@ -151,7 +197,7 @@ def _draw_meta_block(pdf: FPDF, seller: str | None, payment_method: str | None, 
         pdf.ln(2)
         pdf.set_font('Helvetica', '', 10)
         for line in details:
-            pdf.cell(0, 5, _safe_text(line), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            _cell(pdf, 0, 5, _safe_text(line), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
 
 def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
@@ -163,7 +209,7 @@ def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
     pdf.set_text_color(255, 255, 255)
     pdf.set_font('Helvetica', 'B', 8)
     for h, w in zip(headers, widths):
-        pdf.cell(w, 7, _safe_text(h), border=1, align='C', fill=True, new_x=XPos.RIGHT, new_y=YPos.TOP)
+        _cell(pdf, w, 7, _safe_text(h), border=1, align='C', fill=True, new_x=XPos.RIGHT, new_y=YPos.TOP)
     pdf.ln()
 
     pdf.set_text_color(0, 0, 0)
@@ -182,7 +228,7 @@ def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
         ]
         for idx, (text, w) in enumerate(zip(row, widths)):
             align = 'R' if idx in (4, 6, 7) else ('C' if idx == 5 else 'L')
-            pdf.cell(w, 6, _safe_text(text), border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
+            _cell(pdf, w, 6, _safe_text(text), border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.ln()
 
     # Añade filas vacías para que el documento no se vea vacío cuando hay pocos productos.
@@ -190,18 +236,18 @@ def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
     for _ in range(empty_rows):
         for idx, w in enumerate(widths):
             align = 'R' if idx in (4, 6, 7) else ('C' if idx == 5 else 'L')
-            pdf.cell(w, 6, '', border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
+            _cell(pdf, w, 6, '', border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.ln()
 
 
 def _draw_totals(pdf: FPDF, subtotal: float, itbis: float, total: float, discount: float, note: str | None, footer: str | None):
     pdf.ln(2)
     pdf.set_font('Helvetica', 'B', 10)
-    pdf.cell(0, 6, _safe_text(f"Subtotal: {_fmt_money(subtotal)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 6, _safe_text(f"Descuento: {_fmt_money(discount)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.cell(0, 6, _safe_text(f"ITBIS (18%): {_fmt_money(itbis)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    _cell(pdf, 0, 6, _safe_text(f"Subtotal: {_fmt_money(subtotal)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    _cell(pdf, 0, 6, _safe_text(f"Descuento: {_fmt_money(discount)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    _cell(pdf, 0, 6, _safe_text(f"ITBIS (18%): {_fmt_money(itbis)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(*BLUE)
-    pdf.cell(0, 7, _safe_text(f"Total: {_fmt_money(total)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    _cell(pdf, 0, 7, _safe_text(f"Total: {_fmt_money(total)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0, 0, 0)
 
     if note:
@@ -243,6 +289,19 @@ def generate_pdf(title: str, company: dict, client: dict, items: list,
     return str(output_path)
 
 
+def _output_pdf_bytes(pdf: FPDF) -> bytes:
+    """Return bytes for both fpdf2 and legacy pyfpdf implementations."""
+    try:
+        payload = pdf.output(dest='S')
+    except TypeError:
+        payload = pdf.output()
+    if isinstance(payload, (bytes, bytearray)):
+        return bytes(payload)
+    if isinstance(payload, str):
+        return payload.encode('latin-1', 'replace')
+    return bytes(payload)
+
+
 def generate_pdf_bytes(title: str, company: dict, client: dict, items: list,
                        subtotal: float, itbis: float, total: float, ncf: str | None = None,
                        seller: str | None = None, payment_method: str | None = None,
@@ -266,7 +325,4 @@ def generate_pdf_bytes(title: str, company: dict, client: dict, items: list,
     total_discount = sum(float(i.get('discount', 0) or 0) for i in item_dicts)
     _draw_totals(pdf, subtotal, itbis, total, total_discount, note, footer)
 
-    payload = pdf.output()
-    if isinstance(payload, (bytes, bytearray)):
-        return bytes(payload)
-    return str(payload).encode('latin-1')
+    return _output_pdf_bytes(pdf)
