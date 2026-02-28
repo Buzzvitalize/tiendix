@@ -59,3 +59,22 @@ def test_generate_pdf_bytes_prefers_dest_s_output(monkeypatch):
     )
     assert data.startswith(b'%PDF')
     assert called['dest'] == 'S'
+
+
+def test_client_to_dict_omits_none_literals():
+    class Dummy:
+        name = 'Juan'
+        last_name = None
+        street = None
+        sector = 'Centro'
+        province = None
+        phone = None
+        identifier = None
+        email = None
+
+    client = weasy_pdf._client_to_dict(Dummy())
+    assert client['name'] == 'Juan'
+    assert client['address'] == 'Centro'
+    assert client['phone'] == ''
+    assert client['identifier'] == ''
+    assert client['email'] == ''
