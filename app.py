@@ -1404,6 +1404,27 @@ def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, com
 
 
 
+def _pdf_log_dir() -> Path:
+    configured = (app.config.get('PDF_LOG_DIR') or '').strip()
+    if configured:
+        return Path(configured)
+    return Path(app.root_path) / 'logpdf'
+
+
+def _log_pdf_event(doc_type: str, doc_number: int | str, status: str, message: str | None = None) -> None:
+    """Write PDF click/generation diagnostics to logpdf/<doc_type>.log."""
+    try:
+        log_dir = _pdf_log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        line_time = dom_now().strftime('%Y-%m-%d %H:%M:%S')
+        safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+        msg = (message or '').replace('\n', ' ').strip()
+        with (log_dir / f'{safe_type}.log').open('a', encoding='utf-8') as f:
+            f.write(f"{line_time}|{safe_type}|{doc_number}|{status}|{msg}\n")
+    except Exception as exc:  # pragma: no cover
+        app.logger.warning('Could not write PDF debug log (%s %s): %s', doc_type, doc_number, exc)
+
+
 def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: bytes, download_name: str, company_name: str | None = None, archive: bool = True):
     """Archive PDF copy (best-effort) and return download response.
 
@@ -3150,13 +3171,15 @@ def quotation_pdf(quotation_id):
     app.logger.info("Generating quotation PDF %s", quotation_id)
     try:
         pdf_data = _build_quotation_pdf_bytes(quotation, company)
-        return _archive_and_send_pdf(
+        response = _archive_and_send_pdf(
             doc_type='cotizacion',
             doc_number=quotation.id,
             pdf_data=pdf_data,
             download_name=filename,
             company_name=company.get('name'),
         )
+        _log_pdf_event('cotizacion', quotation.id, 'ok', 'pdf generado y entregado')
+        return response
     except Exception as exc:
         app.logger.exception('Quotation PDF generation failed id=%s: %s', quotation_id, exc)
         archived = _archived_pdf_path(
@@ -3166,10 +3189,12 @@ def quotation_pdf(quotation_id):
             company_id=current_company_id(),
         )
         if archived.exists():
+            _log_pdf_event('cotizacion', quotation.id, 'fallback_ok', f'generacion fallo: {exc}; servido desde archivo')
             try:
                 return send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
             except TypeError:
                 return send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
+        _log_pdf_event('cotizacion', quotation.id, 'error', f'generacion fallo y no existe archivo: {exc}')
         raise
 
 
