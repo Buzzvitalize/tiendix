@@ -52,11 +52,25 @@ def test_admin_update_email_password(client):
     login(client, 'admin', '363636')
     with app.app_context():
         user = User.query.filter_by(username='user').first()
-    client.post(f'/cpaneltx/users/{user.id}/update', data={'email': 'new@ex.com', 'password': 'newpass'})
+    client.post(
+        f'/cpaneltx/users/{user.id}/update',
+        data={
+            'email': 'new@ex.com',
+            'first_name': 'Nuevo',
+            'last_name': 'Nombre',
+            'password': 'newpass',
+        },
+    )
     with app.app_context():
         u = db.session.get(User, user.id)
         assert u.email == 'new@ex.com'
+        assert u.first_name == 'Nuevo'
+        assert u.last_name == 'Nombre'
         assert u.check_password('newpass')
+        row = AuditLog.query.filter_by(action='cpanel_user_update', entity_id=str(user.id)).order_by(AuditLog.id.desc()).first()
+        assert row is not None
+        assert 'first_name' in (row.details or '')
+        assert 'password' in (row.details or '')
 
 
 def test_non_admin_denied(client):
@@ -194,6 +208,17 @@ def test_cpanel_can_toggle_signup_mode(client):
         setting = db.session.get(AppSetting, 'signup_auto_approve')
         assert setting is not None
         assert setting.value == '1'
+
+
+def test_cpanel_user_activity_page(client):
+    login(client, 'admin', '363636')
+    with app.app_context():
+        user = User.query.filter_by(username='user').first()
+
+    client.post(f'/cpaneltx/users/{user.id}/role', data={'role': 'manager'})
+    resp = client.get(f'/cpaneltx/users/{user.id}/actividad')
+    assert resp.status_code == 200
+    assert b'cpanel_user_role' in resp.data
 
 
 def test_signup_auto_approve_creates_manager_without_request(client):

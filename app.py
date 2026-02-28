@@ -59,7 +59,7 @@ except ModuleNotFoundError:  # pragma: no cover
     Workbook = None
 from datetime import datetime, timedelta
 from pathlib import Path
-from sqlalchemy import func, inspect, or_
+from sqlalchemy import and_, func, inspect, or_
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import load_only, joinedload
 from sqlalchemy.engine import make_url
@@ -878,6 +878,9 @@ def notify(message):
 def log_audit(action, entity, entity_id=None, status='ok', details=''):
     """Persist audit trail events for CPanel review."""
     try:
+        details_text = details
+        if isinstance(details, (dict, list, tuple)):
+            details_text = json.dumps(details, ensure_ascii=False, sort_keys=True)
         entry = AuditLog(
             user_id=session.get('user_id'),
             username=session.get('username') or session.get('full_name'),
@@ -887,7 +890,7 @@ def log_audit(action, entity, entity_id=None, status='ok', details=''):
             entity=entity,
             entity_id=str(entity_id) if entity_id is not None else None,
             status=status,
-            details=details,
+            details=str(details_text or ''),
             ip=(request.headers.get('X-Forwarded-For', request.remote_addr) or '')[:45],
             user_agent=(request.headers.get('User-Agent') or '')[:255],
         )
@@ -1598,17 +1601,47 @@ def cpanel_users():
 @admin_only
 def cpanel_user_update(user_id):
     user = User.query.get_or_404(user_id)
-    email = request.form.get('email')
-    password = request.form.get('password')
+    email = (request.form.get('email') or '').strip()
+    first_name = (request.form.get('first_name') or '').strip()
+    last_name = (request.form.get('last_name') or '').strip()
+    password = request.form.get('password') or ''
+
+    changed = {}
+
+    if first_name and first_name != (user.first_name or ''):
+        changed['first_name'] = {'from': user.first_name or '', 'to': first_name}
+        user.first_name = first_name
+
+    if last_name and last_name != (user.last_name or ''):
+        changed['last_name'] = {'from': user.last_name or '', 'to': last_name}
+        user.last_name = last_name
+
     if email:
+        if email != (user.email or ''):
+            changed['email'] = {'from': user.email or '', 'to': email}
         user.email = email
+
     if password:
         if len(password) < 6:
             flash('La contraseña debe tener mínimo 6 caracteres')
             return redirect(url_for('cpanel_users'))
         user.set_password(password)
+        changed['password'] = {'changed': True, 'length': len(password)}
+
+    if not changed:
+        flash('No se detectaron cambios para este usuario')
+        return redirect(url_for('cpanel_users'))
+
     db.session.commit()
-    log_audit('cpanel_user_update', 'user', user_id, details=f'email={email or ""};password_changed={bool(password)}')
+    log_audit('cpanel_user_update', 'user', user_id, details={
+        'target': {
+            'id': user.id,
+            'username': user.username,
+            'company_id': user.company_id,
+            'role': user.role,
+        },
+        'changes': changed,
+    })
     flash('Usuario actualizado')
     return redirect(url_for('cpanel_users'))
 
@@ -1619,10 +1652,24 @@ def cpanel_user_role(user_id):
     user = User.query.get_or_404(user_id)
     role = request.form.get('role')
     if role in ('admin', 'manager', 'company'):
+        previous_role = user.role
+        if previous_role == role:
+            flash('El usuario ya tenía ese rol')
+            return redirect(url_for('cpanel_users'))
         user.role = role
         db.session.commit()
         flash('Rol actualizado')
-        log_audit('cpanel_user_role', 'user', user_id, details=f'role={role}')
+        log_audit('cpanel_user_role', 'user', user_id, details={
+            'target': {
+                'id': user.id,
+                'username': user.username,
+                'company_id': user.company_id,
+            },
+            'role': {
+                'from': previous_role,
+                'to': role,
+            },
+        })
     return redirect(url_for('cpanel_users'))
 
 
@@ -1630,11 +1677,39 @@ def cpanel_user_role(user_id):
 @admin_only
 def cpanel_user_delete(user_id):
     user = User.query.get_or_404(user_id)
+    deleted_snapshot = {
+        'id': user.id,
+        'username': user.username,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'email': user.email,
+        'role': user.role,
+        'company_id': user.company_id,
+    }
     db.session.delete(user)
     db.session.commit()
     flash('Usuario eliminado')
-    log_audit('cpanel_user_delete', 'user', user_id)
+    log_audit('cpanel_user_delete', 'user', user_id, details={'deleted_user': deleted_snapshot})
     return redirect(url_for('cpanel_users'))
+
+
+@app.route('/cpaneltx/users/<int:user_id>/actividad')
+@admin_only
+def cpanel_user_activity(user_id):
+    user = User.query.get_or_404(user_id)
+    page = request.args.get('page', 1, type=int)
+    logs = (
+        AuditLog.query
+        .filter(
+            or_(
+                and_(AuditLog.entity == 'user', AuditLog.entity_id == str(user_id)),
+                AuditLog.user_id == user_id,
+            )
+        )
+        .order_by(AuditLog.created_at.desc())
+        .paginate(page=page, per_page=25, error_out=False)
+    )
+    return render_template('cpanel_user_activity.html', target_user=user, logs=logs)
 
 
 @app.route('/cpaneltx/companies')
