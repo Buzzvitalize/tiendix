@@ -13,6 +13,7 @@ from flask import (
     current_app,
     Response,
     stream_with_context,
+    has_request_context,
 )
 from flask_migrate import Migrate, upgrade
 import logging
@@ -60,7 +61,7 @@ except ModuleNotFoundError:  # pragma: no cover
     Workbook = None
 from datetime import datetime, timedelta
 from pathlib import Path
-from sqlalchemy import and_, func, inspect, or_
+from sqlalchemy import and_, extract, func, inspect, or_
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import load_only, joinedload
 from sqlalchemy.engine import make_url
@@ -297,14 +298,6 @@ EMAIL_METRICS = {
 }
 _email_queue = ThreadQueue()
 
-EMAIL_METRICS = {
-    'queued': 0,
-    'sent': 0,
-    'failed': 0,
-    'retries': 0,
-    'skipped': 0,
-}
-_email_queue = ThreadQueue()
 
 def _deliver_email(to, subject, html, attachments=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
@@ -932,7 +925,15 @@ def _quotation_validity_days(value: str | None) -> int:
 
 
 def current_company_id():
-    return session.get('company_id')
+    if not has_request_context():
+        return None
+    cid = session.get('company_id')
+    if cid is None and session.get('role') != 'admin' and session.get('user_id'):
+        user = db.session.get(User, session.get('user_id'))
+        if user and user.company_id is not None:
+            cid = user.company_id
+            session['company_id'] = cid
+    return cid
 
 
 def notify(message):
@@ -2886,7 +2887,15 @@ def settings_company():
         db.session.commit()
         flash('Ajustes guardados')
         return redirect(url_for('settings_company'))
-    return render_template('ajustes_empresa.html', company=company)
+    owner_user = (
+        User.query.filter_by(company_id=company.id, role='admin')
+        .order_by(User.id.asc())
+        .first()
+    )
+    if not owner_user:
+        owner_user = User.query.filter_by(company_id=company.id).order_by(User.id.asc()).first()
+    owner_email = owner_user.email if owner_user else ''
+    return render_template('ajustes_empresa.html', company=company, owner_email=owner_email)
 
 
 @app.route('/ajustes/usuarios/agregar', methods=['GET', 'POST'])
@@ -3345,8 +3354,8 @@ def reportes():
     today = datetime.utcnow()
     month_total, month_clients = (
         q.filter(
-            func.strftime('%Y', Invoice.date) == str(today.year),
-            func.strftime('%m', Invoice.date) == f"{today.month:02d}",
+            extract('year', Invoice.date) == today.year,
+            extract('month', Invoice.date) == today.month,
         )
         .with_entities(
             func.coalesce(func.sum(Invoice.total), 0),
@@ -3356,7 +3365,7 @@ def reportes():
     )
     avg_ticket_month = month_total / month_clients if month_clients else 0
     year_total, year_clients = (
-        q.filter(func.strftime('%Y', Invoice.date) == str(today.year))
+        q.filter(extract('year', Invoice.date) == today.year)
         .with_entities(
             func.coalesce(func.sum(Invoice.total), 0),
             func.count(func.distinct(Invoice.client_id)),
@@ -3463,14 +3472,21 @@ def reportes():
 
     # trend last 24 months
     trend_query = (
-        q.with_entities(func.strftime('%Y-%m', Invoice.date), func.sum(Invoice.total))
+        q.with_entities(
+            extract('year', Invoice.date).label('y'),
+            extract('month', Invoice.date).label('m'),
+            func.sum(Invoice.total),
+        )
         .filter(Invoice.date >= datetime(today.year - 2, today.month, 1))
-        .group_by(func.strftime('%Y-%m', Invoice.date))
-        .order_by(func.strftime('%Y-%m', Invoice.date))
+        .group_by('y', 'm')
+        .order_by('y', 'm')
     )
     # ensure a list of dicts is always provided even if the query returns no rows
     trend_rows = trend_query.all() if trend_query is not None else []
-    trend_24 = [{'month': m, 'total': tot or 0} for m, tot in trend_rows]
+    trend_24 = [
+        {'month': f"{int(y):04d}-{int(m):02d}", 'total': tot or 0}
+        for y, m, tot in trend_rows
+    ]
 
     status_totals = {s: 0 for s in INVOICE_STATUSES}
     status_counts = {s: 0 for s in INVOICE_STATUSES}
@@ -3495,8 +3511,8 @@ def reportes():
     current_year = datetime.utcnow().year
     monthly_totals = (
         q.with_entities(
-            func.strftime('%Y', Invoice.date).label('y'),
-            func.strftime('%m', Invoice.date).label('m'),
+            extract('year', Invoice.date).label('y'),
+            extract('month', Invoice.date).label('m'),
             func.sum(Invoice.total),
         )
         .filter(Invoice.date >= datetime(current_year - 1, 1, 1))

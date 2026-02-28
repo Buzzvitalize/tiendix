@@ -17,9 +17,11 @@ def client(tmp_path):
         company = CompanyInfo(name='Comp', street='s', sector='s', province='p', phone='1', rnc='1')
         db.session.add(company)
         db.session.flush()
+        owner = User(username='owner', first_name='Own', last_name='Er', role='admin', company_id=company.id, email='owner@comp.test')
+        owner.set_password('pass')
         u = User(username='mgr', first_name='Man', last_name='Ager', role='manager', company_id=company.id)
         u.set_password('pass')
-        db.session.add(u)
+        db.session.add_all([owner, u])
         db.session.commit()
     with app.test_client() as client:
         client.post('/login', data={'username': 'mgr', 'password': 'pass'})
@@ -83,3 +85,12 @@ def test_manager_can_promote_user(client):
     with app.app_context():
         assert db.session.get(User, uid).role == 'manager'
 
+
+
+def test_settings_show_owner_email_readonly_and_unsaved_warning(client):
+    resp = client.get('/ajustes/empresa')
+    assert resp.status_code == 200
+    assert b'Correo del propietario' in resp.data
+    assert b'owner@comp.test' in resp.data
+    assert b'readonly' in resp.data
+    assert 'Aún no has guardado los cambios' in resp.data.decode('utf-8')

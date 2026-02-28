@@ -28,6 +28,8 @@ def client(tmp_path):
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
     app.config['PDF_ARCHIVE_ROOT'] = str(tmp_path / 'pdf_archive')
     with app.app_context():
+        db.session.remove()
+        db.engine.dispose()
         db.create_all()
         c1 = CompanyInfo(name='CompA', street='', sector='', province='', phone='', rnc='')
         c2 = CompanyInfo(name='CompB', street='', sector='', province='', phone='', rnc='')
@@ -80,7 +82,9 @@ def client(tmp_path):
     with app.test_client() as client:
         yield client
     with app.app_context():
+        db.session.remove()
         db.drop_all()
+        db.engine.dispose()
     if db_path.exists():
         db_path.unlink()
 
@@ -111,7 +115,8 @@ def test_conversion_and_pdf(client):
         order_id = order.id
     client.get(f'/pedidos/{order_id}/facturar')
     with app.app_context():
-        invoice = Invoice.query.first()
+        invoice = Invoice.query.filter_by(order_id=order_id).order_by(Invoice.id.desc()).first()
+        assert invoice is not None
         product = Product.query.filter_by(code='P1').first()
         movement = InventoryMovement.query.filter_by(product_id=product.id, reference_type='Order', reference_id=order_id).first()
     assert product.stock == 9
