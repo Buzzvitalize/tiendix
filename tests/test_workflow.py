@@ -215,6 +215,21 @@ def test_new_quotation_validity_period(client):
         assert (q.valid_until - q.date).days == 15
 
 
+
+
+def test_order_and_invoice_create_archive_files_without_pdf_route(client):
+    login(client, 'user1', 'pass')
+    client.post('/cotizaciones/1/convertir')
+    with app.app_context():
+        order = Order.query.order_by(Order.id.desc()).first()
+    archive_root = Path(app.config['PDF_ARCHIVE_ROOT'])
+    assert list(archive_root.glob(f'compa/*/pedido/{order.id:02d}.pdf'))
+
+    client.get(f'/pedidos/{order.id}/facturar')
+    with app.app_context():
+        invoice = Invoice.query.order_by(Invoice.id.desc()).first()
+    assert list(archive_root.glob(f'compa/*/factura/{invoice.id:02d}.pdf'))
+
 def test_pdf_archive_folder_structure(client):
     login(client, 'user1', 'pass')
 

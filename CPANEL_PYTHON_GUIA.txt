@@ -278,6 +278,8 @@ Haz esto:
 - Subcarpetas: `755`
 - Archivos PDF: `644`
 - Si usas SSH, puedes aplicar: `chown -R TU_USUARIO:TU_USUARIO /home/TU_USUARIO/tiendix_data/generated_docs`
+- `passenger_wsgi.py` NO necesita permisos especiales de escritura para PDFs.
+  Lo importante es que el usuario de la app tenga escritura en `PDF_ARCHIVE_ROOT`.
 
 4. Reiniciar aplicación
 - Setup Python App > Restart
