@@ -31,6 +31,7 @@
       <div>
         <label for="new-client-id" class="block text-sm font-medium text-gray-700 mb-1">Documento</label>
         <input id="new-client-id" name="new_client_id" class="input id-mask" placeholder="Cédula">
+        <p id="new-client-rnc-status" class="text-xs mt-1 text-gray-500 hidden"></p>
       </div>
       <div>
         <label for="new-client-phone" class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
@@ -161,6 +162,35 @@ window.addEventListener('load', () => {
   const idField=document.getElementById('new-client-id');
   const lastField=document.getElementById('new-client-last');
   const phoneField=document.getElementById('new-client-phone');
+  const nameField=document.getElementById('new-client-name');
+  const rncStatus=document.getElementById('new-client-rnc-status');
+
+  function setRncStatus(message, ok=false){
+    rncStatus.textContent = message;
+    rncStatus.classList.remove('hidden','text-gray-500','text-green-700','text-red-600');
+    rncStatus.classList.add(ok ? 'text-green-700' : 'text-red-600');
+  }
+
+  async function lookupRncForQuotation(){
+    if(idField.dataset.docType!=='rnc') return;
+    const r=(idField.value||'').replace(/-/g,'').trim();
+    if(r.length!==9){
+      setRncStatus('RNC incompleto. Debe tener 9 dígitos.');
+      return;
+    }
+    try{
+      const response = await fetch(`/api/rnc/${r}`);
+      const data = await response.json();
+      if(data.name){
+        if(!nameField.value.trim()) nameField.value=data.name;
+        setRncStatus('RNC disponible: empresa encontrada.', true);
+      }else{
+        setRncStatus('No ha sido encontrado este RNC.');
+      }
+    }catch(_err){
+      setRncStatus('No se pudo consultar el RNC en este momento.');
+    }
+  }
 
   function setClientInputsEnabled(enabled){
     clientPanel.querySelectorAll('input').forEach(i=>i.disabled=!enabled);
@@ -182,11 +212,15 @@ window.addEventListener('load', () => {
       idField.placeholder='Cédula';
       idField.dataset.docType='cedula';
       idField.required=false;
+      rncStatus.textContent='';
+      rncStatus.className='text-xs mt-1 text-gray-500 hidden';
     }else{
       lastField.classList.add('hidden');
       idField.placeholder='RNC *';
       idField.dataset.docType='rnc';
       idField.required=true;
+      rncStatus.className='text-xs mt-1 text-gray-500';
+      rncStatus.textContent='Digite RNC y salga del campo para validar disponibilidad.';
     }
     applyDocMask(idField);
   }
@@ -195,15 +229,7 @@ window.addEventListener('load', () => {
 
   phoneField.addEventListener('input',e=>{ e.target.value=formatPhone(e.target.value); });
   idField.addEventListener('input',e=>applyDocMask(e.target));
-  idField.addEventListener('blur',e=>{
-    if(e.target.dataset.docType==='rnc'){
-      const r=e.target.value.replace(/-/g,'');
-      fetch(`/api/rnc/${r}`).then(r=>r.json()).then(data=>{
-        const nameField=document.getElementById('new-client-name');
-        if(data.name && !nameField.value){ nameField.value=data.name; }
-      });
-    }
-  });
+  idField.addEventListener('blur', lookupRncForQuotation);
 
   document.getElementById('save-client').addEventListener('click', async () => {
     const payload={
@@ -231,7 +257,7 @@ window.addEventListener('load', () => {
       select.value=data.id;
       clientPanel.classList.add('hidden');
       setClientInputsEnabled(false);
-      document.getElementById('new-client-name').value='';
+      nameField.value='';
       document.getElementById('new-client-last').value='';
       idField.value='';
       phoneField.value='';
@@ -239,6 +265,8 @@ window.addEventListener('load', () => {
       document.getElementById('new-client-street').value='';
       document.getElementById('new-client-sector').value='';
       document.getElementById('new-client-province').value='';
+      rncStatus.textContent='';
+      rncStatus.className='text-xs mt-1 text-gray-500 hidden';
     } else {
       alert(data.error || 'Error');
     }

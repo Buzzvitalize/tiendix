@@ -332,12 +332,29 @@ class SystemAnnouncement(db.Model):
 
 
 
+
+
+class RNCRegistry(db.Model):
+    __table_args__ = (
+        db.Index('ix_rnc_registry_updated_at', 'updated_at'),
+    )
+    rnc = db.Column(db.String(20), primary_key=True)
+    name = db.Column(db.String(180), nullable=False)
+    source = db.Column(db.String(40), nullable=False, default='upload')
+    updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
+
 class AppSetting(db.Model):
     key = db.Column(db.String(80), primary_key=True)
     value = db.Column(db.String(255), nullable=False)
     updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
 
 class AuditLog(db.Model):
+    __table_args__ = (
+        db.Index('ix_audit_log_created_at', 'created_at'),
+        db.Index('ix_audit_log_action_created_at', 'action', 'created_at'),
+        db.Index('ix_audit_log_entity_entity_id', 'entity', 'entity_id'),
+        db.Index('ix_audit_log_user_id_created_at', 'user_id', 'created_at'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))

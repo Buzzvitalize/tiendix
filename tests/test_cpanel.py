@@ -1,10 +1,11 @@
 import os
 import sys
 import pytest
+from io import BytesIO
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db
-from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement, AppSetting
+from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement, AppSetting, RNCRegistry
 from werkzeug.security import generate_password_hash
 
 @pytest.fixture
@@ -249,3 +250,28 @@ def test_signup_auto_approve_creates_manager_without_request(client):
         assert created is not None
         assert created.role == 'manager'
         assert AccountRequest.query.filter_by(username='autouser').first() is None
+
+
+def test_cpanel_can_import_rnc_file(client):
+    login(client, 'admin', '363636')
+    payload = {
+        'rnc_file': (BytesIO(b'101010101|Empresa Uno\n202020202|Empresa Dos\nlinea-invalida\n'), 'RNC.txt')
+    }
+    resp = client.post('/cpaneltx/rnc', data=payload, content_type='multipart/form-data', follow_redirects=True)
+    assert resp.status_code == 200
+    with app.app_context():
+        r1 = db.session.get(RNCRegistry, '101010101')
+        r2 = db.session.get(RNCRegistry, '202020202')
+        assert r1 is not None and r1.name == 'Empresa Uno'
+        assert r2 is not None and r2.name == 'Empresa Dos'
+
+
+def test_rnc_lookup_reads_registry_table(client):
+    login(client, 'admin', '363636')
+    with app.app_context():
+        db.session.add(RNCRegistry(rnc='303030303', name='Empresa Registry', source='test'))
+        db.session.commit()
+
+    resp = client.get('/api/rnc/303-03030-3')
+    assert resp.status_code == 200
+    assert resp.get_json().get('name') == 'Empresa Registry'
