@@ -1243,30 +1243,81 @@ def get_company_info():
 
 def _company_short_slug(company_name: str | None) -> str:
     base = (company_name or 'empresa').strip().lower()
-    base = re.sub(r'[^a-z0-9\s]', '', base)
-    first = (base.split() or ['empresa'])[0]
-    return (first[:8] or 'empresa')
+    base = re.sub(r'[^a-z0-9\s-]', '', base)
+    base = re.sub(r'[\s_-]+', '-', base).strip('-')
+    return (base[:40] or 'empresa')
 
 
 def _company_private_token(company_id: int | None, company_name: str | None) -> str:
     seed = f"{app.config.get('SECRET_KEY','tiendix')}:{company_id or 0}:{company_name or ''}"
-    return hashlib.sha256(seed.encode('utf-8')).hexdigest()[:8]
+    token_number = int(hashlib.sha256(seed.encode('utf-8')).hexdigest(), 16) % 1_000_000
+    return f"{token_number:06d}"
+
+
+def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> str | None:
+    base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
+    if not base_url:
+        return None
+    cid = company_id if company_id is not None else current_company_id()
+    name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    short = _company_short_slug(name)
+    token = _company_private_token(cid, name)
+    safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
+    return f"{base_url}/{short}/{token}/{safe_type}/{number}.pdf"
+
+
+def _archive_root_dir() -> Path:
+    configured = (app.config.get('PDF_ARCHIVE_ROOT') or '').strip()
+    if configured:
+        return Path(configured)
+    return Path(app.root_path) / 'generated_docs'
+
+
+def _archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> Path:
+    cid = company_id if company_id is not None else current_company_id()
+    name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    short = _company_short_slug(name)
+    token = _company_private_token(cid, name)
+    safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
+    return _archive_root_dir() / short / token / safe_type / f"{number}.pdf"
+
+
+def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
+    return generate_pdf_bytes(
+        'Cotización',
+        company,
+        quotation.client,
+        quotation.items,
+        quotation.subtotal,
+        quotation.itbis,
+        quotation.total,
+        seller=quotation.seller,
+        payment_method=quotation.payment_method,
+        bank=quotation.bank,
+        doc_number=quotation.id,
+        note=quotation.note,
+        date=quotation.date,
+        valid_until=quotation.valid_until,
+        footer=(
+            "Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
+            "Los precios están sujetos a cambios sin previo aviso. "
+            "El ITBIS ha sido calculado conforme a la ley vigente."
+        ),
+    )
 
 
 def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, company_name: str | None = None, company_id: int | None = None) -> str | None:
     # Create a cPanel-visible archive copy, without breaking download on failure.
     try:
-        cid = company_id if company_id is not None else current_company_id()
-        name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
-        short = _company_short_slug(name)
-        token = _company_private_token(cid, name)
-        safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
-        number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
-        root = Path(app.config.get('PDF_ARCHIVE_ROOT') or (Path(app.instance_path) / 'generated_docs'))
-        root.mkdir(parents=True, exist_ok=True)
-        folder = root / short / token / safe_type
-        folder.mkdir(parents=True, exist_ok=True)
-        out_path = folder / f"{number}.pdf"
+        out_path = _archived_pdf_path(
+            doc_type,
+            doc_number,
+            company_name=company_name,
+            company_id=company_id,
+        )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(pdf_data)
         return str(out_path)
     except Exception as exc:  # pragma: no cover
@@ -2744,6 +2795,27 @@ def new_quotation():
         flash('Cotización guardada')
         notify('Cotización guardada')
         log_audit('quotation_create', 'quotation', quotation.id, details=f'client={client.id};total={total:.2f}')
+
+        company = get_company_info()
+        quotation_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
+        _archive_pdf_copy(
+            'cotizacion',
+            quotation.id,
+            quotation_pdf_bytes,
+            company_name=company.get('name'),
+            company_id=current_company_id(),
+        )
+
+        is_first_quotation = company_query(Quotation).count() == 1
+        if is_first_quotation:
+            public_url = _public_doc_url(
+                'cotizacion',
+                quotation.id,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+            )
+            if public_url:
+                return redirect(public_url)
         return redirect(url_for('list_quotations'))
     clients = company_query(Client).options(
         load_only(Client.id, Client.name, Client.identifier)
@@ -2991,21 +3063,29 @@ def quotation_pdf(quotation_id):
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
     app.logger.info("Generating quotation PDF %s", quotation_id)
-    pdf_data = generate_pdf_bytes('Cotización', company, quotation.client, quotation.items,
-                                  quotation.subtotal, quotation.itbis, quotation.total,
-                                  seller=quotation.seller, payment_method=quotation.payment_method,
-                                  bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
-                                  date=quotation.date, valid_until=quotation.valid_until,
-                                  footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
-                                          "Los precios están sujetos a cambios sin previo aviso. "
-                                          "El ITBIS ha sido calculado conforme a la ley vigente."))
-    return _archive_and_send_pdf(
-        doc_type='cotizacion',
-        doc_number=quotation.id,
-        pdf_data=pdf_data,
-        download_name=filename,
-        company_name=company.get('name'),
-    )
+    try:
+        pdf_data = _build_quotation_pdf_bytes(quotation, company)
+        return _archive_and_send_pdf(
+            doc_type='cotizacion',
+            doc_number=quotation.id,
+            pdf_data=pdf_data,
+            download_name=filename,
+            company_name=company.get('name'),
+        )
+    except Exception as exc:
+        app.logger.exception('Quotation PDF generation failed id=%s: %s', quotation_id, exc)
+        archived = _archived_pdf_path(
+            'cotizacion',
+            quotation.id,
+            company_name=company.get('name'),
+            company_id=current_company_id(),
+        )
+        if archived.exists():
+            try:
+                return send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
+            except TypeError:
+                return send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
+        raise
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])

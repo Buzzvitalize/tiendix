@@ -27,6 +27,7 @@ def client(tmp_path):
     app.config.from_object('config.TestingConfig')
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
     app.config['PDF_ARCHIVE_ROOT'] = str(tmp_path / 'pdf_archive')
+    app.config['PUBLIC_DOCS_BASE_URL'] = None
     with app.app_context():
         db.session.remove()
         db.engine.dispose()
@@ -172,6 +173,26 @@ def test_new_quotation_with_warehouse(client):
     with app.app_context():
         ps = ProductStock.query.filter_by(product_id=1, warehouse_id=1).first()
         assert ps.stock == 8
+
+
+
+def test_new_quotation_creates_archive_file(client):
+    login(client, 'user1', 'pass')
+    resp = client.post('/cotizaciones/nueva', data={
+        'client_id': '1',
+        'seller': 'User One',
+        'payment_method': 'Efectivo',
+        'warehouse_id': '1',
+        'product_id[]': ['1'],
+        'product_quantity[]': ['1'],
+        'product_discount[]': ['0'],
+    }, follow_redirects=False)
+
+    assert resp.status_code == 302
+    with app.app_context():
+        q = Quotation.query.order_by(Quotation.id.desc()).first()
+    archive_root = Path(app.config['PDF_ARCHIVE_ROOT'])
+    assert list(archive_root.glob(f'compa/*/cotizacion/{q.id:02d}.pdf'))
 
 
 
