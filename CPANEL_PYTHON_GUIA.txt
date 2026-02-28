@@ -269,6 +269,7 @@ Haz esto:
 2. Definir carpeta de archivado PDF (File Manager)
 - En Setup Python App > Environment Variables, agrega por ejemplo:
   - `PDF_ARCHIVE_ROOT=/home/TU_USUARIO/tiendix_data/generated_docs`
+  - Si tu proyecto está en `/home/ecospulj/app`, usa: `PDF_ARCHIVE_ROOT=/home/ecospulj/app/generated_docs`
 - Crea la carpeta si no existe:
   - `mkdir -p /home/TU_USUARIO/tiendix_data/generated_docs`
 
@@ -277,6 +278,8 @@ Haz esto:
 - Subcarpetas: `755`
 - Archivos PDF: `644`
 - Si usas SSH, puedes aplicar: `chown -R TU_USUARIO:TU_USUARIO /home/TU_USUARIO/tiendix_data/generated_docs`
+- `passenger_wsgi.py` NO necesita permisos especiales de escritura para PDFs.
+  Lo importante es que el usuario de la app tenga escritura en `PDF_ARCHIVE_ROOT`.
 
 4. Reiniciar aplicación
 - Setup Python App > Restart

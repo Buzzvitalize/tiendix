@@ -1267,6 +1267,23 @@ def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str |
     return f"{base_url}/{short}/{token}/{safe_type}/{number}.pdf"
 
 
+def _archive_root_dir() -> Path:
+    configured = (app.config.get('PDF_ARCHIVE_ROOT') or '').strip()
+    if configured:
+        return Path(configured)
+    return Path(app.root_path) / 'generated_docs'
+
+
+def _archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> Path:
+    cid = company_id if company_id is not None else current_company_id()
+    name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    short = _company_short_slug(name)
+    token = _company_private_token(cid, name)
+    safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
+    return _archive_root_dir() / short / token / safe_type / f"{number}.pdf"
+
+
 def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
     return generate_pdf_bytes(
         'Cotización',
@@ -1291,20 +1308,83 @@ def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | No
     )
 
 
+def _build_order_pdf_bytes(order: Order, company: dict[str, str | None]) -> bytes:
+    return generate_pdf_bytes(
+        'Pedido',
+        company,
+        order.client,
+        order.items,
+        order.subtotal,
+        order.itbis,
+        order.total,
+        seller=order.seller,
+        payment_method=order.payment_method,
+        bank=order.bank,
+        doc_number=order.id,
+        note=order.note,
+        date=order.date,
+        footer=(
+            "Este pedido será procesado tras la confirmación de pago. "
+            "Tiempo estimado de entrega: 3 a 5 días hábiles."
+        ),
+    )
+
+
+def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -> bytes:
+    return generate_pdf_bytes(
+        'Factura',
+        company,
+        invoice.client,
+        invoice.items,
+        invoice.subtotal,
+        invoice.itbis,
+        invoice.total,
+        ncf=invoice.ncf,
+        seller=invoice.seller,
+        payment_method=invoice.payment_method,
+        bank=invoice.bank,
+        purchase_order=invoice.order.customer_po if invoice.order else None,
+        doc_number=invoice.id,
+        invoice_type=invoice.invoice_type,
+        note=invoice.note,
+        date=invoice.date,
+        footer=(
+            "Factura generada electrónicamente, válida sin firma ni sello. "
+            "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
+            "Gracias por su preferencia."
+        ),
+    )
+
+
+def ensure_pdf_archive_environment() -> None:
+    # Best-effort: ensure archive root and document-type folders exist.
+    try:
+        root = _archive_root_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        for company in CompanyInfo.query.all():
+            short = _company_short_slug(company.name)
+            token = _company_private_token(company.id, company.name)
+            base = root / short / token
+            for doc_type in ('cotizacion', 'pedido', 'factura', 'estado_cuenta', 'reporte'):
+                (base / doc_type).mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        app.logger.warning('Could not pre-create PDF archive directories: %s', exc)
+
+
+with app.app_context():
+    ensure_pdf_archive_environment()
+
+
 def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, company_name: str | None = None, company_id: int | None = None) -> str | None:
     # Create a cPanel-visible archive copy, without breaking download on failure.
     try:
-        cid = company_id if company_id is not None else current_company_id()
-        name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
-        short = _company_short_slug(name)
-        token = _company_private_token(cid, name)
-        safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
-        number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
-        root = Path(app.config.get('PDF_ARCHIVE_ROOT') or (Path(app.instance_path) / 'generated_docs'))
-        root.mkdir(parents=True, exist_ok=True)
-        folder = root / short / token / safe_type
-        folder.mkdir(parents=True, exist_ok=True)
-        out_path = folder / f"{number}.pdf"
+        out_path = _archived_pdf_path(
+            doc_type,
+            doc_number,
+            company_name=company_name,
+            company_id=company_id,
+        )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(pdf_data)
         return str(out_path)
     except Exception as exc:  # pragma: no cover
@@ -3050,14 +3130,29 @@ def quotation_pdf(quotation_id):
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
     app.logger.info("Generating quotation PDF %s", quotation_id)
-    pdf_data = _build_quotation_pdf_bytes(quotation, company)
-    return _archive_and_send_pdf(
-        doc_type='cotizacion',
-        doc_number=quotation.id,
-        pdf_data=pdf_data,
-        download_name=filename,
-        company_name=company.get('name'),
-    )
+    try:
+        pdf_data = _build_quotation_pdf_bytes(quotation, company)
+        return _archive_and_send_pdf(
+            doc_type='cotizacion',
+            doc_number=quotation.id,
+            pdf_data=pdf_data,
+            download_name=filename,
+            company_name=company.get('name'),
+        )
+    except Exception as exc:
+        app.logger.exception('Quotation PDF generation failed id=%s: %s', quotation_id, exc)
+        archived = _archived_pdf_path(
+            'cotizacion',
+            quotation.id,
+            company_name=company.get('name'),
+            company_id=current_company_id(),
+        )
+        if archived.exists():
+            try:
+                return send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
+            except TypeError:
+                return send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
+        raise
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -3162,6 +3257,15 @@ def quotation_to_order(quotation_id):
             )
             db.session.add(mov)
     db.session.commit()
+    company = get_company_info()
+    order_pdf_bytes = _build_order_pdf_bytes(order, company)
+    _archive_pdf_copy(
+        'pedido',
+        order.id,
+        order_pdf_bytes,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+    )
     flash('Pedido creado')
     notify('Pedido creado')
     return redirect(url_for('list_orders'))
@@ -3230,6 +3334,15 @@ def order_to_invoice(order_id):
         db.session.add(i_item)
     order.status = 'Entregado'
     db.session.commit()
+    company_info = get_company_info()
+    invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company_info)
+    _archive_pdf_copy(
+        'factura',
+        invoice.id,
+        invoice_pdf_bytes,
+        company_name=company_info.get('name'),
+        company_id=current_company_id(),
+    )
     flash('Factura generada')
     notify('Factura generada')
     log_audit('invoice_create', 'invoice', invoice.id, details=f'from_order={order.id};total={invoice.total:.2f}')
@@ -3241,13 +3354,7 @@ def order_pdf(order_id):
     company = get_company_info()
     filename = f'pedido_{order_id}.pdf'
     app.logger.info("Generating order PDF %s", order_id)
-    pdf_data = generate_pdf_bytes('Pedido', company, order.client, order.items,
-                                  order.subtotal, order.itbis, order.total,
-                                  seller=order.seller, payment_method=order.payment_method,
-                                  bank=order.bank, doc_number=order.id, note=order.note,
-                                  date=order.date,
-                                  footer=("Este pedido será procesado tras la confirmación de pago. "
-                                          "Tiempo estimado de entrega: 3 a 5 días hábiles."))
+    pdf_data = _build_order_pdf_bytes(order, company)
     return _archive_and_send_pdf(
         doc_type='pedido',
         doc_number=order.id,
@@ -3296,17 +3403,7 @@ def invoice_pdf(invoice_id):
     company = get_company_info()
     filename = f'factura_{invoice_id}.pdf'
     app.logger.info("Generating invoice PDF %s", invoice_id)
-    pdf_data = generate_pdf_bytes('Factura', company, invoice.client, invoice.items,
-                                  invoice.subtotal, invoice.itbis, invoice.total,
-                                  ncf=invoice.ncf, seller=invoice.seller,
-                                  payment_method=invoice.payment_method, bank=invoice.bank,
-                                  purchase_order=invoice.order.customer_po if invoice.order else None,
-                                  doc_number=invoice.id,
-                                  invoice_type=invoice.invoice_type, note=invoice.note,
-                                  date=invoice.date,
-                                  footer=("Factura generada electrónicamente, válida sin firma ni sello. "
-                                          "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
-                                          "Gracias por su preferencia."))
+    pdf_data = _build_invoice_pdf_bytes(invoice, company)
     return _archive_and_send_pdf(
         doc_type='factura',
         doc_number=invoice.id,
