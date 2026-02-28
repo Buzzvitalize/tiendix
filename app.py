@@ -3265,7 +3265,13 @@ def invoice_pdf(invoice_id):
 
 @app.route('/pdfs/<path:filename>')
 def serve_pdf(filename):
-    return send_from_directory(os.path.join(app.static_folder, 'pdfs'), filename)
+    if '..' in filename or filename.startswith('/'):
+        return ('Not Found', 404)
+    base = _company_pdf_dir().parent.resolve()
+    file_path = (base / filename).resolve()
+    if not str(file_path).startswith(str(base.resolve())) or not file_path.exists():
+        return ('Not Found', 404)
+    return send_file(str(file_path), as_attachment=True)
 
 def _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria):
     """Return an invoice query filtered by the provided parameters."""
