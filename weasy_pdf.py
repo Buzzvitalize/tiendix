@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 import inspect
 import os
+import unicodedata
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -56,9 +57,10 @@ def _fmt_money(value: float) -> str:
 
 
 def _safe_text(value) -> str:
-    """Return latin-1-safe text for built-in FPDF fonts."""
+    """Return ASCII-safe text to avoid codec issues in older FPDF variants."""
     text = '' if value is None else str(value)
-    return text.encode('latin-1', 'replace').decode('latin-1')
+    normalized = unicodedata.normalize('NFKD', text)
+    return normalized.encode('ascii', 'replace').decode('ascii')
 
 
 def _item_to_dict(item) -> dict:

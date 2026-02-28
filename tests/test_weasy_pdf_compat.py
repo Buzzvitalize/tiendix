@@ -19,3 +19,19 @@ def test_generate_pdf_bytes_works_without_new_x_mode(monkeypatch):
         doc_number=1,
     )
     assert data.startswith(b'%PDF')
+
+
+def test_generate_pdf_bytes_handles_accented_text_without_ascii_crash(monkeypatch):
+    monkeypatch.setattr(weasy_pdf, '_CELL_SUPPORTS_NEW_X', False)
+    data = weasy_pdf.generate_pdf_bytes(
+        'Cotización',
+        {'name': 'Compañía Ñandú', 'address': 'Dirección céntrica', 'phone': '809', 'website': 'x.com', 'logo': None},
+        {'name': 'José Peña', 'address': 'Santo Domingo', 'phone': '809', 'identifier': '001', 'email': 'jose@example.com'},
+        [{'code': 'P1', 'reference': 'R1', 'product_name': 'Servicio instalación', 'unit': 'Unidad', 'unit_price': 100, 'quantity': 1, 'discount': 0}],
+        100,
+        18,
+        118,
+        note='Válida por 30 días',
+        doc_number=2,
+    )
+    assert data.startswith(b'%PDF')
