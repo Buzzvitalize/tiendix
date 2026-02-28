@@ -63,6 +63,8 @@ CREATE TABLE rnc_registry (
 	PRIMARY KEY (rnc)
 );
 
+CREATE INDEX ix_rnc_registry_updated_at ON rnc_registry (updated_at);
+
 
 CREATE TABLE export_log (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
@@ -170,6 +172,11 @@ CREATE TABLE audit_log (
 	PRIMARY KEY (id), 
 	FOREIGN KEY(user_id) REFERENCES user (id)
 );
+
+CREATE INDEX ix_audit_log_created_at ON audit_log (created_at);
+CREATE INDEX ix_audit_log_action_created_at ON audit_log (action, created_at);
+CREATE INDEX ix_audit_log_entity_entity_id ON audit_log (entity, entity_id);
+CREATE INDEX ix_audit_log_user_id_created_at ON audit_log (user_id, created_at);
 
 
 CREATE TABLE error_report (

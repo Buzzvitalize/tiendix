@@ -38,17 +38,17 @@ def test_token_single_use_and_expiry(setup_db):
         user = User.query.filter_by(username=username).first()
         token = generate_reset_token(user)
     # first use resets password
-    with app.test_request_context(f'/reset/{token}', method='POST', data={'password': 'new'}):
+    with app.test_request_context(f'/reset/{token}', method='POST', data={'password': 'new123'}):
         reset_password(token)
     with app.app_context():
         user = User.query.filter_by(username=username).first()
-        assert user.check_password('new')
+        assert user.check_password('new123')
     # second use should be rejected and not change password
     with app.test_request_context(f'/reset/{token}', method='POST', data={'password': 'again'}):
         reset_password(token)
     with app.app_context():
         user = User.query.filter_by(username=username).first()
-        assert user.check_password('new')
+        assert user.check_password('new123')
         token2 = generate_reset_token(user)
     time.sleep(2)
     with app.app_context():
