@@ -1253,7 +1253,8 @@ def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, com
         token = _company_private_token(cid, name)
         safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
         number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
-        root = Path(app.config.get('PDF_ARCHIVE_ROOT') or Path(app.root_path) / 'generated_docs')
+        root = Path(app.config.get('PDF_ARCHIVE_ROOT') or (Path(app.instance_path) / 'generated_docs'))
+        root.mkdir(parents=True, exist_ok=True)
         folder = root / short / token / safe_type
         folder.mkdir(parents=True, exist_ok=True)
         out_path = folder / f"{number}.pdf"
