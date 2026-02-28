@@ -53,7 +53,7 @@ from models import (
     dom_now,
 )
 from io import BytesIO, StringIO
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 import csv
 try:
     from openpyxl import Workbook
@@ -1261,6 +1261,9 @@ def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str |
     base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
     if not base_url:
         return None
+    parsed = urlparse(base_url)
+    if not parsed.scheme:
+        base_url = f"https://{base_url.lstrip('/')}".rstrip('/')
     cid = company_id if company_id is not None else current_company_id()
     name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     short = _company_short_slug(name)
