@@ -15,11 +15,19 @@ branch_labels = None
 depends_on = None
 
 
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return column_name in {col['name'] for col in inspector.get_columns(table_name)}
+
+
 def upgrade():
-    op.add_column('quotation', sa.Column('valid_until', sa.DateTime(), nullable=True))
-    op.execute("UPDATE quotation SET valid_until = datetime(date, '+30 day')")
-    op.alter_column('quotation', 'valid_until', nullable=False)
+    if not _has_column('quotation', 'valid_until'):
+        op.add_column('quotation', sa.Column('valid_until', sa.DateTime(), nullable=True))
+    op.execute("UPDATE quotation SET valid_until = datetime(date, '+30 day') WHERE valid_until IS NULL")
+    if op.get_bind().dialect.name != 'sqlite':
+        op.alter_column('quotation', 'valid_until', nullable=False)
 
 
 def downgrade():
-    op.drop_column('quotation', 'valid_until')
+    if _has_column('quotation', 'valid_until'):
+        op.drop_column('quotation', 'valid_until')
