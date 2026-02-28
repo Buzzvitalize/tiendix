@@ -47,6 +47,7 @@ from models import (
     SystemAnnouncement,
     ErrorReport,
     AuditLog,
+    AppSetting,
     dom_now,
 )
 from io import BytesIO, StringIO
@@ -58,7 +59,7 @@ except ModuleNotFoundError:  # pragma: no cover
     Workbook = None
 from datetime import datetime, timedelta
 from pathlib import Path
-from sqlalchemy import func, inspect, or_
+from sqlalchemy import and_, func, inspect, or_
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import load_only, joinedload
 from sqlalchemy.engine import make_url
@@ -91,6 +92,7 @@ except Exception:  # pragma: no cover
 import threading
 from queue import Queue as ThreadQueue, Empty
 import time
+import random
 
 load_dotenv()
 
@@ -631,10 +633,14 @@ def _migrate_legacy_schema():
             )"""
         )
 
+    dialect_name = db.engine.dialect.name
+
     if inspector.has_table('user'):
         try:
-            user_cols = {c['name'] for c in inspector.get_columns('user')}
+            user_columns_info = inspector.get_columns('user')
+            user_cols = {c['name'] for c in user_columns_info}
         except NoSuchTableError:  # pragma: no cover - sqlite reflection race
+            user_columns_info = []
             user_cols = set()
         if 'email' not in user_cols:
             statements.append("ALTER TABLE user ADD COLUMN email VARCHAR(120)")
@@ -642,6 +648,21 @@ def _migrate_legacy_schema():
             statements.append("ALTER TABLE user ADD COLUMN first_name VARCHAR(120) DEFAULT ''")
         if 'last_name' not in user_cols:
             statements.append("ALTER TABLE user ADD COLUMN last_name VARCHAR(120) DEFAULT ''")
+        if dialect_name in {'mysql', 'mariadb'}:
+            pwd_col = next((c for c in user_columns_info if c['name'] == 'password'), None)
+            pwd_len = getattr((pwd_col or {}).get('type'), 'length', None)
+            if pwd_len and pwd_len < 255:
+                statements.append("ALTER TABLE user MODIFY COLUMN password VARCHAR(255) NOT NULL")
+
+    if inspector.has_table('account_request') and dialect_name in {'mysql', 'mariadb'}:
+        try:
+            req_columns_info = inspector.get_columns('account_request')
+        except NoSuchTableError:  # pragma: no cover
+            req_columns_info = []
+        req_pwd_col = next((c for c in req_columns_info if c['name'] == 'password'), None)
+        req_pwd_len = getattr((req_pwd_col or {}).get('type'), 'length', None)
+        if req_pwd_len and req_pwd_len < 255:
+            statements.append("ALTER TABLE account_request MODIFY COLUMN password VARCHAR(255) NOT NULL")
 
     if inspector.has_table('inventory_movement'):
         try:
@@ -721,6 +742,15 @@ def _migrate_legacy_schema():
             )"""
         )
 
+    if not inspector.has_table('app_setting'):
+        statements.append(
+            """CREATE TABLE app_setting (
+                key VARCHAR(80) PRIMARY KEY,
+                value VARCHAR(255) NOT NULL,
+                updated_at DATETIME NOT NULL
+            )"""
+        )
+
     if inspector.has_table('user'):
         # Normaliza usuarios antiguos a minúsculas para evitar conflictos por mayúsculas.
         db.session.execute(db.text("UPDATE user SET username = lower(username) WHERE username <> lower(username)"))
@@ -760,6 +790,51 @@ def run_auto_migrations():
 # Run migrations when the module is imported so that new fields are available
 # even if ``flask db upgrade`` wasn't executed manually.
 run_auto_migrations()
+
+
+SIGNUP_AUTO_APPROVE_KEY = 'signup_auto_approve'
+
+
+def _is_signup_auto_approve_enabled() -> bool:
+    setting = db.session.get(AppSetting, SIGNUP_AUTO_APPROVE_KEY)
+    if not setting:
+        return False
+    return str(setting.value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _set_signup_auto_approve(enabled: bool) -> None:
+    setting = db.session.get(AppSetting, SIGNUP_AUTO_APPROVE_KEY)
+    if not setting:
+        setting = AppSetting(key=SIGNUP_AUTO_APPROVE_KEY, value='1' if enabled else '0')
+        db.session.add(setting)
+    else:
+        setting.value = '1' if enabled else '0'
+
+
+def _create_company_user_from_signup(*, first_name: str, last_name: str, company_name: str, identifier: str, phone: str, address: str, website: str | None, username: str, password_hash: str, email: str | None, role: str) -> tuple[CompanyInfo, User]:
+    company = CompanyInfo(
+        name=company_name,
+        street=address or '',
+        sector='',
+        province='',
+        phone=phone,
+        rnc=identifier or '',
+        website=website,
+        logo='',
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+        role=role,
+        company_id=company.id,
+        email=email,
+    )
+    user.password = password_hash
+    db.session.add(user)
+    return company, user
 
 # Utility constants
 ITBIS_RATE = 0.18
@@ -803,6 +878,9 @@ def notify(message):
 def log_audit(action, entity, entity_id=None, status='ok', details=''):
     """Persist audit trail events for CPanel review."""
     try:
+        details_text = details
+        if isinstance(details, (dict, list, tuple)):
+            details_text = json.dumps(details, ensure_ascii=False, sort_keys=True)
         entry = AuditLog(
             user_id=session.get('user_id'),
             username=session.get('username') or session.get('full_name'),
@@ -812,7 +890,7 @@ def log_audit(action, entity, entity_id=None, status='ok', details=''):
             entity=entity,
             entity_id=str(entity_id) if entity_id is not None else None,
             status=status,
-            details=details,
+            details=str(details_text or ''),
             ip=(request.headers.get('X-Forwarded-For', request.remote_addr) or '')[:45],
             user_agent=(request.headers.get('User-Agent') or '')[:255],
         )
@@ -1176,9 +1254,22 @@ def index():
     return redirect(url_for('list_quotations'))
 
 
+
+
+def _build_signup_captcha() -> tuple[str, str]:
+    a = random.randint(2, 9)
+    b = random.randint(1, 9)
+    return f"¿Cuánto es {a} + {b}?", str(a + b)
+
 @app.route('/solicitar-cuenta', methods=['GET', 'POST'])
 def request_account():
     form = AccountRequestForm()
+
+    if request.method == 'GET' or 'signup_captcha_answer' not in session:
+        q, answer = _build_signup_captcha()
+        session['signup_captcha_question'] = q
+        session['signup_captcha_answer'] = answer
+
     if form.validate_on_submit():
         if not form.accepted_terms.data:
             flash(
@@ -1197,6 +1288,30 @@ def request_account():
         if not username:
             flash('Debe ingresar un usuario válido', 'request')
             return redirect(url_for('request_account'))
+
+        required_labels = {
+            'first_name': 'Nombre',
+            'last_name': 'Apellido',
+            'phone': 'Teléfono',
+            'company': 'Empresa o marca',
+            'identifier': 'Cédula/RNC',
+            'email': 'Correo',
+            'username': 'Usuario',
+        }
+        missing = [label for key, label in required_labels.items() if not (request.form.get(key) or '').strip()]
+        if missing:
+            flash(f"Complete los campos requeridos: {', '.join(missing)}", 'request')
+            return redirect(url_for('request_account'))
+
+        if not app.config.get('TESTING', False):
+            expected = str(session.get('signup_captcha_answer') or '').strip()
+            got = (request.form.get('captcha_answer') or '').strip()
+            if not expected or got != expected:
+                flash('Captcha inválido. Intente nuevamente.', 'request')
+                q, answer = _build_signup_captcha()
+                session['signup_captcha_question'] = q
+                session['signup_captcha_answer'] = answer
+                return redirect(url_for('request_account'))
         existing_user = User.query.filter(func.lower(User.username) == username).first()
         pending_user = AccountRequest.query.filter(func.lower(AccountRequest.username) == username).first()
         if existing_user or pending_user:
@@ -1208,31 +1323,45 @@ def request_account():
             flash('Debe ingresar RNC o Cédula', 'request')
             return redirect(url_for('request_account'))
         if User.query.count() == 0:
-            company = CompanyInfo(
-                name=request.form['company'],
-                street=request.form.get('address') or '',
-                sector='',
-                province='',
-                phone=request.form['phone'],
-                rnc=identifier,
-                website=request.form.get('website'),
-                logo='',
-            )
-            db.session.add(company)
-            db.session.flush()
-            owner = User(
-                username=username,
+            company, owner = _create_company_user_from_signup(
                 first_name=request.form['first_name'],
                 last_name=request.form['last_name'],
-                role='admin',
-                company_id=company.id,
+                company_name=request.form['company'],
+                identifier=identifier,
+                phone=request.form['phone'],
+                address=request.form.get('address') or '',
+                website=request.form.get('website'),
+                username=username,
+                password_hash=generate_password_hash(password),
                 email=request.form['email'],
+                role='admin',
             )
-            owner.password = generate_password_hash(password)
-            db.session.add(owner)
             db.session.commit()
             log_audit('owner_bootstrap', 'user', owner.id, details=f'company={company.id};username={username}')
             flash('Cuenta principal creada: ahora eres Administrador (dueño).', 'login')
+            session.pop('signup_captcha_answer', None)
+            session.pop('signup_captcha_question', None)
+            return redirect(url_for('auth.login'))
+
+        if _is_signup_auto_approve_enabled():
+            company, user = _create_company_user_from_signup(
+                first_name=request.form['first_name'],
+                last_name=request.form['last_name'],
+                company_name=request.form['company'],
+                identifier=identifier,
+                phone=request.form['phone'],
+                address=request.form.get('address') or '',
+                website=request.form.get('website'),
+                username=username,
+                password_hash=generate_password_hash(password),
+                email=request.form['email'],
+                role='manager',
+            )
+            db.session.commit()
+            log_audit('account_auto_approved', 'user', user.id, details=f'company={company.id};username={username}')
+            flash('Cuenta creada correctamente con rol Manager. Ya puede iniciar sesión.', 'login')
+            session.pop('signup_captcha_answer', None)
+            session.pop('signup_captcha_question', None)
             return redirect(url_for('auth.login'))
 
         req = AccountRequest(
@@ -1256,6 +1385,8 @@ def request_account():
         db.session.commit()
         log_audit('account_request_create', 'account_request', req.id, details=f'email={req.email};company={req.company}')
         flash('Solicitud enviada, espere aprobación', 'login')
+        session.pop('signup_captcha_answer', None)
+        session.pop('signup_captcha_question', None)
         return redirect(url_for('auth.login'))
     elif request.method == 'POST':
         flash(
@@ -1263,7 +1394,7 @@ def request_account():
             'request',
         )
         return redirect(url_for('request_account'))
-    return render_template('solicitar_cuenta.html', form=form)
+    return render_template('solicitar_cuenta.html', form=form, captcha_question=session.get('signup_captcha_question', ''))
 
 
 @app.route('/terminos')
@@ -1275,7 +1406,7 @@ def terminos():
 @admin_only
 def admin_requests():
     requests = AccountRequest.query.all()
-    return render_template('admin_solicitudes.html', requests=requests)
+    return render_template('admin_solicitudes.html', requests=requests, signup_auto_approve=_is_signup_auto_approve_enabled())
 
 
 @app.route('/admin/companies')
@@ -1310,22 +1441,19 @@ def approve_request(req_id):
         return redirect(url_for('admin_requests'))
     password = req.password
     email = req.email
-    company = CompanyInfo(
-        name=req.company,
-        street=req.address or '',
-        sector='',
-        province='',
+    company, user = _create_company_user_from_signup(
+        first_name=req.first_name,
+        last_name=req.last_name,
+        company_name=req.company,
+        identifier=req.identifier or '',
         phone=req.phone,
-        rnc=req.identifier or '',
+        address=req.address or '',
         website=req.website,
-        logo='',
+        username=username,
+        password_hash=password,
+        email=email,
+        role=role,
     )
-    db.session.add(company)
-    db.session.flush()
-    user = User(username=username, first_name=req.first_name, last_name=req.last_name, role=role, company_id=company.id)
-    # ``req.password`` ya contiene el hash generado al recibir la solicitud.
-    user.password = password
-    db.session.add(user)
     db.session.delete(req)
     db.session.commit()
 
@@ -1432,7 +1560,70 @@ def report_error():
 @app.route('/cpaneltx')
 @admin_only
 def cpanel_home():
-    return render_template('cpaneltx.html')
+    return render_template('cpaneltx.html', signup_auto_approve=_is_signup_auto_approve_enabled())
+
+
+@app.post('/cpaneltx/signup-mode')
+@admin_only
+def cpanel_signup_mode():
+    enabled = bool(request.form.get('signup_auto_approve'))
+    _set_signup_auto_approve(enabled)
+    db.session.commit()
+    log_audit('cpanel_signup_mode', 'app_setting', SIGNUP_AUTO_APPROVE_KEY, details=f'enabled={enabled}')
+    if enabled:
+        flash('Aprobación automática activada: nuevas cuentas se crearán directamente con rol Manager.')
+    else:
+        flash('Aprobación automática desactivada: las solicitudes requerirán aprobación de administrador.')
+    return redirect(url_for('cpanel_home'))
+
+
+@app.route('/cpaneltx/avisos', methods=['GET', 'POST'])
+@admin_only
+def cpanel_announcements():
+    if request.method == 'POST':
+        title = (request.form.get('title') or '').strip()
+        message = (request.form.get('message') or '').strip()
+        scheduled_for_raw = (request.form.get('scheduled_for') or '').strip()
+        is_active = request.form.get('is_active') == 'on'
+
+        if not title or not message:
+            flash('Título y mensaje son obligatorios')
+            return redirect(url_for('cpanel_announcements'))
+
+        scheduled_for = None
+        if scheduled_for_raw:
+            try:
+                scheduled_for = datetime.fromisoformat(scheduled_for_raw)
+            except ValueError:
+                flash('La fecha/hora programada no es válida')
+                return redirect(url_for('cpanel_announcements'))
+
+        ann = SystemAnnouncement(
+            title=title,
+            message=message,
+            scheduled_for=scheduled_for,
+            is_active=is_active,
+            created_by=session.get('user_id'),
+        )
+        db.session.add(ann)
+        db.session.commit()
+        log_audit('announcement_create', 'system_announcement', ann.id, details=f'active={is_active}')
+        flash('Aviso general creado')
+        return redirect(url_for('cpanel_announcements'))
+
+    announcements = SystemAnnouncement.query.order_by(SystemAnnouncement.updated_at.desc()).all()
+    return render_template('cpanel_announcements.html', announcements=announcements)
+
+
+@app.post('/cpaneltx/avisos/<int:ann_id>/estado')
+@admin_only
+def cpanel_announcement_status(ann_id):
+    ann = SystemAnnouncement.query.get_or_404(ann_id)
+    ann.is_active = request.form.get('is_active') == 'on'
+    db.session.commit()
+    log_audit('announcement_status', 'system_announcement', ann.id, details=f'active={ann.is_active}')
+    flash('Estado de aviso actualizado')
+    return redirect(url_for('cpanel_announcements'))
 
 
 @app.route('/cpaneltx/avisos', methods=['GET', 'POST'])
@@ -1500,17 +1691,47 @@ def cpanel_users():
 @admin_only
 def cpanel_user_update(user_id):
     user = User.query.get_or_404(user_id)
-    email = request.form.get('email')
-    password = request.form.get('password')
+    email = (request.form.get('email') or '').strip()
+    first_name = (request.form.get('first_name') or '').strip()
+    last_name = (request.form.get('last_name') or '').strip()
+    password = request.form.get('password') or ''
+
+    changed = {}
+
+    if first_name and first_name != (user.first_name or ''):
+        changed['first_name'] = {'from': user.first_name or '', 'to': first_name}
+        user.first_name = first_name
+
+    if last_name and last_name != (user.last_name or ''):
+        changed['last_name'] = {'from': user.last_name or '', 'to': last_name}
+        user.last_name = last_name
+
     if email:
+        if email != (user.email or ''):
+            changed['email'] = {'from': user.email or '', 'to': email}
         user.email = email
+
     if password:
         if len(password) < 6:
             flash('La contraseña debe tener mínimo 6 caracteres')
             return redirect(url_for('cpanel_users'))
         user.set_password(password)
+        changed['password'] = {'changed': True, 'length': len(password)}
+
+    if not changed:
+        flash('No se detectaron cambios para este usuario')
+        return redirect(url_for('cpanel_users'))
+
     db.session.commit()
-    log_audit('cpanel_user_update', 'user', user_id, details=f'email={email or ""};password_changed={bool(password)}')
+    log_audit('cpanel_user_update', 'user', user_id, details={
+        'target': {
+            'id': user.id,
+            'username': user.username,
+            'company_id': user.company_id,
+            'role': user.role,
+        },
+        'changes': changed,
+    })
     flash('Usuario actualizado')
     return redirect(url_for('cpanel_users'))
 
@@ -1521,10 +1742,24 @@ def cpanel_user_role(user_id):
     user = User.query.get_or_404(user_id)
     role = request.form.get('role')
     if role in ('admin', 'manager', 'company'):
+        previous_role = user.role
+        if previous_role == role:
+            flash('El usuario ya tenía ese rol')
+            return redirect(url_for('cpanel_users'))
         user.role = role
         db.session.commit()
         flash('Rol actualizado')
-        log_audit('cpanel_user_role', 'user', user_id, details=f'role={role}')
+        log_audit('cpanel_user_role', 'user', user_id, details={
+            'target': {
+                'id': user.id,
+                'username': user.username,
+                'company_id': user.company_id,
+            },
+            'role': {
+                'from': previous_role,
+                'to': role,
+            },
+        })
     return redirect(url_for('cpanel_users'))
 
 
@@ -1532,11 +1767,39 @@ def cpanel_user_role(user_id):
 @admin_only
 def cpanel_user_delete(user_id):
     user = User.query.get_or_404(user_id)
+    deleted_snapshot = {
+        'id': user.id,
+        'username': user.username,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'email': user.email,
+        'role': user.role,
+        'company_id': user.company_id,
+    }
     db.session.delete(user)
     db.session.commit()
     flash('Usuario eliminado')
-    log_audit('cpanel_user_delete', 'user', user_id)
+    log_audit('cpanel_user_delete', 'user', user_id, details={'deleted_user': deleted_snapshot})
     return redirect(url_for('cpanel_users'))
+
+
+@app.route('/cpaneltx/users/<int:user_id>/actividad')
+@admin_only
+def cpanel_user_activity(user_id):
+    user = User.query.get_or_404(user_id)
+    page = request.args.get('page', 1, type=int)
+    logs = (
+        AuditLog.query
+        .filter(
+            or_(
+                and_(AuditLog.entity == 'user', AuditLog.entity_id == str(user_id)),
+                AuditLog.user_id == user_id,
+            )
+        )
+        .order_by(AuditLog.created_at.desc())
+        .paginate(page=page, per_page=25, error_out=False)
+    )
+    return render_template('cpanel_user_activity.html', target_user=user, logs=logs)
 
 
 @app.route('/cpaneltx/companies')

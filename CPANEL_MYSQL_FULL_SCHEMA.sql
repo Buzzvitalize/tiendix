@@ -20,7 +20,7 @@ CREATE TABLE account_request (
 	address VARCHAR(200), 
 	website VARCHAR(120), 
 	username VARCHAR(80) NOT NULL, 
-	password VARCHAR(120) NOT NULL, 
+	password VARCHAR(255) NOT NULL, 
 	created_at DATETIME, 
 	accepted_terms BOOL NOT NULL, 
 	accepted_terms_at DATETIME, 
@@ -114,7 +114,7 @@ CREATE TABLE product (
 CREATE TABLE user (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	username VARCHAR(80) NOT NULL, 
-	password VARCHAR(128) NOT NULL, 
+	password VARCHAR(255) NOT NULL, 
 	email VARCHAR(120), 
 	first_name VARCHAR(120) NOT NULL, 
 	last_name VARCHAR(120) NOT NULL, 

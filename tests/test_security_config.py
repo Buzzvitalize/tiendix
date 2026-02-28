@@ -96,15 +96,16 @@ def test_app_version_metadata_present():
     assert app_module.APP_VERSION_HIGHLIGHTS
 
 
-def test_unhandled_exception_returns_custom_500_page():
-    endpoint = 'test_force_500_runtime'
-    if endpoint not in app_module.app.view_functions:
-        app_module.app.add_url_rule('/_test/force-500', endpoint, lambda: (_ for _ in ()).throw(RuntimeError('boom')))
+def test_unhandled_exception_returns_custom_500_page(monkeypatch):
+    def _boom():
+        raise RuntimeError('boom')
+
+    monkeypatch.setitem(app_module.app.view_functions, 'index', _boom)
 
     client = app_module.app.test_client()
     with client.session_transaction() as sess:
         sess['user_id'] = 1
-    resp = client.get('/_test/force-500')
+    resp = client.get('/')
 
     assert resp.status_code == 500
     assert b'ID de error' in resp.data
@@ -195,3 +196,11 @@ def test_maybe_fix_cpanel_access_denied_keeps_uri_when_not_1044(monkeypatch):
     app_module._maybe_fix_cpanel_access_denied(cfg)
 
     assert cfg['SQLALCHEMY_DATABASE_URI'] == original
+
+
+
+def test_password_columns_are_wide_enough_for_werkzeug_hashes():
+    from models import User, AccountRequest
+
+    assert User.password.property.columns[0].type.length >= 255
+    assert AccountRequest.password.property.columns[0].type.length >= 255

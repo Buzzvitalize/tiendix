@@ -232,7 +232,7 @@ class CompanyInfo(db.Model):
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(128), nullable=False)
+    password = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(120))
     first_name = db.Column(db.String(120), nullable=False, default='')
     last_name = db.Column(db.String(120), nullable=False, default='')
@@ -258,7 +258,7 @@ class AccountRequest(db.Model):
     address = db.Column(db.String(200))
     website = db.Column(db.String(120))
     username = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(120), nullable=False)
+    password = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=dom_now)
     accepted_terms = db.Column(db.Boolean, nullable=False, default=False)
     accepted_terms_at = db.Column(db.DateTime)
@@ -328,6 +328,13 @@ class SystemAnnouncement(db.Model):
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
+
+
+
+class AppSetting(db.Model):
+    key = db.Column(db.String(80), primary_key=True)
+    value = db.Column(db.String(255), nullable=False)
     updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
 
 class AuditLog(db.Model):

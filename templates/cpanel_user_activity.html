@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-semibold">Actividad de usuario</h1>
+      <p class="text-gray-600 text-sm">{{ target_user.username }} (ID: {{ target_user.id }}) - {{ target_user.first_name }} {{ target_user.last_name }}</p>
+    </div>
+    <a href="{{ url_for('cpanel_users') }}" class="btn-secondary">Volver a usuarios</a>
+  </div>
+
+  <div class="bg-white rounded border overflow-x-auto">
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-100">
+        <tr>
+          <th class="p-2 text-left">Fecha</th>
+          <th class="p-2 text-left">Acción</th>
+          <th class="p-2 text-left">Estado</th>
+          <th class="p-2 text-left">IP</th>
+          <th class="p-2 text-left">Detalles</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in logs.items %}
+        <tr class="border-t align-top">
+          <td class="p-2 whitespace-nowrap">{{ row.created_at.strftime('%Y-%m-%d %H:%M:%S') if row.created_at else '' }}</td>
+          <td class="p-2">{{ row.action }}</td>
+          <td class="p-2">{{ row.status }}</td>
+          <td class="p-2">{{ row.ip or '' }}</td>
+          <td class="p-2"><pre class="whitespace-pre-wrap break-words text-xs">{{ row.details or '' }}</pre></td>
+        </tr>
+        {% else %}
+        <tr><td class="p-3 text-gray-500" colspan="5">Sin registros de auditoría para este usuario.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="flex items-center gap-2">
+    {% if logs.has_prev %}
+      <a href="{{ url_for('cpanel_user_activity', user_id=target_user.id, page=logs.prev_num) }}" class="px-3 py-1 bg-gray-200 rounded">Anterior</a>
+    {% endif %}
+    <span>Página {{ logs.page }} de {{ logs.pages }}</span>
+    {% if logs.has_next %}
+      <a href="{{ url_for('cpanel_user_activity', user_id=target_user.id, page=logs.next_num) }}" class="px-3 py-1 bg-gray-200 rounded">Siguiente</a>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

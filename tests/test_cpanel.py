@@ -4,7 +4,7 @@ import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db
-from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement
+from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement, AppSetting
 from werkzeug.security import generate_password_hash
 
 @pytest.fixture
@@ -13,6 +13,7 @@ def client(tmp_path):
     app.config.from_object('config.TestingConfig')
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
     with app.app_context():
+        db.drop_all()
         db.create_all()
         company = CompanyInfo(name='Comp', street='', sector='', province='', phone='', rnc='')
         db.session.add(company)
@@ -51,11 +52,25 @@ def test_admin_update_email_password(client):
     login(client, 'admin', '363636')
     with app.app_context():
         user = User.query.filter_by(username='user').first()
-    client.post(f'/cpaneltx/users/{user.id}/update', data={'email': 'new@ex.com', 'password': 'newpass'})
+    client.post(
+        f'/cpaneltx/users/{user.id}/update',
+        data={
+            'email': 'new@ex.com',
+            'first_name': 'Nuevo',
+            'last_name': 'Nombre',
+            'password': 'newpass',
+        },
+    )
     with app.app_context():
         u = db.session.get(User, user.id)
         assert u.email == 'new@ex.com'
+        assert u.first_name == 'Nuevo'
+        assert u.last_name == 'Nombre'
         assert u.check_password('newpass')
+        row = AuditLog.query.filter_by(action='cpanel_user_update', entity_id=str(user.id)).order_by(AuditLog.id.desc()).first()
+        assert row is not None
+        assert 'first_name' in (row.details or '')
+        assert 'password' in (row.details or '')
 
 
 def test_non_admin_denied(client):
@@ -183,3 +198,54 @@ def test_cpanel_companies_can_select_company_context(client):
     assert clear_resp.status_code == 302
     with client.session_transaction() as sess:
         assert sess.get('company_id') is None
+
+
+def test_cpanel_can_toggle_signup_mode(client):
+    login(client, 'admin', '363636')
+    resp = client.post('/cpaneltx/signup-mode', data={'signup_auto_approve': '1'}, follow_redirects=True)
+    assert resp.status_code == 200
+    with app.app_context():
+        setting = db.session.get(AppSetting, 'signup_auto_approve')
+        assert setting is not None
+        assert setting.value == '1'
+
+
+def test_cpanel_user_activity_page(client):
+    login(client, 'admin', '363636')
+    with app.app_context():
+        user = User.query.filter_by(username='user').first()
+
+    client.post(f'/cpaneltx/users/{user.id}/role', data={'role': 'manager'})
+    resp = client.get(f'/cpaneltx/users/{user.id}/actividad')
+    assert resp.status_code == 200
+    assert b'cpanel_user_role' in resp.data
+
+
+def test_signup_auto_approve_creates_manager_without_request(client):
+    login(client, 'admin', '363636')
+    client.post('/cpaneltx/signup-mode', data={'signup_auto_approve': '1'})
+
+    payload = {
+        'account_type': 'personal',
+        'first_name': 'Auto',
+        'last_name': 'Manager',
+        'company': 'AutoCo',
+        'identifier': '12345678901',
+        'phone': '8095551234',
+        'email': 'auto@example.com',
+        'address': 'Santo Domingo',
+        'website': '',
+        'username': 'AutoUser',
+        'password': '123456',
+        'confirm_password': '123456',
+        'accepted_terms': 'y',
+        'captcha_answer': '0',
+    }
+    resp = client.post('/solicitar-cuenta', data=payload, follow_redirects=False)
+    assert resp.status_code == 302
+
+    with app.app_context():
+        created = User.query.filter_by(username='autouser').first()
+        assert created is not None
+        assert created.role == 'manager'
+        assert AccountRequest.query.filter_by(username='autouser').first() is None

@@ -239,3 +239,17 @@ Checklist rápido final:
 - [ ] `flask db upgrade` ejecutado sin error.
 - [ ] App reiniciada y funcionando.
 
+
+14) Si login dice "Credenciales inválidas" en MySQL aunque el usuario existe
+--------------------------------------------------------------------------
+Causa común: hashes de contraseña truncados en tablas antiguas (columnas cortas).
+
+Qué hacer:
+1. Ejecuta `flask db upgrade`.
+2. Reinicia la app en Setup Python App.
+3. Si el usuario fue creado antes del ajuste, usa "¿Olvidaste tu contraseña?" para regenerar hash.
+
+Nota técnica:
+- Tiendix ahora usa columnas `password VARCHAR(255)` para `user` y `account_request`,
+  compatible con hashes modernos de Werkzeug.
+
