@@ -332,6 +332,14 @@ class SystemAnnouncement(db.Model):
 
 
 
+
+
+class RNCRegistry(db.Model):
+    rnc = db.Column(db.String(20), primary_key=True)
+    name = db.Column(db.String(180), nullable=False)
+    source = db.Column(db.String(40), nullable=False, default='upload')
+    updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
+
 class AppSetting(db.Model):
     key = db.Column(db.String(80), primary_key=True)
     value = db.Column(db.String(255), nullable=False)

@@ -47,6 +47,23 @@ CREATE TABLE company_info (
 );
 
 
+CREATE TABLE app_setting (
+	`key` VARCHAR(80) NOT NULL,
+	value VARCHAR(255) NOT NULL,
+	updated_at DATETIME NOT NULL,
+	PRIMARY KEY (`key`)
+);
+
+
+CREATE TABLE rnc_registry (
+	rnc VARCHAR(20) NOT NULL,
+	name VARCHAR(180) NOT NULL,
+	source VARCHAR(40) NOT NULL,
+	updated_at DATETIME NOT NULL,
+	PRIMARY KEY (rnc)
+);
+
+
 CREATE TABLE export_log (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	user VARCHAR(80), 

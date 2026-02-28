@@ -48,6 +48,7 @@ from models import (
     ErrorReport,
     AuditLog,
     AppSetting,
+    RNCRegistry,
     dom_now,
 )
 from io import BytesIO, StringIO
@@ -99,15 +100,30 @@ load_dotenv()
 # Load RNC data for company name lookup
 RNC_DATA = {}
 DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', 'DGII_RNC.TXT')
+def _parse_rnc_line(raw_line: str) -> tuple[str, str] | tuple[None, None]:
+    line = (raw_line or '').strip()
+    if not line:
+        return None, None
+    parts = [p.strip() for p in line.split('|') if p is not None]
+    if len(parts) >= 2:
+        rnc = re.sub(r'\D', '', parts[0])
+        name = parts[1].strip()
+        return (rnc, name) if rnc and name else (None, None)
+    # Fallback para archivos separados por tab/espacios
+    bits = line.split()
+    if len(bits) >= 2:
+        rnc = re.sub(r'\D', '', bits[0])
+        name = ' '.join(bits[1:]).strip()
+        return (rnc, name) if rnc and name else (None, None)
+    return None, None
+
+
 if os.path.exists(DATA_PATH):
     with open(DATA_PATH, encoding='utf-8') as f:
         for row in f:
-            parts = row.strip().split('|')
-            if len(parts) >= 2:
-                rnc = re.sub(r'\D', '', parts[0])
-                name = parts[1].strip()
-                if rnc:
-                    RNC_DATA[rnc] = name
+            rnc, name = _parse_rnc_line(row)
+            if rnc and name:
+                RNC_DATA[rnc] = name
 
 app = Flask(__name__)
 APP_ENV = os.getenv('APP_ENV', 'development').strip().lower()
@@ -745,8 +761,18 @@ def _migrate_legacy_schema():
     if not inspector.has_table('app_setting'):
         statements.append(
             """CREATE TABLE app_setting (
-                key VARCHAR(80) PRIMARY KEY,
+                `key` VARCHAR(80) PRIMARY KEY,
                 value VARCHAR(255) NOT NULL,
+                updated_at DATETIME NOT NULL
+            )"""
+        )
+
+    if not inspector.has_table('rnc_registry'):
+        statements.append(
+            """CREATE TABLE rnc_registry (
+                rnc VARCHAR(20) PRIMARY KEY,
+                name VARCHAR(180) NOT NULL,
+                source VARCHAR(40) NOT NULL,
                 updated_at DATETIME NOT NULL
             )"""
         )
@@ -1093,9 +1119,15 @@ def build_items(product_ids, quantities, discounts):
 
 @app.route('/api/rnc/<rnc>')
 def rnc_lookup(rnc):
-    clean = rnc.replace('-', '')
-    name = RNC_DATA.get(clean)
+    clean = re.sub(r'\D', '', rnc or '')
+    name = ''
+    if clean:
+        row = db.session.get(RNCRegistry, clean)
+        if row:
+            name = row.name
     if not name:
+        name = RNC_DATA.get(clean, '')
+    if not name and clean:
         client = Client.query.filter(func.replace(Client.identifier, '-', '') == clean).first()
         name = client.name if client else ''
     return jsonify({'name': name})
@@ -1534,6 +1566,53 @@ def cpanel_signup_mode():
     else:
         flash('Aprobación automática desactivada: las solicitudes requerirán aprobación de administrador.')
     return redirect(url_for('cpanel_home'))
+
+
+@app.route('/cpaneltx/rnc', methods=['GET', 'POST'])
+@admin_only
+def cpanel_rnc_import():
+    if request.method == 'POST':
+        file = request.files.get('rnc_file')
+        if not file or not file.filename:
+            flash('Debe seleccionar un archivo RNC .txt')
+            return redirect(url_for('cpanel_rnc_import'))
+
+        content = file.read().decode('utf-8', errors='ignore')
+        inserted = 0
+        updated = 0
+        skipped = 0
+
+        for raw_line in content.splitlines():
+            rnc, name = _parse_rnc_line(raw_line)
+            if not rnc or not name:
+                skipped += 1
+                continue
+            current = db.session.get(RNCRegistry, rnc)
+            if current:
+                if current.name != name:
+                    current.name = name
+                    current.source = 'cpanel_upload'
+                    updated += 1
+                RNC_DATA[rnc] = name
+            else:
+                db.session.add(RNCRegistry(rnc=rnc, name=name, source='cpanel_upload'))
+                RNC_DATA[rnc] = name
+                inserted += 1
+
+        db.session.commit()
+        log_audit('cpanel_rnc_import', 'rnc_registry', status='ok', details={
+            'filename': file.filename,
+            'inserted': inserted,
+            'updated': updated,
+            'skipped': skipped,
+            'total_registry': db.session.query(func.count(RNCRegistry.rnc)).scalar(),
+        })
+        flash(f'Importación completada: nuevos={inserted}, actualizados={updated}, omitidos={skipped}.')
+        return redirect(url_for('cpanel_rnc_import'))
+
+    total = db.session.query(func.count(RNCRegistry.rnc)).scalar() or 0
+    latest = RNCRegistry.query.order_by(RNCRegistry.updated_at.desc()).limit(20).all()
+    return render_template('cpanel_rnc_import.html', total=total, latest=latest)
 
 
 @app.route('/cpaneltx/avisos', methods=['GET', 'POST'])
