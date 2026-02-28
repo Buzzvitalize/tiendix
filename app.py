@@ -1502,6 +1502,7 @@ def require_login():
         'auth.logout',
         'auth.reset_request',
         'auth.reset_password',
+        'auth.recovery_password',
         'terminos',
     }
     if request.endpoint not in allowed and 'user_id' not in session:
