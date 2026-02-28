@@ -138,7 +138,7 @@ document.querySelectorAll('.pdf-action').forEach((btn) => {
     try {
       const resp = await fetch(btn.dataset.pdfUrl, { credentials: 'same-origin' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const archivedUrl = resp.headers.get('X-Archived-Public-Url') || resp.headers.get('X-Archived-Url');
+      const archivedUrl = resp.headers.get('X-Archived-Url') || resp.headers.get('X-Archived-Public-Url');
       if (archivedUrl) {
         const normalizedArchivedUrl = archivedUrl.startsWith('http://') || archivedUrl.startsWith('https://')
           ? archivedUrl

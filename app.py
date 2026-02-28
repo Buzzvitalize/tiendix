@@ -1292,7 +1292,7 @@ def _archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: st
 
 def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
     return generate_pdf_bytes(
-        'Cotización',
+        'Cotizacion',
         company,
         quotation.client,
         quotation.items,
@@ -1307,7 +1307,7 @@ def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | No
         date=quotation.date,
         valid_until=quotation.valid_until,
         footer=(
-            "Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
+            "Condiciones: Esta cotizacion es valida por 30 dias a partir de la fecha de emision. "
             "Los precios están sujetos a cambios sin previo aviso. "
             "El ITBIS ha sido calculado conforme a la ley vigente."
         ),
@@ -1447,6 +1447,12 @@ def _archived_download_url(doc_type: str, doc_number: int | str, *, company_name
         rel = _relative_generated_doc_path(str(_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)))
     if not rel:
         return None
+    base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
+    if base_url:
+        parsed = urlparse(base_url)
+        if not parsed.scheme:
+            base_url = f"https://{base_url.lstrip('/')}".rstrip('/')
+        return f"{base_url}/generated_docs/{rel}"
     return url_for('download_generated_doc', filename=rel)
 
 
@@ -1494,6 +1500,8 @@ def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: byt
     )
     if public_url:
         response.headers['X-Archived-Public-Url'] = public_url
+    elif download_url and (download_url.startswith('http://') or download_url.startswith('https://')):
+        response.headers['X-Archived-Public-Url'] = download_url
     return response
 # Routes
 @app.before_request
@@ -3288,12 +3296,12 @@ def send_quotation_email(quotation_id):
         return redirect(url_for('list_quotations'))
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
-    pdf_data = generate_pdf_bytes('Cotización', company, client, quotation.items,
+    pdf_data = generate_pdf_bytes('Cotizacion', company, client, quotation.items,
                                   quotation.subtotal, quotation.itbis, quotation.total,
                                   seller=quotation.seller, payment_method=quotation.payment_method,
                                   bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
                                   date=quotation.date, valid_until=quotation.valid_until,
-                                  footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
+                                  footer=("Condiciones: Esta cotizacion es valida por 30 dias a partir de la fecha de emision. "
                                           "Los precios están sujetos a cambios sin previo aviso. "
                                           "El ITBIS ha sido calculado conforme a la ley vigente."))
     html = render_template('emails/quotation.html', client=client, company=company, quotation=quotation)
@@ -3537,6 +3545,7 @@ def invoice_pdf(invoice_id):
     )
 
 @app.route('/generated-docs/<path:filename>')
+@app.route('/generated_docs/<path:filename>')
 def download_generated_doc(filename):
     if '..' in filename or filename.startswith('/'):
         return ('Not Found', 404)
@@ -3980,23 +3989,30 @@ def account_statement_detail(client_id):
             aging['121+'] += balance
     overdue = sum(r['balance'] for r in rows if datetime.strptime(r['due'], '%d/%m/%Y') < now)
     overdue_pct = (overdue / totals * 100) if totals else 0
+    company = {
+        'name': g.company.name,
+        'street': g.company.street,
+        'phone': g.company.phone,
+        'rnc': g.company.rnc,
+        'logo': g.company.logo,
+    }
+    full_name = " ".join(part for part in [(client.name or '').strip(), (client.last_name or '').strip()] if part).strip()
+    client_dict = {
+        'name': full_name or (client.name or ''),
+        'identifier': client.identifier,
+        'street': client.street,
+        'sector': client.sector,
+        'province': client.province,
+        'phone': client.phone,
+        'email': client.email,
+    }
+    statement_url = _archived_download_url(
+        'estado_cuenta',
+        client.id,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+    )
     if request.args.get('pdf') == '1':
-        company = {
-            'name': g.company.name,
-            'street': g.company.street,
-            'phone': g.company.phone,
-            'rnc': g.company.rnc,
-            'logo': g.company.logo,
-        }
-        client_dict = {
-            'name': client.name,
-            'identifier': client.identifier,
-            'street': client.street,
-            'sector': client.sector,
-            'province': client.province,
-            'phone': client.phone,
-            'email': client.email,
-        }
         pdf_data = generate_account_statement_pdf_bytes(company, client_dict, rows, totals, aging, overdue_pct)
         return _archive_and_send_pdf(
             doc_type='estado_cuenta',
@@ -4005,7 +4021,16 @@ def account_statement_detail(client_id):
             download_name=f'estado_cuenta_{client.id}.pdf',
             company_name=company.get('name'),
         )
-    return render_template('estado_cuenta_detalle.html', client=client, rows=rows, total=totals, aging=aging, overdue_pct=overdue_pct)
+    return render_template(
+        'estado_cuenta_detalle.html',
+        client=client,
+        client_display_name=client_dict['name'],
+        rows=rows,
+        total=totals,
+        aging=aging,
+        overdue_pct=overdue_pct,
+        statement_url=statement_url,
+    )
 
 
 @app.route('/reportes/export')
@@ -4017,7 +4042,7 @@ def export_reportes():
         if formato not in {'csv', 'xlsx'} or tipo != 'resumen':
             log_export(session.get('full_name') or session.get('username'), formato, tipo, {}, 'fail', 'permiso')
             return '', 403
-    elif role not in ('admin', 'manager'):
+    elif role not in ('admin', 'manager', 'company'):
         log_export(session.get('full_name') or session.get('username'), formato, tipo, {}, 'fail', 'permiso')
         return '', 403
 

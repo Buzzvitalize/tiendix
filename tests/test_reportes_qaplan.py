@@ -112,13 +112,13 @@ def test_export_summary_and_pdf(client):
     client.get('/logout')
 
 
-def test_unauthorized_export_logged(client):
+def test_company_export_allowed(client):
     login(client, 'u1', 'pass')
     resp = client.get('/reportes/export?formato=csv')
-    assert resp.status_code == 403
+    assert resp.status_code == 200
     with app.app_context():
-        log = ExportLog.query.filter_by(status='fail').order_by(ExportLog.id.desc()).first()
-        assert log and log.message == 'permiso'
+        log = ExportLog.query.filter_by(formato='csv').order_by(ExportLog.id.desc()).first()
+        assert log and log.status == 'success'
     client.get('/logout')
 
 
@@ -132,3 +132,10 @@ def test_export_history_filter(client):
     assert resp.status_code == 200
     assert b'csv' in resp.data
     client.get('/logout')
+
+
+def test_reportes_export_pdf_allows_company_role(client):
+    login(client, 'u1', 'pass')
+    resp = client.get('/reportes/export?formato=pdf')
+    assert resp.status_code == 200
+

@@ -65,6 +65,7 @@ def _safe_text(value) -> str:
 
 
 
+
 def _clean_optional(value) -> str:
     if value is None:
         return ''
@@ -162,7 +163,7 @@ def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_numbe
     if ncf:
         _cell(pdf, 0, 5, _safe_text(f"NCF: {ncf}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if valid_until:
-        _cell(pdf, 0, 5, _safe_text(f"Válido hasta: {valid_until.strftime('%d/%m/%Y')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Valido hasta: {valid_until.strftime('%d/%m/%Y')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.ln(15)  # 1.5 cm
 
@@ -174,11 +175,11 @@ def _draw_client_block(pdf: FPDF, client: dict):
     pdf.set_font('Helvetica', '', 10)
     _cell(pdf, 0, 5, _safe_text(f"Nombre: {client.get('name','')}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('identifier'):
-        _cell(pdf, 0, 5, _safe_text(f"Cédula/RNC: {client['identifier']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Cedula/RNC: {client['identifier']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('address'):
-        _cell(pdf, 0, 5, _safe_text(f"Dirección: {client['address']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Direccion: {client['address']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('phone'):
-        _cell(pdf, 0, 5, _safe_text(f"Teléfono: {client['phone']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Telefono: {client['phone']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('email'):
         _cell(pdf, 0, 5, _safe_text(f"Correo: {client['email']}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
@@ -188,7 +189,7 @@ def _draw_meta_block(pdf: FPDF, seller: str | None, payment_method: str | None, 
     if seller:
         details.append(f"Vendedor: {seller}")
     if payment_method:
-        pay = f"Método de pago: {payment_method}"
+        pay = f"Metodo de pago: {payment_method}"
         if bank:
             pay += f" - {bank}"
         details.append(pay)
