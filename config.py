@@ -15,6 +15,7 @@ class BaseConfig:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     WTF_CSRF_ENABLED = True
     PDF_ARCHIVE_ROOT = os.environ.get("PDF_ARCHIVE_ROOT")
+    PUBLIC_DOCS_BASE_URL = os.environ.get("PUBLIC_DOCS_BASE_URL")
 
 
 class DevelopmentConfig(BaseConfig):
