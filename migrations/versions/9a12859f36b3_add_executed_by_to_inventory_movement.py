@@ -24,12 +24,12 @@ def _has_fk(table_name: str, constrained_columns: list[str], referred_table: str
 def upgrade():
     if not _has_column('inventory_movement', 'executed_by'):
         op.add_column('inventory_movement', sa.Column('executed_by', sa.Integer(), nullable=True))
-    if not _has_fk('inventory_movement', ['executed_by'], 'user'):
+    if op.get_bind().dialect.name != 'sqlite' and not _has_fk('inventory_movement', ['executed_by'], 'user'):
         op.create_foreign_key('fk_inventory_movement_executed_by_user', 'inventory_movement', 'user', ['executed_by'], ['id'])
 
 
 def downgrade():
-    if _has_fk('inventory_movement', ['executed_by'], 'user'):
+    if op.get_bind().dialect.name != 'sqlite' and _has_fk('inventory_movement', ['executed_by'], 'user'):
         op.drop_constraint('fk_inventory_movement_executed_by_user', 'inventory_movement', type_='foreignkey')
     if _has_column('inventory_movement', 'executed_by'):
         op.drop_column('inventory_movement', 'executed_by')

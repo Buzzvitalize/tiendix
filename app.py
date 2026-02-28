@@ -3437,7 +3437,15 @@ def list_orders():
     if q:
         query = query.filter((Client.name.contains(q)) | (Client.identifier.contains(q)))
     orders = query.order_by(Order.date.desc()).all()
-    return render_template('pedido.html', orders=orders, q=q)
+    archived_order_urls = {}
+    company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    for o in orders:
+        archived = _archived_pdf_path('pedido', o.id, company_name=company_name, company_id=current_company_id())
+        if archived.exists():
+            url = _archived_download_url('pedido', o.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
+            if url:
+                archived_order_urls[o.id] = url
+    return render_template('pedido.html', orders=orders, q=q, archived_order_urls=archived_order_urls)
 
 @app.route('/pedidos/<int:order_id>/facturar')
 def order_to_invoice(order_id):
@@ -3530,7 +3538,15 @@ def list_invoices():
     if q:
         query = query.filter((Client.name.contains(q)) | (Client.identifier.contains(q)))
     invoices = query.order_by(Invoice.date.desc()).all()
-    return render_template('factura.html', invoices=invoices, q=q)
+    archived_invoice_urls = {}
+    company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    for f in invoices:
+        archived = _archived_pdf_path('factura', f.id, company_name=company_name, company_id=current_company_id())
+        if archived.exists():
+            url = _archived_download_url('factura', f.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
+            if url:
+                archived_invoice_urls[f.id] = url
+    return render_template('factura.html', invoices=invoices, q=q, archived_invoice_urls=archived_invoice_urls)
 
 
 @app.route('/facturas/<int:invoice_id>/pagar', methods=['POST'])

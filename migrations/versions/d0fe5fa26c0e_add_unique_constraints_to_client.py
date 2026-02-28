@@ -14,6 +14,8 @@ def _has_unique(table_name: str, constraint_name: str) -> bool:
 
 
 def upgrade():
+    if op.get_bind().dialect.name == 'sqlite':
+        return
     if not _has_unique('client', 'uq_client_identifier_company'):
         op.create_unique_constraint('uq_client_identifier_company', 'client', ['identifier', 'company_id'])
     if not _has_unique('client', 'uq_client_email_company'):
@@ -21,6 +23,8 @@ def upgrade():
 
 
 def downgrade():
+    if op.get_bind().dialect.name == 'sqlite':
+        return
     if _has_unique('client', 'uq_client_email_company'):
         op.drop_constraint('uq_client_email_company', 'client', type_='unique')
     if _has_unique('client', 'uq_client_identifier_company'):

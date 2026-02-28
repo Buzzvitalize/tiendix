@@ -36,7 +36,7 @@
             <button class="text-green-600 text-sm" onclick="return confirm('¿Marcar como pagada?')">Pagada</button>
           </form>
           {% endif %}
-          <a class="text-blue-500 text-sm" href="{{ url_for('invoice_pdf', invoice_id=f.id) }}">PDF</a>
+          <a class="text-blue-500 text-sm" href="{{ archived_invoice_urls.get(f.id) or '#' }}">PDF</a>
         </td>
       </tr>
     {% endfor %}
