@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 import inspect
 import os
+import unicodedata
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -58,7 +59,8 @@ def _fmt_money(value: float) -> str:
 def _safe_text(value) -> str:
     """Return latin-1-safe text for built-in fonts (keeps Spanish accents)."""
     text = '' if value is None else str(value)
-    return text.encode('latin-1', 'replace').decode('latin-1')
+    normalized = unicodedata.normalize('NFKD', text)
+    return normalized.encode('ascii', 'replace').decode('ascii')
 
 
 
