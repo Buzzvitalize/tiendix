@@ -1,12 +1,33 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="p-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-  <a href="{{ url_for('cpanel_companies') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Empresas</a>
-  <a href="{{ url_for('cpanel_users') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Usuarios</a>
-  <a href="{{ url_for('cpanel_orders') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Pedidos</a>
-  <a href="{{ url_for('cpanel_invoices') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Facturas</a>
-  <a href="{{ url_for('cpanel_auditoria') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Auditoría</a>
-  <a href="{{ url_for('cpanel_error_reports') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Reportes de errores</a>
-  <a href="{{ url_for('cpanel_announcements') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Avisos generales</a>
+<div class="p-4 space-y-4">
+  <section class="bg-white rounded shadow p-4">
+    <h2 class="text-lg font-semibold mb-2">Modo de registro de cuentas</h2>
+    <p class="text-sm text-gray-600 mb-3">
+      {% if signup_auto_approve %}
+      Actualmente está <strong>activado</strong>: los usuarios nuevos se crean de inmediato con rol <strong>Manager</strong>.
+      {% else %}
+      Actualmente está <strong>desactivado</strong>: los usuarios nuevos quedan en solicitud pendiente para aprobación de administrador.
+      {% endif %}
+    </p>
+    <form method="post" action="{{ url_for('cpanel_signup_mode') }}" class="flex items-center gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label class="inline-flex items-center gap-2">
+        <input type="checkbox" name="signup_auto_approve" value="1" {% if signup_auto_approve %}checked{% endif %}>
+        <span>Activar creación directa de cuentas (sin aprobación)</span>
+      </label>
+      <button class="btn-primary">Guardar</button>
+    </form>
+  </section>
+
+  <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <a href="{{ url_for('cpanel_companies') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Empresas</a>
+    <a href="{{ url_for('cpanel_users') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Usuarios</a>
+    <a href="{{ url_for('cpanel_orders') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Pedidos</a>
+    <a href="{{ url_for('cpanel_invoices') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Facturas</a>
+    <a href="{{ url_for('cpanel_auditoria') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Auditoría</a>
+    <a href="{{ url_for('cpanel_error_reports') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Reportes de errores</a>
+    <a href="{{ url_for('cpanel_announcements') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Avisos generales</a>
+  </div>
 </div>
 {% endblock %}

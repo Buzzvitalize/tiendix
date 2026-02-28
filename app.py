@@ -47,6 +47,7 @@ from models import (
     SystemAnnouncement,
     ErrorReport,
     AuditLog,
+    AppSetting,
     dom_now,
 )
 from io import BytesIO, StringIO
@@ -741,6 +742,15 @@ def _migrate_legacy_schema():
             )"""
         )
 
+    if not inspector.has_table('app_setting'):
+        statements.append(
+            """CREATE TABLE app_setting (
+                key VARCHAR(80) PRIMARY KEY,
+                value VARCHAR(255) NOT NULL,
+                updated_at DATETIME NOT NULL
+            )"""
+        )
+
     if inspector.has_table('user'):
         # Normaliza usuarios antiguos a minúsculas para evitar conflictos por mayúsculas.
         db.session.execute(db.text("UPDATE user SET username = lower(username) WHERE username <> lower(username)"))
@@ -780,6 +790,51 @@ def run_auto_migrations():
 # Run migrations when the module is imported so that new fields are available
 # even if ``flask db upgrade`` wasn't executed manually.
 run_auto_migrations()
+
+
+SIGNUP_AUTO_APPROVE_KEY = 'signup_auto_approve'
+
+
+def _is_signup_auto_approve_enabled() -> bool:
+    setting = db.session.get(AppSetting, SIGNUP_AUTO_APPROVE_KEY)
+    if not setting:
+        return False
+    return str(setting.value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _set_signup_auto_approve(enabled: bool) -> None:
+    setting = db.session.get(AppSetting, SIGNUP_AUTO_APPROVE_KEY)
+    if not setting:
+        setting = AppSetting(key=SIGNUP_AUTO_APPROVE_KEY, value='1' if enabled else '0')
+        db.session.add(setting)
+    else:
+        setting.value = '1' if enabled else '0'
+
+
+def _create_company_user_from_signup(*, first_name: str, last_name: str, company_name: str, identifier: str, phone: str, address: str, website: str | None, username: str, password_hash: str, email: str | None, role: str) -> tuple[CompanyInfo, User]:
+    company = CompanyInfo(
+        name=company_name,
+        street=address or '',
+        sector='',
+        province='',
+        phone=phone,
+        rnc=identifier or '',
+        website=website,
+        logo='',
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+        role=role,
+        company_id=company.id,
+        email=email,
+    )
+    user.password = password_hash
+    db.session.add(user)
+    return company, user
 
 # Utility constants
 ITBIS_RATE = 0.18
@@ -1224,31 +1279,43 @@ def request_account():
             flash('Debe ingresar RNC o Cédula', 'request')
             return redirect(url_for('request_account'))
         if User.query.count() == 0:
-            company = CompanyInfo(
-                name=request.form['company'],
-                street=request.form.get('address') or '',
-                sector='',
-                province='',
-                phone=request.form['phone'],
-                rnc=identifier,
-                website=request.form.get('website'),
-                logo='',
-            )
-            db.session.add(company)
-            db.session.flush()
-            owner = User(
-                username=username,
+            company, owner = _create_company_user_from_signup(
                 first_name=request.form['first_name'],
                 last_name=request.form['last_name'],
-                role='admin',
-                company_id=company.id,
+                company_name=request.form['company'],
+                identifier=identifier,
+                phone=request.form['phone'],
+                address=request.form.get('address') or '',
+                website=request.form.get('website'),
+                username=username,
+                password_hash=generate_password_hash(password),
                 email=request.form['email'],
+                role='admin',
             )
-            owner.password = generate_password_hash(password)
-            db.session.add(owner)
             db.session.commit()
             log_audit('owner_bootstrap', 'user', owner.id, details=f'company={company.id};username={username}')
             flash('Cuenta principal creada: ahora eres Administrador (dueño).', 'login')
+            session.pop('signup_captcha_answer', None)
+            session.pop('signup_captcha_question', None)
+            return redirect(url_for('auth.login'))
+
+        if _is_signup_auto_approve_enabled():
+            company, user = _create_company_user_from_signup(
+                first_name=request.form['first_name'],
+                last_name=request.form['last_name'],
+                company_name=request.form['company'],
+                identifier=identifier,
+                phone=request.form['phone'],
+                address=request.form.get('address') or '',
+                website=request.form.get('website'),
+                username=username,
+                password_hash=generate_password_hash(password),
+                email=request.form['email'],
+                role='manager',
+            )
+            db.session.commit()
+            log_audit('account_auto_approved', 'user', user.id, details=f'company={company.id};username={username}')
+            flash('Cuenta creada correctamente con rol Manager. Ya puede iniciar sesión.', 'login')
             session.pop('signup_captcha_answer', None)
             session.pop('signup_captcha_question', None)
             return redirect(url_for('auth.login'))
@@ -1295,7 +1362,7 @@ def terminos():
 @admin_only
 def admin_requests():
     requests = AccountRequest.query.all()
-    return render_template('admin_solicitudes.html', requests=requests)
+    return render_template('admin_solicitudes.html', requests=requests, signup_auto_approve=_is_signup_auto_approve_enabled())
 
 
 @app.route('/admin/companies')
@@ -1330,22 +1397,19 @@ def approve_request(req_id):
         return redirect(url_for('admin_requests'))
     password = req.password
     email = req.email
-    company = CompanyInfo(
-        name=req.company,
-        street=req.address or '',
-        sector='',
-        province='',
+    company, user = _create_company_user_from_signup(
+        first_name=req.first_name,
+        last_name=req.last_name,
+        company_name=req.company,
+        identifier=req.identifier or '',
         phone=req.phone,
-        rnc=req.identifier or '',
+        address=req.address or '',
         website=req.website,
-        logo='',
+        username=username,
+        password_hash=password,
+        email=email,
+        role=role,
     )
-    db.session.add(company)
-    db.session.flush()
-    user = User(username=username, first_name=req.first_name, last_name=req.last_name, role=role, company_id=company.id)
-    # ``req.password`` ya contiene el hash generado al recibir la solicitud.
-    user.password = password
-    db.session.add(user)
     db.session.delete(req)
     db.session.commit()
 
@@ -1452,7 +1516,21 @@ def report_error():
 @app.route('/cpaneltx')
 @admin_only
 def cpanel_home():
-    return render_template('cpaneltx.html')
+    return render_template('cpaneltx.html', signup_auto_approve=_is_signup_auto_approve_enabled())
+
+
+@app.post('/cpaneltx/signup-mode')
+@admin_only
+def cpanel_signup_mode():
+    enabled = bool(request.form.get('signup_auto_approve'))
+    _set_signup_auto_approve(enabled)
+    db.session.commit()
+    log_audit('cpanel_signup_mode', 'app_setting', SIGNUP_AUTO_APPROVE_KEY, details=f'enabled={enabled}')
+    if enabled:
+        flash('Aprobación automática activada: nuevas cuentas se crearán directamente con rol Manager.')
+    else:
+        flash('Aprobación automática desactivada: las solicitudes requerirán aprobación de administrador.')
+    return redirect(url_for('cpanel_home'))
 
 
 @app.route('/cpaneltx/avisos', methods=['GET', 'POST'])

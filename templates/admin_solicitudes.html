@@ -2,6 +2,11 @@
 {% block title %}Solicitudes{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-4">Solicitudes de cuenta</h1>
+{% if signup_auto_approve %}
+  <div class="mb-4 rounded border border-amber-300 bg-amber-50 text-amber-800 px-4 py-3">
+    La creación automática de cuentas está activa. Los nuevos registros se crean directamente como <strong>Manager</strong>.
+  </div>
+{% endif %}
 {% if requests %}
   <div class="space-y-4">
   {% for req in requests %}

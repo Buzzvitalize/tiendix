@@ -330,6 +330,13 @@ class SystemAnnouncement(db.Model):
     created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
 
+
+
+class AppSetting(db.Model):
+    key = db.Column(db.String(80), primary_key=True)
+    value = db.Column(db.String(255), nullable=False)
+    updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
+
 class AuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
