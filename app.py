@@ -1243,14 +1243,28 @@ def get_company_info():
 
 def _company_short_slug(company_name: str | None) -> str:
     base = (company_name or 'empresa').strip().lower()
-    base = re.sub(r'[^a-z0-9\s]', '', base)
-    first = (base.split() or ['empresa'])[0]
-    return (first[:8] or 'empresa')
+    base = re.sub(r'[^a-z0-9\s-]', '', base)
+    base = re.sub(r'[\s_-]+', '-', base).strip('-')
+    return (base[:40] or 'empresa')
 
 
 def _company_private_token(company_id: int | None, company_name: str | None) -> str:
     seed = f"{app.config.get('SECRET_KEY','tiendix')}:{company_id or 0}:{company_name or ''}"
-    return hashlib.sha256(seed.encode('utf-8')).hexdigest()[:8]
+    token_number = int(hashlib.sha256(seed.encode('utf-8')).hexdigest(), 16) % 1_000_000
+    return f"{token_number:06d}"
+
+
+def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> str | None:
+    base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
+    if not base_url:
+        return None
+    cid = company_id if company_id is not None else current_company_id()
+    name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    short = _company_short_slug(name)
+    token = _company_private_token(cid, name)
+    safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
+    return f"{base_url}/{short}/{token}/{safe_type}/{number}.pdf"
 
 
 def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, company_name: str | None = None, company_id: int | None = None) -> str | None:
@@ -2744,6 +2758,18 @@ def new_quotation():
         flash('Cotización guardada')
         notify('Cotización guardada')
         log_audit('quotation_create', 'quotation', quotation.id, details=f'client={client.id};total={total:.2f}')
+
+        is_first_quotation = company_query(Quotation).count() == 1
+        if is_first_quotation:
+            company = get_company_info()
+            public_url = _public_doc_url(
+                'cotizacion',
+                quotation.id,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+            )
+            if public_url:
+                return redirect(public_url)
         return redirect(url_for('list_quotations'))
     clients = company_query(Client).options(
         load_only(Client.id, Client.name, Client.identifier)
