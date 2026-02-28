@@ -14,14 +14,23 @@ down_revision = 'd0fe5fa26c0e'
 branch_labels = None
 depends_on = None
 
+
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return column_name in {col['name'] for col in inspector.get_columns(table_name)}
+
+
 def upgrade():
-    with op.batch_alter_table('quotation') as batch:
-        batch.add_column(sa.Column('status', sa.String(length=20), server_default='vigente', nullable=False))
-    op.execute("UPDATE quotation SET status='vigente' WHERE status IS NULL")
-    with op.batch_alter_table('quotation') as batch:
-        batch.alter_column('status', server_default=None)
+    if not _has_column('quotation', 'status'):
+        with op.batch_alter_table('quotation') as batch:
+            batch.add_column(sa.Column('status', sa.String(length=20), server_default='vigente', nullable=False))
+        op.execute("UPDATE quotation SET status='vigente' WHERE status IS NULL")
+        if op.get_bind().dialect.name != 'sqlite':
+            with op.batch_alter_table('quotation') as batch:
+                batch.alter_column('status', server_default=None)
 
 
 def downgrade():
-    with op.batch_alter_table('quotation') as batch:
-        batch.drop_column('status')
+    if _has_column('quotation', 'status'):
+        with op.batch_alter_table('quotation') as batch:
+            batch.drop_column('status')
