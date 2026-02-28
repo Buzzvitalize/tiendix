@@ -1,9 +1,11 @@
 import os
 import sys
 
+import pytest
+
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from app import app
+from app import app, _archive_and_send_pdf
 import weasy_pdf
 
 
@@ -92,3 +94,28 @@ def test_generate_pdf_bytes_accepts_unicode_text_without_crashing():
 
     assert isinstance(payload, (bytes, bytearray))
     assert payload.startswith(b'%PDF')
+
+
+def test_archive_and_send_pdf_fallbacks_to_attachment_filename(monkeypatch):
+    calls = []
+
+    def fake_send_file(payload, **kwargs):
+        calls.append(kwargs)
+        if 'download_name' in kwargs:
+            raise TypeError('unexpected keyword argument download_name')
+        assert kwargs.get('attachment_filename') == 'doc.pdf'
+        return app.response_class(b'PDF', mimetype='application/pdf')
+
+    monkeypatch.setattr('app.send_file', fake_send_file)
+
+    with app.test_request_context('/dummy'):
+        resp = _archive_and_send_pdf(
+            doc_type='cotizacion',
+            doc_number=1,
+            pdf_data=b'%PDF-1.4 test',
+            download_name='doc.pdf',
+            archive=False,
+        )
+
+    assert resp.status_code == 200
+    assert len(calls) == 2

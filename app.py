@@ -1276,15 +1276,29 @@ def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, com
 
 
 def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: bytes, download_name: str, company_name: str | None = None, archive: bool = True):
-    """Archive PDF copy (best-effort) and return download response."""
+    """Archive PDF copy (best-effort) and return download response.
+
+    Uses a compatibility fallback for older Flask/Werkzeug versions that still
+    expect ``attachment_filename`` instead of ``download_name``.
+    """
     if archive:
         _archive_pdf_copy(doc_type, doc_number, pdf_data, company_name=company_name)
-    return send_file(
-        BytesIO(pdf_data),
-        download_name=download_name,
-        mimetype='application/pdf',
-        as_attachment=True,
-    )
+    payload = BytesIO(pdf_data)
+    try:
+        return send_file(
+            payload,
+            download_name=download_name,
+            mimetype='application/pdf',
+            as_attachment=True,
+        )
+    except TypeError:
+        payload.seek(0)
+        return send_file(
+            payload,
+            attachment_filename=download_name,
+            mimetype='application/pdf',
+            as_attachment=True,
+        )
 # Routes
 @app.before_request
 def require_login():
