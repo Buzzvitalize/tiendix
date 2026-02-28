@@ -57,11 +57,19 @@ def _fmt_money(value: float) -> str:
 
 
 def _safe_text(value) -> str:
-    """Return ASCII-safe text to avoid codec issues in older FPDF variants."""
+    """Return latin-1-safe text for built-in fonts (keeps Spanish accents)."""
     text = '' if value is None else str(value)
     normalized = unicodedata.normalize('NFKD', text)
     return normalized.encode('ascii', 'replace').decode('ascii')
 
+
+
+
+def _clean_optional(value) -> str:
+    if value is None:
+        return ''
+    text = str(value).strip()
+    return '' if text.lower() == 'none' else text
 
 def _item_to_dict(item) -> dict:
     if isinstance(item, dict):
@@ -79,19 +87,30 @@ def _item_to_dict(item) -> dict:
 
 def _client_to_dict(client) -> dict:
     if isinstance(client, dict):
-        return client
+        return {
+            'name': _clean_optional(client.get('name')),
+            'address': _clean_optional(client.get('address')),
+            'phone': _clean_optional(client.get('phone')),
+            'identifier': _clean_optional(client.get('identifier')),
+            'email': _clean_optional(client.get('email')),
+        }
+
     address = ", ".join(
-        filter(None, [getattr(client, 'street', None), getattr(client, 'sector', None), getattr(client, 'province', None)])
+        part for part in [
+            _clean_optional(getattr(client, 'street', None)),
+            _clean_optional(getattr(client, 'sector', None)),
+            _clean_optional(getattr(client, 'province', None)),
+        ] if part
     )
-    name = getattr(client, 'name', '')
-    last = getattr(client, 'last_name', '')
+    name = _clean_optional(getattr(client, 'name', ''))
+    last = _clean_optional(getattr(client, 'last_name', ''))
     full_name = f"{name} {last}".strip()
     return {
         'name': full_name,
         'address': address,
-        'phone': getattr(client, 'phone', '') or '',
-        'identifier': getattr(client, 'identifier', '') or '',
-        'email': getattr(client, 'email', '') or '',
+        'phone': _clean_optional(getattr(client, 'phone', '')),
+        'identifier': _clean_optional(getattr(client, 'identifier', '')),
+        'email': _clean_optional(getattr(client, 'email', '')),
     }
 
 

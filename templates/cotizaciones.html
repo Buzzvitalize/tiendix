@@ -59,7 +59,9 @@
         <td class="p-2">{{ q.total | money }}</td>
         <td class="p-2">{{ q.status }}</td>
         <td class="p-2 space-x-2">
-          <a class="text-blue-500" href="{{ url_for('quotation_pdf', quotation_id=q.id) }}">PDF</a>
+          <button type="button" class="text-blue-500 inline-flex items-center gap-1 pdf-action" data-pdf-url="{{ url_for('quotation_pdf', quotation_id=q.id) }}" data-filename="cotizacion_{{ q.id }}.pdf">
+            <span class="pdf-label">Generar PDF</span>
+          </button>
           <form method="post" action="{{ url_for('send_quotation_email', quotation_id=q.id) }}" class="inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="text-indigo-500">Enviar</button>
@@ -103,4 +105,58 @@
     class="px-2 py-1 bg-gray-200 rounded">Siguiente</a>
   {% endif %}
 </div>
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.pdf-action').forEach((btn) => {
+  let blobUrl = null;
+  let ready = false;
+  let downloadUrl = null;
+
+  function setLabel(label, icon = false) {
+    btn.innerHTML = icon
+      ? `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 9V3h12v6h1a3 3 0 013 3v5h-4v4H6v-4H2v-5a3 3 0 013-3h1zm2-4v4h8V5H8zm8 14v-4H8v4h8zm2-4h2v-3a1 1 0 00-1-1h-1v4zM4 15h2v-4H5a1 1 0 00-1 1v3z"/></svg><span class="pdf-label">${label}</span>`
+      : `<span class="pdf-label">${label}</span>`;
+  }
+
+  btn.addEventListener('click', async () => {
+    if (ready && (downloadUrl || blobUrl)) {
+      const a = document.createElement('a');
+      a.href = downloadUrl || blobUrl;
+      a.download = btn.dataset.filename || 'documento.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      return;
+    }
+
+    setLabel('Generando PDF...');
+    btn.disabled = true;
+
+    try {
+      const resp = await fetch(btn.dataset.pdfUrl, { credentials: 'same-origin' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const archivedUrl = resp.headers.get('X-Archived-Public-Url') || resp.headers.get('X-Archived-Url');
+      if (archivedUrl) {
+        downloadUrl = archivedUrl;
+      } else {
+        const blob = await resp.blob();
+        blobUrl = URL.createObjectURL(blob);
+      }
+      ready = true;
+      setLabel('Descargar PDF', true);
+      btn.classList.remove('text-blue-500');
+      btn.classList.add('text-green-600');
+      btn.disabled = false;
+    } catch (_err) {
+      setLabel('Error PDF');
+      btn.classList.remove('text-blue-500');
+      btn.classList.add('text-red-600');
+      btn.disabled = false;
+    }
+  });
+});
+</script>
 {% endblock %}

@@ -74,6 +74,7 @@ import json
 import uuid
 import importlib.util
 import hashlib
+import imghdr
 from ai import recommend_products
 from weasy_pdf import generate_pdf, generate_pdf_bytes
 from account_pdf import generate_account_statement_pdf, generate_account_statement_pdf_bytes
@@ -1425,17 +1426,39 @@ def _log_pdf_event(doc_type: str, doc_number: int | str, status: str, message: s
         app.logger.warning('Could not write PDF debug log (%s %s): %s', doc_type, doc_number, exc)
 
 
+def _relative_generated_doc_path(full_path: str | None) -> str | None:
+    if not full_path:
+        return None
+    try:
+        root = _archive_root_dir().resolve()
+        target = Path(full_path).resolve()
+        return str(target.relative_to(root)).replace('\\', '/')
+    except Exception:
+        return None
+
+
+def _archived_download_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None, full_path: str | None = None) -> str | None:
+    if full_path:
+        rel = _relative_generated_doc_path(full_path)
+    else:
+        rel = _relative_generated_doc_path(str(_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)))
+    if not rel:
+        return None
+    return url_for('download_generated_doc', filename=rel)
+
+
 def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: bytes, download_name: str, company_name: str | None = None, archive: bool = True):
     """Archive PDF copy (best-effort) and return download response.
 
     Uses a compatibility fallback for older Flask/Werkzeug versions that still
     expect ``attachment_filename`` instead of ``download_name``.
     """
+    archived_path = None
     if archive:
-        _archive_pdf_copy(doc_type, doc_number, pdf_data, company_name=company_name)
+        archived_path = _archive_pdf_copy(doc_type, doc_number, pdf_data, company_name=company_name)
     payload = BytesIO(pdf_data)
     try:
-        return send_file(
+        response = send_file(
             payload,
             download_name=download_name,
             mimetype='application/pdf',
@@ -1443,12 +1466,32 @@ def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: byt
         )
     except TypeError:
         payload.seek(0)
-        return send_file(
+        response = send_file(
             payload,
             attachment_filename=download_name,
             mimetype='application/pdf',
             as_attachment=True,
         )
+
+    download_url = _archived_download_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=current_company_id(),
+        full_path=archived_path,
+    )
+    if download_url:
+        response.headers['X-Archived-Url'] = download_url
+
+    public_url = _public_doc_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=current_company_id(),
+    )
+    if public_url:
+        response.headers['X-Archived-Public-Url'] = public_url
+    return response
 # Routes
 @app.before_request
 def require_login():
@@ -1459,6 +1502,7 @@ def require_login():
         'auth.logout',
         'auth.reset_request',
         'auth.reset_password',
+        'auth.recovery_password',
         'terminos',
     }
     if request.endpoint not in allowed and 'user_id' not in session:
@@ -2105,6 +2149,25 @@ def cpanel_company_delete(cid):
     log_audit('cpanel_company_delete', 'company', cid)
     return redirect(url_for('cpanel_companies'))
 
+
+
+
+@app.route('/cpaneltx/quotations')
+@admin_only
+def cpanel_quotations():
+    quotations = Quotation.query.options(joinedload(Quotation.client)).all()
+    return render_template('cpanel_quotations.html', quotations=quotations)
+
+
+@app.post('/cpaneltx/quotations/<int:qid>/delete')
+@admin_only
+def cpanel_quotation_delete(qid):
+    quotation = Quotation.query.get_or_404(qid)
+    db.session.delete(quotation)
+    db.session.commit()
+    flash('Cotización eliminada')
+    log_audit('cpanel_quotation_delete', 'quotation', qid)
+    return redirect(url_for('cpanel_quotations'))
 
 @app.route('/cpaneltx/orders')
 @admin_only
@@ -3036,10 +3099,10 @@ def settings_company():
         else:
             file = request.files.get('logo')
             if file and file.filename:
-                filename = secure_filename(file.filename)
-                ext = os.path.splitext(filename)[1].lower()
+                original_name = secure_filename(file.filename)
+                ext = os.path.splitext(original_name)[1].lower()
                 if ext not in {'.png', '.jpg', '.jpeg'}:
-                    flash('Formato de logo inválido')
+                    flash('Formato de logo inválido. Solo PNG/JPG.')
                     return redirect(url_for('settings_company'))
                 file.seek(0, os.SEEK_END)
                 size = file.tell()
@@ -3047,10 +3110,25 @@ def settings_company():
                 if size > 1 * 1024 * 1024:
                     flash('Logo demasiado grande (máximo 1MB)')
                     return redirect(url_for('settings_company'))
+                header = file.stream.read(512)
+                file.stream.seek(0)
+                detected = imghdr.what(None, h=header)
+                if detected not in {'png', 'jpeg'}:
+                    flash('Contenido de logo inválido. Solo imágenes PNG/JPG reales.')
+                    return redirect(url_for('settings_company'))
                 upload_dir = os.path.join(app.static_folder, 'uploads')
                 os.makedirs(upload_dir, exist_ok=True)
+                safe_ext = '.png' if detected == 'png' else '.jpg'
+                filename = f"logo_{company.id}_{uuid.uuid4().hex[:10]}{safe_ext}"
                 path = os.path.join(upload_dir, filename)
                 file.save(path)
+                if company.logo:
+                    try:
+                        old_logo = os.path.join(app.static_folder, company.logo)
+                        if os.path.exists(old_logo):
+                            os.remove(old_logo)
+                    except Exception:
+                        pass
                 company.logo = f'uploads/{filename}'
         old_final = company.ncf_final
         old_fiscal = company.ncf_fiscal
@@ -3455,15 +3533,15 @@ def invoice_pdf(invoice_id):
         company_name=company.get('name'),
     )
 
-@app.route('/pdfs/<path:filename>')
-def serve_pdf(filename):
+@app.route('/generated-docs/<path:filename>')
+def download_generated_doc(filename):
     if '..' in filename or filename.startswith('/'):
         return ('Not Found', 404)
-    base = _company_pdf_dir().parent.resolve()
+    base = _archive_root_dir().resolve()
     file_path = (base / filename).resolve()
-    if not str(file_path).startswith(str(base.resolve())) or not file_path.exists():
+    if not str(file_path).startswith(str(base)) or not file_path.exists():
         return ('Not Found', 404)
-    return send_file(str(file_path), as_attachment=True)
+    return send_file(str(file_path), as_attachment=True, mimetype='application/pdf')
 
 def _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria):
     """Return an invoice query filtered by the provided parameters."""
