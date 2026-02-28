@@ -16,6 +16,7 @@ def test_first_quotation_redirects_to_public_docs_url(tmp_path):
     with app.app_context():
         db.session.remove()
         db.engine.dispose()
+        db.drop_all()
         db.create_all()
 
         company = CompanyInfo(name='Eco Sea SRL', street='', sector='', province='', phone='', rnc='')

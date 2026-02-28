@@ -16,6 +16,7 @@ class BaseConfig:
     WTF_CSRF_ENABLED = True
     PDF_ARCHIVE_ROOT = os.environ.get("PDF_ARCHIVE_ROOT")
     PUBLIC_DOCS_BASE_URL = os.environ.get("PUBLIC_DOCS_BASE_URL")
+    PDF_LOG_DIR = os.environ.get("PDF_LOG_DIR")
 
 
 class DevelopmentConfig(BaseConfig):

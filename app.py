@@ -871,8 +871,9 @@ def _set_signup_auto_approve(enabled: bool) -> None:
 
 
 def _create_company_user_from_signup(*, first_name: str, last_name: str, company_name: str, identifier: str, phone: str, address: str, website: str | None, username: str, password_hash: str, email: str | None, role: str) -> tuple[CompanyInfo, User]:
+    normalized_company_name = (company_name or '').strip() or f"{(first_name or '').strip()} {(last_name or '').strip()}".strip() or username
     company = CompanyInfo(
-        name=company_name,
+        name=normalized_company_name,
         street=address or '',
         sector='',
         province='',
@@ -893,6 +894,7 @@ def _create_company_user_from_signup(*, first_name: str, last_name: str, company
     )
     user.password = password_hash
     db.session.add(user)
+    _ensure_company_archive_dirs(company.id, company.name)
     return company, user
 
 # Utility constants
@@ -1356,17 +1358,26 @@ def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -
     )
 
 
+def _ensure_company_archive_dirs(company_id: int | None, company_name: str | None) -> None:
+    if not company_id:
+        return
+    try:
+        short = _company_short_slug(company_name)
+        token = _company_private_token(company_id, company_name)
+        base = _archive_root_dir() / short / token
+        for doc_type in ('cotizacion', 'pedido', 'factura', 'estado_cuenta', 'reporte'):
+            (base / doc_type).mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        app.logger.warning('Could not create company PDF directories (%s): %s', company_id, exc)
+
+
 def ensure_pdf_archive_environment() -> None:
     # Best-effort: ensure archive root and document-type folders exist.
     try:
         root = _archive_root_dir()
         root.mkdir(parents=True, exist_ok=True)
         for company in CompanyInfo.query.all():
-            short = _company_short_slug(company.name)
-            token = _company_private_token(company.id, company.name)
-            base = root / short / token
-            for doc_type in ('cotizacion', 'pedido', 'factura', 'estado_cuenta', 'reporte'):
-                (base / doc_type).mkdir(parents=True, exist_ok=True)
+            _ensure_company_archive_dirs(company.id, company.name)
     except Exception as exc:
         app.logger.warning('Could not pre-create PDF archive directories: %s', exc)
 
@@ -1391,6 +1402,27 @@ def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, com
         app.logger.warning('Could not archive PDF copy (%s %s): %s', doc_type, doc_number, exc)
         return None
 
+
+
+def _pdf_log_dir() -> Path:
+    configured = (app.config.get('PDF_LOG_DIR') or '').strip()
+    if configured:
+        return Path(configured)
+    return Path(app.root_path) / 'logpdf'
+
+
+def _log_pdf_event(doc_type: str, doc_number: int | str, status: str, message: str | None = None) -> None:
+    """Write PDF click/generation diagnostics to logpdf/<doc_type>.log."""
+    try:
+        log_dir = _pdf_log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        line_time = dom_now().strftime('%Y-%m-%d %H:%M:%S')
+        safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+        msg = (message or '').replace('\n', ' ').strip()
+        with (log_dir / f'{safe_type}.log').open('a', encoding='utf-8') as f:
+            f.write(f"{line_time}|{safe_type}|{doc_number}|{status}|{msg}\n")
+    except Exception as exc:  # pragma: no cover
+        app.logger.warning('Could not write PDF debug log (%s %s): %s', doc_type, doc_number, exc)
 
 
 def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: bytes, download_name: str, company_name: str | None = None, archive: bool = True):
@@ -2864,17 +2896,24 @@ def new_quotation():
         log_audit('quotation_create', 'quotation', quotation.id, details=f'client={client.id};total={total:.2f}')
 
         company = get_company_info()
-        quotation_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
-        _archive_pdf_copy(
-            'cotizacion',
-            quotation.id,
-            quotation_pdf_bytes,
-            company_name=company.get('name'),
-            company_id=current_company_id(),
-        )
+        archived_path = None
+        try:
+            quotation_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
+            archived_path = _archive_pdf_copy(
+                'cotizacion',
+                quotation.id,
+                quotation_pdf_bytes,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+            )
+        except Exception as exc:
+            app.logger.exception('Quotation archive generation failed id=%s: %s', quotation.id, exc)
+
+        if not archived_path:
+            flash('La cotización fue creada, pero el PDF no se pudo generar en este momento.')
 
         is_first_quotation = company_query(Quotation).count() == 1
-        if is_first_quotation:
+        if is_first_quotation and archived_path:
             public_url = _public_doc_url(
                 'cotizacion',
                 quotation.id,
@@ -3132,13 +3171,15 @@ def quotation_pdf(quotation_id):
     app.logger.info("Generating quotation PDF %s", quotation_id)
     try:
         pdf_data = _build_quotation_pdf_bytes(quotation, company)
-        return _archive_and_send_pdf(
+        response = _archive_and_send_pdf(
             doc_type='cotizacion',
             doc_number=quotation.id,
             pdf_data=pdf_data,
             download_name=filename,
             company_name=company.get('name'),
         )
+        _log_pdf_event('cotizacion', quotation.id, 'ok', 'pdf generado y entregado')
+        return response
     except Exception as exc:
         app.logger.exception('Quotation PDF generation failed id=%s: %s', quotation_id, exc)
         archived = _archived_pdf_path(
@@ -3148,10 +3189,12 @@ def quotation_pdf(quotation_id):
             company_id=current_company_id(),
         )
         if archived.exists():
+            _log_pdf_event('cotizacion', quotation.id, 'fallback_ok', f'generacion fallo: {exc}; servido desde archivo')
             try:
                 return send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
             except TypeError:
                 return send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
+        _log_pdf_event('cotizacion', quotation.id, 'error', f'generacion fallo y no existe archivo: {exc}')
         raise
 
 
