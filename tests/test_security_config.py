@@ -142,3 +142,56 @@ def test_ensure_mysql_driver_available_falls_back_to_sqlite_when_no_driver(monke
 
     assert cfg['SQLALCHEMY_DATABASE_URI'] == 'sqlite:///database.sqlite'
 
+
+
+
+def test_maybe_fix_cpanel_access_denied_switches_to_db_user(monkeypatch):
+    class FakeConn:
+        def close(self):
+            return None
+
+    class FakePyMySQL:
+        class Error(Exception):
+            pass
+
+        def __init__(self):
+            self.calls = []
+
+        def connect(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs['database'] == 'target_db':
+                raise self.Error('(1044, "Access denied for user")')
+            return FakeConn()
+
+    fake_module = FakePyMySQL()
+    monkeypatch.setattr(app_module, '_module_available', lambda name: name == 'pymysql')
+    import sys as _sys
+    _sys.modules['pymysql'] = fake_module
+
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'mysql+pymysql://db_user:pw@localhost:3306/target_db?charset=utf8mb4'}
+    monkeypatch.setenv('DB_USER', 'db_user')
+
+    app_module._maybe_fix_cpanel_access_denied(cfg)
+
+    assert cfg['SQLALCHEMY_DATABASE_URI'].startswith('mysql+pymysql://db_user:pw@localhost:3306/db_user')
+
+
+def test_maybe_fix_cpanel_access_denied_keeps_uri_when_not_1044(monkeypatch):
+    class FakePyMySQL:
+        class Error(Exception):
+            pass
+
+        def connect(self, **kwargs):
+            raise self.Error('network error')
+
+    monkeypatch.setattr(app_module, '_module_available', lambda name: name == 'pymysql')
+    import sys as _sys
+    _sys.modules['pymysql'] = FakePyMySQL()
+
+    original = 'mysql+pymysql://db_user:pw@localhost:3306/target_db?charset=utf8mb4'
+    cfg = {'SQLALCHEMY_DATABASE_URI': original}
+    monkeypatch.setenv('DB_USER', 'db_user')
+
+    app_module._maybe_fix_cpanel_access_denied(cfg)
+
+    assert cfg['SQLALCHEMY_DATABASE_URI'] == original

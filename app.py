@@ -61,6 +61,7 @@ from pathlib import Path
 from sqlalchemy import func, inspect, or_
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import load_only, joinedload
+from sqlalchemy.engine import make_url
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import generate_password_hash
@@ -375,7 +376,68 @@ def _ensure_mysql_driver_available(config: dict):
     )
     config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.sqlite'
 
+
+
+def _maybe_fix_cpanel_access_denied(config: dict):
+    """Try DB_NAME=DB_USER fallback for common cPanel grant mismatch (1044)."""
+    uri = config.get('SQLALCHEMY_DATABASE_URI') or ''
+    if not isinstance(uri, str) or not uri.startswith('mysql+'):
+        return
+    if not _module_available('pymysql'):
+        return
+
+    db_user_env = (os.getenv('DB_USER') or '').strip()
+    if not db_user_env:
+        return
+
+    try:
+        parsed = make_url(uri)
+    except Exception:
+        return
+
+    current_db = (parsed.database or '').strip()
+    if not current_db or current_db == db_user_env:
+        return
+
+    import pymysql
+
+    connect_kwargs = {
+        'host': parsed.host or 'localhost',
+        'port': int(parsed.port or 3306),
+        'user': parsed.username,
+        'password': parsed.password,
+        'database': current_db,
+        'connect_timeout': 4,
+    }
+
+    try:
+        conn = pymysql.connect(**connect_kwargs)
+        conn.close()
+        return
+    except Exception as exc:
+        err_text = str(exc)
+        # 1044 is common when user exists but has no grants on selected DB.
+        if '1044' not in err_text and 'Access denied for user' not in err_text:
+            return
+
+    try:
+        fallback_kwargs = dict(connect_kwargs)
+        fallback_kwargs['database'] = db_user_env
+        conn = pymysql.connect(**fallback_kwargs)
+        conn.close()
+        fallback_uri = parsed.set(database=db_user_env).render_as_string(hide_password=False)
+        config['SQLALCHEMY_DATABASE_URI'] = fallback_uri
+        app.logger.warning(
+            'DB access denied for %s; switched DB_NAME to DB_USER fallback: %s',
+            current_db,
+            db_user_env,
+        )
+    except Exception:
+        # Keep original URI if fallback also fails.
+        return
+
 _ensure_mysql_driver_available(app.config)
+_maybe_fix_cpanel_access_denied(app.config)
 db.init_app(app)
 migrate.init_app(app, db)
 csrf = CSRFProtect(app)
