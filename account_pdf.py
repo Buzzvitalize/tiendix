@@ -11,9 +11,8 @@ DOM_TZ = ZoneInfo("America/Santo_Domingo")
 def _money(v: float) -> str:
     return f"RD$ {v:,.2f}"
 
-def generate_account_statement_pdf(company: dict, client: dict, rows: list, total: float,
-                                   aging: dict, overdue_pct: float,
-                                   output_path: str | Path | None = None) -> str:
+def generate_account_statement_pdf_bytes(company: dict, client: dict, rows: list, total: float,
+                                         aging: dict, overdue_pct: float) -> bytes:
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
@@ -87,7 +86,19 @@ def generate_account_statement_pdf(company: dict, client: dict, rows: list, tota
     pdf.ln(8)
     pdf.set_font('Helvetica','',8)
     pdf.multi_cell(0,4,'Pagos a cuentas: ______\nLas facturas no pagadas luego de la fecha de vencimiento generan un cargo mensual de un 3% de mora.')
-    output = Path(output_path or 'estado_cuenta.pdf')
-    output.parent.mkdir(parents=True, exist_ok=True)
-    pdf.output(str(output))
-    return str(output)
+    return bytes(pdf.output())
+
+
+def generate_account_statement_pdf(company: dict, client: dict, rows: list, total: float,
+                                   aging: dict, overdue_pct: float) -> str:
+    """Compat legacy: conserva API anterior escribiendo archivo local.
+
+    Se mantiene por compatibilidad de importaciones antiguas, pero el flujo
+    principal debe usar `generate_account_statement_pdf_bytes` para evitar
+    problemas de permisos en cPanel.
+    """
+    payload = generate_account_statement_pdf_bytes(company, client, rows, total, aging, overdue_pct)
+    output_path = 'estado_cuenta.pdf'
+    with open(output_path, 'wb') as fh:
+        fh.write(payload)
+    return output_path

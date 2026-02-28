@@ -74,7 +74,7 @@ import uuid
 import importlib.util
 from ai import recommend_products
 from weasy_pdf import generate_pdf, generate_pdf_bytes
-from account_pdf import generate_account_statement_pdf
+from account_pdf import generate_account_statement_pdf, generate_account_statement_pdf_bytes
 from functools import wraps
 from auth import auth_bp, generate_reset_token
 from forms import AccountRequestForm
@@ -296,14 +296,6 @@ EMAIL_METRICS = {
 }
 _email_queue = ThreadQueue()
 
-EMAIL_METRICS = {
-    'queued': 0,
-    'sent': 0,
-    'failed': 0,
-    'retries': 0,
-    'skipped': 0,
-}
-_email_queue = ThreadQueue()
 
 def _deliver_email(to, subject, html, attachments=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
@@ -3670,8 +3662,13 @@ def account_statement_detail(client_id):
             'phone': client.phone,
             'email': client.email,
         }
-        pdf_path = generate_account_statement_pdf(company, client_dict, rows, totals, aging, overdue_pct, output_path=_company_pdf_path('estado_cuenta', f'estado_cuenta_{client.id}.pdf'))
-        return send_file(pdf_path, as_attachment=True, download_name=f'estado_cuenta_{client.id}.pdf')
+        pdf_data = generate_account_statement_pdf_bytes(company, client_dict, rows, totals, aging, overdue_pct)
+        return send_file(
+            BytesIO(pdf_data),
+            as_attachment=True,
+            download_name=f'estado_cuenta_{client.id}.pdf',
+            mimetype='application/pdf',
+        )
     return render_template('estado_cuenta_detalle.html', client=client, rows=rows, total=totals, aging=aging, overdue_pct=overdue_pct)
 
 
@@ -3903,7 +3900,7 @@ def export_reportes():
             f"Categoría: {(categoria or 'Todas')} | "
             f"Usuario: {user} | Facturas: {len(invoices)}"
         )
-        pdf_path = generate_pdf(
+        pdf_data = generate_pdf_bytes(
             'Reporte de Facturas',
             company,
             {'name': '', 'address': '', 'phone': ''},
@@ -3912,10 +3909,14 @@ def export_reportes():
             0,
             subtotal,
             note=note,
-            output_path=_company_pdf_path('reportes', 'reportes.pdf')
         )
-        log_export(user, formato, tipo, filtros, 'success', file_path=pdf_path)
-        return send_file(pdf_path, as_attachment=True, download_name='reportes.pdf')
+        log_export(user, formato, tipo, filtros, 'success', file_path='memory:reportes.pdf')
+        return send_file(
+            BytesIO(pdf_data),
+            as_attachment=True,
+            download_name='reportes.pdf',
+            mimetype='application/pdf',
+        )
 
     return redirect(url_for('reportes'))
 
