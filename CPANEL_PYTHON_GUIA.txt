@@ -183,7 +183,7 @@ Opcional:
 
 
 Nota de seguridad importante:
-- Ya NO existe usuario por defecto `admin` ni contraseña `363636`.
+- Ya NO existe usuario ni contraseña por defecto; define tus credenciales seguras en el primer registro.
 - El primer usuario que se registra en `/solicitar-cuenta` se convierte automáticamente en Administrador (dueño).
 
 13) Checklist cPanel (clic por clic) en 5–10 minutos
@@ -252,4 +252,3 @@ Qué hacer:
 Nota técnica:
 - Tiendix ahora usa columnas `password VARCHAR(255)` para `user` y `account_request`,
   compatible con hashes modernos de Werkzeug.
-

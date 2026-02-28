@@ -1608,17 +1608,37 @@ def cpanel_rnc_import():
             flash('Debe seleccionar un archivo RNC .txt')
             return redirect(url_for('cpanel_rnc_import'))
 
+        filename = (file.filename or '').lower()
+        if not filename.endswith('.txt'):
+            flash('Formato inválido. Debe subir un archivo .txt')
+            return redirect(url_for('cpanel_rnc_import'))
+
         inserted = 0
         updated = 0
         skipped = 0
 
+        parsed_rows: dict[str, str] = {}
         for raw_bytes in file.stream:
             raw_line = raw_bytes.decode('utf-8', errors='ignore')
             rnc, name = _parse_rnc_line(raw_line)
             if not rnc or not name:
                 skipped += 1
                 continue
-            current = db.session.get(RNCRegistry, rnc)
+
+            # Si hay RNC repetido en el TXT, prevalece la última ocurrencia.
+            parsed_rows[rnc] = name
+
+        if not parsed_rows:
+            flash('No se encontraron registros válidos en el archivo.')
+            return redirect(url_for('cpanel_rnc_import'))
+
+        existing_rows = {
+            row.rnc: row
+            for row in RNCRegistry.query.filter(RNCRegistry.rnc.in_(list(parsed_rows.keys()))).all()
+        }
+
+        for rnc, name in parsed_rows.items():
+            current = existing_rows.get(rnc)
             if current:
                 if current.name != name:
                     current.name = name
