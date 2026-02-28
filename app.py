@@ -72,6 +72,7 @@ import re
 import json
 import uuid
 import importlib.util
+import hashlib
 from ai import recommend_products
 from weasy_pdf import generate_pdf, generate_pdf_bytes
 from account_pdf import generate_account_statement_pdf, generate_account_statement_pdf_bytes
@@ -296,6 +297,14 @@ EMAIL_METRICS = {
 }
 _email_queue = ThreadQueue()
 
+EMAIL_METRICS = {
+    'queued': 0,
+    'sent': 0,
+    'failed': 0,
+    'retries': 0,
+    'skipped': 0,
+}
+_email_queue = ThreadQueue()
 
 def _deliver_email(to, subject, html, attachments=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
@@ -1231,45 +1240,50 @@ def get_company_info():
     }
 
 
-def _company_slug(name: str | None) -> str:
-    raw = (name or 'empresa').strip().lower()
-    slug = re.sub(r'[^a-z0-9]+', '-', raw).strip('-')
-    return slug or 'empresa'
+def _company_short_slug(company_name: str | None) -> str:
+    base = (company_name or 'empresa').strip().lower()
+    base = re.sub(r'[^a-z0-9\s]', '', base)
+    first = (base.split() or ['empresa'])[0]
+    return (first[:8] or 'empresa')
 
 
-def _company_token(company_id: int) -> str:
-    pdf_root = Path(app.static_folder) / 'pdfs'
-    pdf_root.mkdir(parents=True, exist_ok=True)
-    token_file = pdf_root / '.company_tokens.json'
-    data = {}
-    if token_file.exists():
-        try:
-            data = json.loads(token_file.read_text(encoding='utf-8'))
-        except Exception:
-            data = {}
-    key = str(company_id)
-    token = data.get(key)
-    if not token:
-        alphabet = string.ascii_lowercase + string.digits
-        token = ''.join(secrets.choice(alphabet) for _ in range(6))
-        data[key] = token
-        token_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-    return token
+def _company_private_token(company_id: int | None, company_name: str | None) -> str:
+    seed = f"{app.config.get('SECRET_KEY','tiendix')}:{company_id or 0}:{company_name or ''}"
+    return hashlib.sha256(seed.encode('utf-8')).hexdigest()[:8]
 
 
-def _company_pdf_dir(doc_type: str = 'general') -> Path:
-    cid = current_company_id()
-    company = db.session.get(CompanyInfo, cid) if cid else None
-    slug = _company_slug(company.name if company else None)
-    token = _company_token(cid or 0)
-    path = Path(app.static_folder) / 'pdfs' / slug / token / doc_type
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, company_name: str | None = None, company_id: int | None = None) -> str | None:
+    # Create a cPanel-visible archive copy, without breaking download on failure.
+    try:
+        cid = company_id if company_id is not None else current_company_id()
+        name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+        short = _company_short_slug(name)
+        token = _company_private_token(cid, name)
+        safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+        number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
+        root = Path(app.config.get('PDF_ARCHIVE_ROOT') or (Path(app.instance_path) / 'generated_docs'))
+        root.mkdir(parents=True, exist_ok=True)
+        folder = root / short / token / safe_type
+        folder.mkdir(parents=True, exist_ok=True)
+        out_path = folder / f"{number}.pdf"
+        out_path.write_bytes(pdf_data)
+        return str(out_path)
+    except Exception as exc:  # pragma: no cover
+        app.logger.warning('Could not archive PDF copy (%s %s): %s', doc_type, doc_number, exc)
+        return None
 
 
-def _company_pdf_path(doc_type: str, filename: str) -> str:
-    return str(_company_pdf_dir(doc_type) / filename)
 
+def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: bytes, download_name: str, company_name: str | None = None, archive: bool = True):
+    """Archive PDF copy (best-effort) and return download response."""
+    if archive:
+        _archive_pdf_copy(doc_type, doc_number, pdf_data, company_name=company_name)
+    return send_file(
+        BytesIO(pdf_data),
+        download_name=download_name,
+        mimetype='application/pdf',
+        as_attachment=True,
+    )
 # Routes
 @app.before_request
 def require_login():
@@ -2962,7 +2976,13 @@ def quotation_pdf(quotation_id):
                                   footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
                                           "Los precios están sujetos a cambios sin previo aviso. "
                                           "El ITBIS ha sido calculado conforme a la ley vigente."))
-    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
+    return _archive_and_send_pdf(
+        doc_type='cotizacion',
+        doc_number=quotation.id,
+        pdf_data=pdf_data,
+        download_name=filename,
+        company_name=company.get('name'),
+    )
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -3153,7 +3173,13 @@ def order_pdf(order_id):
                                   date=order.date,
                                   footer=("Este pedido será procesado tras la confirmación de pago. "
                                           "Tiempo estimado de entrega: 3 a 5 días hábiles."))
-    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
+    return _archive_and_send_pdf(
+        doc_type='pedido',
+        doc_number=order.id,
+        pdf_data=pdf_data,
+        download_name=filename,
+        company_name=company.get('name'),
+    )
 
 # Invoices
 @app.route('/facturas')
@@ -3206,7 +3232,13 @@ def invoice_pdf(invoice_id):
                                   footer=("Factura generada electrónicamente, válida sin firma ni sello. "
                                           "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
                                           "Gracias por su preferencia."))
-    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
+    return _archive_and_send_pdf(
+        doc_type='factura',
+        doc_number=invoice.id,
+        pdf_data=pdf_data,
+        download_name=filename,
+        company_name=company.get('name'),
+    )
 
 @app.route('/pdfs/<path:filename>')
 def serve_pdf(filename):
@@ -3663,11 +3695,12 @@ def account_statement_detail(client_id):
             'email': client.email,
         }
         pdf_data = generate_account_statement_pdf_bytes(company, client_dict, rows, totals, aging, overdue_pct)
-        return send_file(
-            BytesIO(pdf_data),
-            as_attachment=True,
+        return _archive_and_send_pdf(
+            doc_type='estado_cuenta',
+            doc_number=client.id,
+            pdf_data=pdf_data,
             download_name=f'estado_cuenta_{client.id}.pdf',
-            mimetype='application/pdf',
+            company_name=company.get('name'),
         )
     return render_template('estado_cuenta_detalle.html', client=client, rows=rows, total=totals, aging=aging, overdue_pct=overdue_pct)
 
@@ -3910,12 +3943,16 @@ def export_reportes():
             subtotal,
             note=note,
         )
-        log_export(user, formato, tipo, filtros, 'success', file_path='memory:reportes.pdf')
-        return send_file(
-            BytesIO(pdf_data),
-            as_attachment=True,
+        report_doc_number = datetime.now().strftime('%Y%m%d%H%M%S')
+        archived_path = _archive_pdf_copy('reporte', report_doc_number, pdf_data, company_name=company.get('name'))
+        log_export(user, formato, tipo, filtros, 'success', file_path=archived_path or 'memory:reportes.pdf')
+        return _archive_and_send_pdf(
+            doc_type='reporte',
+            doc_number=report_doc_number,
+            pdf_data=pdf_data,
             download_name='reportes.pdf',
-            mimetype='application/pdf',
+            company_name=company.get('name'),
+            archive=False,
         )
 
     return redirect(url_for('reportes'))

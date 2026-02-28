@@ -1,4 +1,5 @@
 import os, sys, pytest
+from pathlib import Path
 from datetime import datetime, timedelta
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db
@@ -9,6 +10,7 @@ def client(tmp_path):
     db_path = tmp_path / 'test.sqlite'
     app.config.from_object('config.TestingConfig')
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+    app.config['PDF_ARCHIVE_ROOT'] = str(tmp_path / 'pdf_archive')
     with app.app_context():
         db.session.remove(); db.engine.dispose(); db.create_all()
         comp = CompanyInfo(name='Comp', street='', sector='', province='', phone='', rnc='')
@@ -51,6 +53,7 @@ def multi_client(tmp_path):
     db_path = tmp_path / 'test.sqlite'
     app.config.from_object('config.TestingConfig')
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+    app.config['PDF_ARCHIVE_ROOT'] = str(tmp_path / 'pdf_archive')
     with app.app_context():
         db.session.remove(); db.engine.dispose(); db.create_all()
         comp1 = CompanyInfo(name='Comp1', street='', sector='', province='', phone='', rnc='')
@@ -386,6 +389,8 @@ def test_account_statement_pdf(client):
     assert resp.status_code == 200
     resp = client.get(f'/reportes/estado-cuentas/{cid}?pdf=1')
     assert resp.status_code == 200
+    archive_root = Path(app.config['PDF_ARCHIVE_ROOT'])
+    assert list(archive_root.glob('comp/*/estado_cuenta/*.pdf'))
     client.get('/logout')
 
 

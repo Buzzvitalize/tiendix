@@ -252,3 +252,45 @@ Qué hacer:
 Nota técnica:
 - Tiendix ahora usa columnas `password VARCHAR(255)` para `user` y `account_request`,
   compatible con hashes modernos de Werkzeug.
+
+15) Mini checklist exacto para errores PDF en cPanel
+---------------------------------------------------
+Cuando salga:
+- "Ocurrió un error interno"
+- "ID de error: xxxxx"
+
+Haz esto:
+
+1. Buscar el ID de error en logs
+- Archivo recomendado: `~/tiendix/logs/app.log`
+- Comando:
+  `grep "ID de error\|REQ_FAIL\|f1325b46e790" ~/tiendix/logs/app.log | tail -n 50`
+
+2. Definir carpeta de archivado PDF (File Manager)
+- En Setup Python App > Environment Variables, agrega por ejemplo:
+  - `PDF_ARCHIVE_ROOT=/home/TU_USUARIO/tiendix_data/generated_docs`
+- Crea la carpeta si no existe:
+  - `mkdir -p /home/TU_USUARIO/tiendix_data/generated_docs`
+
+3. Permisos recomendados
+- Carpetas: `755`
+- Archivos PDF: `644`
+- Dueño: el usuario de cPanel
+
+4. Reiniciar aplicación
+- Setup Python App > Restart
+
+5. Verificar rutas que deben responder 200
+- Cotización PDF: `/cotizaciones/<id>/pdf`
+- Pedido PDF: `/pedidos/<id>/pdf`
+- Factura PDF: `/facturas/<id>/pdf`
+- Estado de cuenta PDF: `/reportes/estado-cuentas/<client_id>?pdf=1`
+
+6. Estructura esperada en File Manager
+- `<PDF_ARCHIVE_ROOT>/<empresa_corta>/<token>/<tipo>/<numero>.pdf`
+- Ejemplo:
+  - `/home/usuario/tiendix_data/generated_docs/ecosea/a1b2c3d4/cotizacion/01.pdf`
+
+Notas:
+- La descarga del PDF se sirve en memoria (no depende de escritura en disco para responder al navegador).
+- Si falla el guardado en carpeta, la descarga puede seguir funcionando, y el warning queda en `logs/app.log`.

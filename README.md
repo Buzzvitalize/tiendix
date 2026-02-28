@@ -85,6 +85,7 @@ DB_PORT=3306
 DB_NAME=USUARIO_tiendix
 DB_USER=USUARIO_dbuser
 DB_PASSWORD=clave_db
+PDF_ARCHIVE_ROOT=/home/USUARIO/tiendix_data/generated_docs
 ```
 
 **Opción B (URL completa):**
@@ -92,6 +93,7 @@ DB_PASSWORD=clave_db
 APP_ENV=production
 SECRET_KEY=clave_larga_y_segura
 DATABASE_URL=mysql+pymysql://USUARIO_dbuser:clave_db@localhost:3306/USUARIO_tiendix?charset=utf8mb4
+PDF_ARCHIVE_ROOT=/home/USUARIO/tiendix_data/generated_docs
 ```
 
 > La app soporta `mysql://...` y lo corrige automáticamente a `mysql+pymysql://...`.
@@ -106,6 +108,8 @@ flask db upgrade
 5. Reinicia la app desde Setup Python App.
 
 Consulta también `CPANEL_PYTHON_GUIA.txt`, `CPANEL_MYSQL_BASE.sql`, `CPANEL_MYSQL_FULL_SCHEMA.sql` y `.env.cpanel.example`.
+
+Si ya tienes una instalación en producción y solo quieres actualizar el esquema sin reinstalar, ejecuta `DatabaseUpdate.sql` en tu base actual (phpMyAdmin).
 
 For company name auto-completion, download the latest `DGII_RNC.TXT` from the DGII and place it under `data/`.
 

@@ -1,6 +1,7 @@
 import os
 import sys
 import pytest
+from pathlib import Path
 from datetime import datetime, timedelta
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -25,6 +26,7 @@ def client(tmp_path):
     db_path = tmp_path / "test.sqlite"
     app.config.from_object('config.TestingConfig')
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+    app.config['PDF_ARCHIVE_ROOT'] = str(tmp_path / 'pdf_archive')
     with app.app_context():
         db.create_all()
         c1 = CompanyInfo(name='CompA', street='', sector='', province='', phone='', rnc='')
@@ -101,6 +103,8 @@ def test_multi_tenant_isolation(client):
 
 def test_conversion_and_pdf(client):
     login(client, 'user1', 'pass')
+    quote_pdf = client.get('/cotizaciones/1/pdf')
+    assert quote_pdf.status_code == 200
     client.post('/cotizaciones/1/convertir')
     with app.app_context():
         order = Order.query.first()
@@ -183,3 +187,30 @@ def test_new_quotation_validity_period(client):
         q = Quotation.query.order_by(Quotation.id.desc()).first()
         assert q is not None
         assert (q.valid_until - q.date).days == 15
+
+
+def test_pdf_archive_folder_structure(client):
+    login(client, 'user1', 'pass')
+
+    # Cotización
+    quote_resp = client.get('/cotizaciones/1/pdf')
+    assert quote_resp.status_code == 200
+
+    # Pedido + factura
+    client.post('/cotizaciones/1/convertir')
+    with app.app_context():
+        order = Order.query.first()
+        order_id = order.id
+    order_resp = client.get(f'/pedidos/{order_id}/pdf')
+    assert order_resp.status_code == 200
+
+    client.get(f'/pedidos/{order_id}/facturar')
+    with app.app_context():
+        invoice = Invoice.query.first()
+    invoice_resp = client.get(f'/facturas/{invoice.id}/pdf')
+    assert invoice_resp.status_code == 200
+
+    archive_root = Path(app.config['PDF_ARCHIVE_ROOT'])
+    assert list(archive_root.glob('compa/*/cotizacion/*.pdf'))
+    assert list(archive_root.glob('compa/*/pedido/*.pdf'))
+    assert list(archive_root.glob('compa/*/factura/*.pdf'))
