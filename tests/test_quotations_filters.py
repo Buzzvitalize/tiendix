@@ -86,3 +86,11 @@ def test_status_filter(client):
     resp = cli.get('/cotizaciones?status=vencida')
     assert f'>{old_id}<'.encode() in resp.data
     assert f'>{conv_id}<'.encode() not in resp.data
+
+
+def test_pdf_action_label_updated(client):
+    cli, _, _ = client
+    login(cli)
+    resp = cli.get('/cotizaciones')
+    assert b'Generar PDF' in resp.data
+    assert b'Descargar PDF' in resp.data
