@@ -1,0 +1,255 @@
+GUIA COMPLETA (PASO A PASO) PARA INSTALAR TIENDIX EN CPANEL PYTHON
+===================================================================
+
+Esta guía está escrita para principiantes, sin asumir experiencia previa.
+
+0) Requisitos previos
+---------------------
+Necesitas:
+- Un hosting con cPanel que tenga "Setup Python App" habilitado.
+- Acceso al File Manager de cPanel o acceso Git/SSH.
+- Tu dominio o subdominio activo.
+
+1) Subir el proyecto
+--------------------
+Opción A (File Manager):
+1. Comprime el proyecto en .zip.
+2. En cPanel > File Manager, entra a tu home.
+3. Sube el .zip y extráelo en una carpeta, por ejemplo: `tiendix`.
+
+Opción B (Git):
+1. En cPanel Terminal/SSH, clona el repositorio en `~/tiendix`.
+
+2) Crear la app Python en cPanel
+--------------------------------
+1. Ve a cPanel > Setup Python App.
+2. Click en "Create Application".
+3. Configura:
+   - Python version: 3.10 (recomendado)
+   - Application root: tiendix
+   - Application URL: tu-dominio.com o subdominio
+   - Application startup file: passenger_wsgi.py
+   - Application Entry point: application
+4. Guarda.
+
+3) Activar entorno virtual e instalar dependencias
+---------------------------------------------------
+1. En la pantalla de Setup Python App, copia el comando que cPanel te da para activar el venv.
+   (ejemplo: `source /home/USUARIO/virtualenv/tiendix/3.10/bin/activate`)
+2. En Terminal ejecútalo.
+3. Ve al proyecto:
+   `cd ~/tiendix`
+4. Instala dependencias:
+   `pip install -r requirements.txt`
+
+Nota:
+- `requirements.txt` ya incluye lo necesario para la app (Flask, SQLAlchemy,
+  migraciones, formularios, PDF, etc.).
+
+4) Variables de entorno (MUY IMPORTANTE)
+----------------------------------------
+En Setup Python App > Environment Variables agrega:
+
+APP_ENV=production
+SECRET_KEY=pon_una_clave_larga_y_unica
+MAIL_SERVER=smtp.tu-proveedor.com
+MAIL_PORT=587
+MAIL_USERNAME=tu_correo
+MAIL_PASSWORD=tu_password
+MAIL_DEFAULT_SENDER=tu_correo
+
+# Opción A (fácil, recomendada en cPanel)
+DB_DRIVER=mysql+pymysql
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=USUARIO_tiendix
+DB_USER=USUARIO_dbuser
+DB_PASSWORD=tu_password_db
+
+# Opción B (URL completa)
+# DATABASE_URL=mysql+pymysql://USUARIO_dbuser:tu_password_db@localhost:3306/USUARIO_tiendix?charset=utf8mb4
+
+IMPORTANTE:
+- Para producción en cPanel se recomienda MySQL/MariaDB (phpMyAdmin), NO sqlite.
+- Si pones `mysql://...` el sistema lo convierte automáticamente a
+  `mysql+pymysql://...`, pero es mejor escribirlo ya correcto.
+- La app puede construir `DATABASE_URL` sola usando `DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD`.
+- Si defines `DATABASE_URL`, ese valor tiene prioridad sobre `DB_*`.
+
+Recomendación:
+- No uses una SECRET_KEY corta.
+- Usa una clave larga, aleatoria y privada.
+
+5) Ejecutar migraciones de base de datos
+----------------------------------------
+Con el venv activado y dentro de `~/tiendix`:
+
+flask db upgrade
+
+Esto crea/actualiza las tablas.
+
+6) Archivo WSGI para cPanel
+---------------------------
+Este proyecto incluye `passenger_wsgi.py` listo para usar.
+Si tu cPanel no lo detecta, verifica que exista en la raíz del proyecto
+(`~/tiendix/passenger_wsgi.py`).
+
+7) Reiniciar la aplicación
+--------------------------
+En Setup Python App:
+- Click en "Restart".
+
+8) Verificar que funciona
+-------------------------
+1. Abre tu URL en el navegador.
+2. Prueba login.
+3. Prueba recuperar contraseña (si ya configuraste SMTP).
+
+9) Errores comunes y solución rápida
+------------------------------------
+A) Error: "SECRET_KEY is required in production"
+- Te faltó definir SECRET_KEY en variables de entorno.
+
+B) Error al enviar correo de recuperación
+- Revisa MAIL_SERVER/MAIL_PORT/MAIL_USERNAME/MAIL_PASSWORD.
+- Revisa firewall/puerto SMTP del hosting.
+
+C) Error al generar PDF
+- Esta versión genera PDFs con `fpdf2` (sin depender de librerías nativas de WeasyPrint).
+- Si falla, revisa permisos de escritura de `static/pdfs/` y logs en `logs/app.log`.
+
+D) Error 500 después de subir cambios
+- Activa venv.
+- Corre `pip install -r requirements.txt`.
+- Corre `flask db upgrade`.
+- Reinicia la app desde cPanel.
+
+10) Flujo de actualización (cuando subes cambios nuevos)
+--------------------------------------------------------
+1. Subir cambios a `~/tiendix`.
+2. Activar venv.
+3. `pip install -r requirements.txt` (por si hay dependencias nuevas).
+4. `flask db upgrade`.
+5. Restart en Setup Python App.
+
+11) Checklist final
+-------------------
+[ ] App creada en Setup Python App
+[ ] Variables de entorno configuradas
+[ ] Dependencias instaladas
+[ ] Migraciones ejecutadas
+[ ] App reiniciada
+[ ] Login OK
+[ ] Recuperación de contraseña OK
+
+Listo. Con eso Tiendix queda operando en cPanel de forma correcta.
+
+
+12) Si la página carga lenta en cPanel
+--------------------------------------
+Revisa estos puntos (en orden):
+1. APP_ENV debe ser `production`.
+2. FLASK_DEBUG debe estar apagado (vacío o 0).
+3. Reinicia la app desde Setup Python App después de cambios.
+4. Verifica que no haya errores repetidos en `logs/app.log`.
+5. Si usas SMTP lento, mantén envío asíncrono (ya viene activo por defecto).
+6. Si la lentitud es intermitente, revisa límites del hosting (CPU/RAM/IO).
+
+Nota técnica:
+- Tiendix ahora evita recalcular notificaciones de inventario en cada request;
+  ese escaneo se refresca por sesión cada 5 minutos para acelerar la navegación.
+
+
+13) Bloquear descarga de archivos sensibles (MUY recomendado)
+-------------------------------------------------------------
+Este proyecto incluye un `.htaccess` para bloquear acceso directo a archivos como:
+- `app.py`, `auth.py`, `config.py`, `models.py`
+- `requirements.txt`, `.env`, `database.sqlite`, etc.
+
+Asegúrate de que ese `.htaccess` esté subido en la raíz pública de la app
+(o en el directorio donde Apache resuelve la URL).
+5.1) Crear base de datos MySQL en cPanel (antes de migrar)
+-----------------------------------------------------------
+1. Ve a cPanel > **MySQL Databases**.
+2. Crea una base, por ejemplo: `USUARIO_tiendix`.
+3. Crea un usuario MySQL y asígnale contraseña segura.
+4. Asigna el usuario a la base con permisos **ALL PRIVILEGES**.
+5. Coloca esos datos en `DATABASE_URL`.
+
+Opcional:
+- Puedes importar `CPANEL_MYSQL_BASE.sql` para validar charset/collation.
+- Si quieres la base completa lista para phpMyAdmin, importa `CPANEL_MYSQL_FULL_SCHEMA.sql`.
+- Luego ejecuta `flask db upgrade` para asegurar compatibilidad de migraciones futuras.
+
+
+Nota de seguridad importante:
+- Ya NO existe usuario por defecto `admin` ni contraseña `363636`.
+- El primer usuario que se registra en `/solicitar-cuenta` se convierte automáticamente en Administrador (dueño).
+
+13) Checklist cPanel (clic por clic) en 5–10 minutos
+---------------------------------------------------
+Ejemplo real (reemplaza `usuariocpanel` por tu usuario real):
+- DB Name: `usuariocpanel_tiendix`
+- DB User: `usuariocpanel_tiendix_user`
+- Dominio app: `app.tudominio.com`
+
+Paso 1: Crear BD y usuario
+1. cPanel > MySQL Databases.
+2. En "Create New Database" crea: `tiendix` (cPanel le pondrá prefijo).
+3. En "MySQL Users" crea usuario: `tiendix_user`.
+4. En "Add User To Database" enlaza usuario + base y marca "ALL PRIVILEGES".
+
+Paso 2: Configurar Python App
+1. cPanel > Setup Python App.
+2. Click "Create Application".
+3. Python version: 3.10+.
+4. Application root: `tiendix`.
+5. Application URL: tu subdominio.
+6. Startup file: `passenger_wsgi.py`.
+7. Guarda y copia comando de activación del entorno.
+
+Paso 3: Variables de entorno (recomendado DB_*)
+En Setup Python App > Environment Variables agrega:
+- `APP_ENV=production`
+- `SECRET_KEY=` (larga y privada)
+- `DB_DRIVER=mysql+pymysql`
+- `DB_HOST=localhost`
+- `DB_PORT=3306`
+- `DB_NAME=usuariocpanel_tiendix`
+- `DB_USER=usuariocpanel_tiendix_user`
+- `DB_PASSWORD=TU_PASSWORD_DB`
+
+Paso 4: Instalar y migrar
+1. Terminal de cPanel.
+2. Ejecuta el comando de activación del venv que te da Setup Python App.
+3. Entra al proyecto: `cd ~/tiendix`
+4. Instala: `pip install -r requirements.txt`
+5. Migra: `flask db upgrade`
+
+Paso 5: Reiniciar y validar
+1. Regresa a Setup Python App > Restart.
+2. Abre la URL de la app.
+3. Verifica login y que puedas crear una cotización.
+4. Si falla conexión DB, revisa nombre final con prefijo y contraseña.
+
+Checklist rápido final:
+- [ ] Base y usuario creados con prefijo cPanel.
+- [ ] Usuario agregado a base con ALL PRIVILEGES.
+- [ ] Variables `DB_*` o `DATABASE_URL` configuradas.
+- [ ] `flask db upgrade` ejecutado sin error.
+- [ ] App reiniciada y funcionando.
+
+
+14) Si login dice "Credenciales inválidas" en MySQL aunque el usuario existe
+--------------------------------------------------------------------------
+Causa común: hashes de contraseña truncados en tablas antiguas (columnas cortas).
+
+Qué hacer:
+1. Ejecuta `flask db upgrade`.
+2. Reinicia la app en Setup Python App.
+3. Si el usuario fue creado antes del ajuste, usa "¿Olvidaste tu contraseña?" para regenerar hash.
+
+Nota técnica:
+- Tiendix ahora usa columnas `password VARCHAR(255)` para `user` y `account_request`,
+  compatible con hashes modernos de Werkzeug.
+
