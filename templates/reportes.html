@@ -420,15 +420,23 @@ exportMenu.querySelectorAll('a').forEach(a => {
         alert(data.error);
       }
     } else {
-      const blob = await resp.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `reportes.${a.dataset.format}`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      const archivedUrl = resp.headers.get('X-Archived-Url') || resp.headers.get('X-Archived-Public-Url');
+      if (archivedUrl) {
+        const normalizedArchivedUrl = archivedUrl.startsWith('http://') || archivedUrl.startsWith('https://')
+          ? archivedUrl
+          : (archivedUrl.startsWith('/') ? `${window.location.origin}${archivedUrl}` : `https://${archivedUrl.replace(/^\/+/, '')}`);
+        window.location.href = normalizedArchivedUrl;
+      } else {
+        const blob = await resp.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `reportes.${a.dataset.format}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      }
     }
     exportMenu.classList.add('hidden');
   });

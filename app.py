@@ -53,7 +53,7 @@ from models import (
     dom_now,
 )
 from io import BytesIO, StringIO
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 import csv
 try:
     from openpyxl import Workbook
@@ -74,6 +74,7 @@ import json
 import uuid
 import importlib.util
 import hashlib
+import imghdr
 from ai import recommend_products
 from weasy_pdf import generate_pdf, generate_pdf_bytes
 from account_pdf import generate_account_statement_pdf, generate_account_statement_pdf_bytes
@@ -871,8 +872,9 @@ def _set_signup_auto_approve(enabled: bool) -> None:
 
 
 def _create_company_user_from_signup(*, first_name: str, last_name: str, company_name: str, identifier: str, phone: str, address: str, website: str | None, username: str, password_hash: str, email: str | None, role: str) -> tuple[CompanyInfo, User]:
+    normalized_company_name = (company_name or '').strip() or f"{(first_name or '').strip()} {(last_name or '').strip()}".strip() or username
     company = CompanyInfo(
-        name=company_name,
+        name=normalized_company_name,
         street=address or '',
         sector='',
         province='',
@@ -893,6 +895,7 @@ def _create_company_user_from_signup(*, first_name: str, last_name: str, company
     )
     user.password = password_hash
     db.session.add(user)
+    _ensure_company_archive_dirs(company.id, company.name)
     return company, user
 
 # Utility constants
@@ -1243,30 +1246,160 @@ def get_company_info():
 
 def _company_short_slug(company_name: str | None) -> str:
     base = (company_name or 'empresa').strip().lower()
-    base = re.sub(r'[^a-z0-9\s]', '', base)
-    first = (base.split() or ['empresa'])[0]
-    return (first[:8] or 'empresa')
+    base = re.sub(r'[^a-z0-9\s-]', '', base)
+    base = re.sub(r'[\s_-]+', '-', base).strip('-')
+    return (base[:40] or 'empresa')
 
 
 def _company_private_token(company_id: int | None, company_name: str | None) -> str:
     seed = f"{app.config.get('SECRET_KEY','tiendix')}:{company_id or 0}:{company_name or ''}"
-    return hashlib.sha256(seed.encode('utf-8')).hexdigest()[:8]
+    token_number = int(hashlib.sha256(seed.encode('utf-8')).hexdigest(), 16) % 1_000_000
+    return f"{token_number:06d}"
+
+
+def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> str | None:
+    base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
+    if not base_url:
+        return None
+    parsed = urlparse(base_url)
+    if not parsed.scheme:
+        base_url = f"https://{base_url.lstrip('/')}".rstrip('/')
+    cid = company_id if company_id is not None else current_company_id()
+    name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    short = _company_short_slug(name)
+    token = _company_private_token(cid, name)
+    safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
+    return f"{base_url}/{short}/{token}/{safe_type}/{number}.pdf"
+
+
+def _archive_root_dir() -> Path:
+    configured = (app.config.get('PDF_ARCHIVE_ROOT') or '').strip()
+    if configured:
+        return Path(configured)
+    return Path(app.root_path) / 'generated_docs'
+
+
+def _archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> Path:
+    cid = company_id if company_id is not None else current_company_id()
+    name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    short = _company_short_slug(name)
+    token = _company_private_token(cid, name)
+    safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
+    return _archive_root_dir() / short / token / safe_type / f"{number}.pdf"
+
+
+def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
+    return generate_pdf_bytes(
+        'Cotizacion',
+        company,
+        quotation.client,
+        quotation.items,
+        quotation.subtotal,
+        quotation.itbis,
+        quotation.total,
+        seller=quotation.seller,
+        payment_method=quotation.payment_method,
+        bank=quotation.bank,
+        doc_number=quotation.id,
+        note=quotation.note,
+        date=quotation.date,
+        valid_until=quotation.valid_until,
+        footer=(
+            "Condiciones: Esta cotizacion es valida por 30 dias a partir de la fecha de emision. "
+            "Los precios están sujetos a cambios sin previo aviso. "
+            "El ITBIS ha sido calculado conforme a la ley vigente."
+        ),
+    )
+
+
+def _build_order_pdf_bytes(order: Order, company: dict[str, str | None]) -> bytes:
+    return generate_pdf_bytes(
+        'Pedido',
+        company,
+        order.client,
+        order.items,
+        order.subtotal,
+        order.itbis,
+        order.total,
+        seller=order.seller,
+        payment_method=order.payment_method,
+        bank=order.bank,
+        doc_number=order.id,
+        note=order.note,
+        date=order.date,
+        footer=(
+            "Este pedido será procesado tras la confirmación de pago. "
+            "Tiempo estimado de entrega: 3 a 5 días hábiles."
+        ),
+    )
+
+
+def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -> bytes:
+    return generate_pdf_bytes(
+        'Factura',
+        company,
+        invoice.client,
+        invoice.items,
+        invoice.subtotal,
+        invoice.itbis,
+        invoice.total,
+        ncf=invoice.ncf,
+        seller=invoice.seller,
+        payment_method=invoice.payment_method,
+        bank=invoice.bank,
+        purchase_order=invoice.order.customer_po if invoice.order else None,
+        doc_number=invoice.id,
+        invoice_type=invoice.invoice_type,
+        note=invoice.note,
+        date=invoice.date,
+        footer=(
+            "Factura generada electrónicamente, válida sin firma ni sello. "
+            "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
+            "Gracias por su preferencia."
+        ),
+    )
+
+
+def _ensure_company_archive_dirs(company_id: int | None, company_name: str | None) -> None:
+    if not company_id:
+        return
+    try:
+        short = _company_short_slug(company_name)
+        token = _company_private_token(company_id, company_name)
+        base = _archive_root_dir() / short / token
+        for doc_type in ('cotizacion', 'pedido', 'factura', 'estado_cuenta', 'reporte'):
+            (base / doc_type).mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        app.logger.warning('Could not create company PDF directories (%s): %s', company_id, exc)
+
+
+def ensure_pdf_archive_environment() -> None:
+    # Best-effort: ensure archive root and document-type folders exist.
+    try:
+        root = _archive_root_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        for company in CompanyInfo.query.all():
+            _ensure_company_archive_dirs(company.id, company.name)
+    except Exception as exc:
+        app.logger.warning('Could not pre-create PDF archive directories: %s', exc)
+
+
+with app.app_context():
+    ensure_pdf_archive_environment()
 
 
 def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, company_name: str | None = None, company_id: int | None = None) -> str | None:
     # Create a cPanel-visible archive copy, without breaking download on failure.
     try:
-        cid = company_id if company_id is not None else current_company_id()
-        name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
-        short = _company_short_slug(name)
-        token = _company_private_token(cid, name)
-        safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
-        number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
-        root = Path(app.config.get('PDF_ARCHIVE_ROOT') or (Path(app.instance_path) / 'generated_docs'))
-        root.mkdir(parents=True, exist_ok=True)
-        folder = root / short / token / safe_type
-        folder.mkdir(parents=True, exist_ok=True)
-        out_path = folder / f"{number}.pdf"
+        out_path = _archived_pdf_path(
+            doc_type,
+            doc_number,
+            company_name=company_name,
+            company_id=company_id,
+        )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(pdf_data)
         return str(out_path)
     except Exception as exc:  # pragma: no cover
@@ -1275,17 +1408,66 @@ def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, com
 
 
 
+def _pdf_log_dir() -> Path:
+    configured = (app.config.get('PDF_LOG_DIR') or '').strip()
+    if configured:
+        return Path(configured)
+    return Path(app.root_path) / 'logpdf'
+
+
+def _log_pdf_event(doc_type: str, doc_number: int | str, status: str, message: str | None = None) -> None:
+    """Write PDF click/generation diagnostics to logpdf/<doc_type>.log."""
+    try:
+        log_dir = _pdf_log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        line_time = dom_now().strftime('%Y-%m-%d %H:%M:%S')
+        safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+        msg = (message or '').replace('\n', ' ').strip()
+        with (log_dir / f'{safe_type}.log').open('a', encoding='utf-8') as f:
+            f.write(f"{line_time}|{safe_type}|{doc_number}|{status}|{msg}\n")
+    except Exception as exc:  # pragma: no cover
+        app.logger.warning('Could not write PDF debug log (%s %s): %s', doc_type, doc_number, exc)
+
+
+def _relative_generated_doc_path(full_path: str | None) -> str | None:
+    if not full_path:
+        return None
+    try:
+        root = _archive_root_dir().resolve()
+        target = Path(full_path).resolve()
+        return str(target.relative_to(root)).replace('\\', '/')
+    except Exception:
+        return None
+
+
+def _archived_download_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None, full_path: str | None = None) -> str | None:
+    if full_path:
+        rel = _relative_generated_doc_path(full_path)
+    else:
+        rel = _relative_generated_doc_path(str(_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)))
+    if not rel:
+        return None
+    base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
+    if base_url:
+        parsed = urlparse(base_url)
+        if not parsed.scheme:
+            base_url = f"https://{base_url.lstrip('/')}".rstrip('/')
+        return f"{base_url}/generated_docs/{rel}"
+    return url_for('download_generated_doc', filename=rel)
+
+
 def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: bytes, download_name: str, company_name: str | None = None, archive: bool = True):
     """Archive PDF copy (best-effort) and return download response.
 
     Uses a compatibility fallback for older Flask/Werkzeug versions that still
     expect ``attachment_filename`` instead of ``download_name``.
     """
+    archived_path = None
     if archive:
-        _archive_pdf_copy(doc_type, doc_number, pdf_data, company_name=company_name)
+        archived_path = _archive_pdf_copy(doc_type, doc_number, pdf_data, company_name=company_name)
     payload = BytesIO(pdf_data)
     try:
-        return send_file(
+        response = send_file(
             payload,
             download_name=download_name,
             mimetype='application/pdf',
@@ -1293,12 +1475,34 @@ def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: byt
         )
     except TypeError:
         payload.seek(0)
-        return send_file(
+        response = send_file(
             payload,
             attachment_filename=download_name,
             mimetype='application/pdf',
             as_attachment=True,
         )
+
+    download_url = _archived_download_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=current_company_id(),
+        full_path=archived_path,
+    )
+    if download_url:
+        response.headers['X-Archived-Url'] = download_url
+
+    public_url = _public_doc_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=current_company_id(),
+    )
+    if public_url:
+        response.headers['X-Archived-Public-Url'] = public_url
+    elif download_url and (download_url.startswith('http://') or download_url.startswith('https://')):
+        response.headers['X-Archived-Public-Url'] = download_url
+    return response
 # Routes
 @app.before_request
 def require_login():
@@ -1309,6 +1513,7 @@ def require_login():
         'auth.logout',
         'auth.reset_request',
         'auth.reset_password',
+        'auth.recovery_password',
         'terminos',
     }
     if request.endpoint not in allowed and 'user_id' not in session:
@@ -1955,6 +2160,25 @@ def cpanel_company_delete(cid):
     log_audit('cpanel_company_delete', 'company', cid)
     return redirect(url_for('cpanel_companies'))
 
+
+
+
+@app.route('/cpaneltx/quotations')
+@admin_only
+def cpanel_quotations():
+    quotations = Quotation.query.options(joinedload(Quotation.client)).all()
+    return render_template('cpanel_quotations.html', quotations=quotations)
+
+
+@app.post('/cpaneltx/quotations/<int:qid>/delete')
+@admin_only
+def cpanel_quotation_delete(qid):
+    quotation = Quotation.query.get_or_404(qid)
+    db.session.delete(quotation)
+    db.session.commit()
+    flash('Cotización eliminada')
+    log_audit('cpanel_quotation_delete', 'quotation', qid)
+    return redirect(url_for('cpanel_quotations'))
 
 @app.route('/cpaneltx/orders')
 @admin_only
@@ -2693,9 +2917,28 @@ def list_quotations():
     quotations = query.order_by(Quotation.date.desc()).paginate(
         page=page, per_page=20, error_out=False
     )
+    archived_urls = {}
+    for q in quotations.items:
+        archived = _archived_pdf_path(
+            'cotizacion',
+            q.id,
+            company_name=(getattr(g, 'company', None).name if getattr(g, 'company', None) else None),
+            company_id=current_company_id(),
+        )
+        if archived.exists():
+            url = _archived_download_url(
+                'cotizacion',
+                q.id,
+                company_name=(getattr(g, 'company', None).name if getattr(g, 'company', None) else None),
+                company_id=current_company_id(),
+                full_path=str(archived),
+            )
+            if url:
+                archived_urls[q.id] = url
     return render_template(
         'cotizaciones.html',
         quotations=quotations,
+        archived_urls=archived_urls,
         client=client_q,
         date_from=date_from,
         date_to=date_to,
@@ -2744,6 +2987,34 @@ def new_quotation():
         flash('Cotización guardada')
         notify('Cotización guardada')
         log_audit('quotation_create', 'quotation', quotation.id, details=f'client={client.id};total={total:.2f}')
+
+        company = get_company_info()
+        archived_path = None
+        try:
+            quotation_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
+            archived_path = _archive_pdf_copy(
+                'cotizacion',
+                quotation.id,
+                quotation_pdf_bytes,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+            )
+        except Exception as exc:
+            app.logger.exception('Quotation archive generation failed id=%s: %s', quotation.id, exc)
+
+        if not archived_path:
+            flash('La cotización fue creada, pero el PDF no se pudo generar en este momento.')
+
+        is_first_quotation = company_query(Quotation).count() == 1
+        if is_first_quotation and archived_path:
+            public_url = _public_doc_url(
+                'cotizacion',
+                quotation.id,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+            )
+            if public_url:
+                return redirect(public_url)
         return redirect(url_for('list_quotations'))
     clients = company_query(Client).options(
         load_only(Client.id, Client.name, Client.identifier)
@@ -2858,10 +3129,10 @@ def settings_company():
         else:
             file = request.files.get('logo')
             if file and file.filename:
-                filename = secure_filename(file.filename)
-                ext = os.path.splitext(filename)[1].lower()
+                original_name = secure_filename(file.filename)
+                ext = os.path.splitext(original_name)[1].lower()
                 if ext not in {'.png', '.jpg', '.jpeg'}:
-                    flash('Formato de logo inválido')
+                    flash('Formato de logo inválido. Solo PNG/JPG.')
                     return redirect(url_for('settings_company'))
                 file.seek(0, os.SEEK_END)
                 size = file.tell()
@@ -2869,10 +3140,25 @@ def settings_company():
                 if size > 1 * 1024 * 1024:
                     flash('Logo demasiado grande (máximo 1MB)')
                     return redirect(url_for('settings_company'))
+                header = file.stream.read(512)
+                file.stream.seek(0)
+                detected = imghdr.what(None, h=header)
+                if detected not in {'png', 'jpeg'}:
+                    flash('Contenido de logo inválido. Solo imágenes PNG/JPG reales.')
+                    return redirect(url_for('settings_company'))
                 upload_dir = os.path.join(app.static_folder, 'uploads')
                 os.makedirs(upload_dir, exist_ok=True)
+                safe_ext = '.png' if detected == 'png' else '.jpg'
+                filename = f"logo_{company.id}_{uuid.uuid4().hex[:10]}{safe_ext}"
                 path = os.path.join(upload_dir, filename)
                 file.save(path)
+                if company.logo:
+                    try:
+                        old_logo = os.path.join(app.static_folder, company.logo)
+                        if os.path.exists(old_logo):
+                            os.remove(old_logo)
+                    except Exception:
+                        pass
                 company.logo = f'uploads/{filename}'
         old_final = company.ncf_final
         old_fiscal = company.ncf_fiscal
@@ -2991,21 +3277,41 @@ def quotation_pdf(quotation_id):
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
     app.logger.info("Generating quotation PDF %s", quotation_id)
-    pdf_data = generate_pdf_bytes('Cotización', company, quotation.client, quotation.items,
-                                  quotation.subtotal, quotation.itbis, quotation.total,
-                                  seller=quotation.seller, payment_method=quotation.payment_method,
-                                  bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
-                                  date=quotation.date, valid_until=quotation.valid_until,
-                                  footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
-                                          "Los precios están sujetos a cambios sin previo aviso. "
-                                          "El ITBIS ha sido calculado conforme a la ley vigente."))
-    return _archive_and_send_pdf(
-        doc_type='cotizacion',
-        doc_number=quotation.id,
-        pdf_data=pdf_data,
-        download_name=filename,
+
+    archived = _archived_pdf_path(
+        'cotizacion',
+        quotation.id,
         company_name=company.get('name'),
+        company_id=current_company_id(),
     )
+    if archived.exists():
+        _log_pdf_event('cotizacion', quotation.id, 'ok', 'servido desde generated_docs')
+        try:
+            return send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
+        except TypeError:
+            return send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
+
+    try:
+        pdf_data = _build_quotation_pdf_bytes(quotation, company)
+        response = _archive_and_send_pdf(
+            doc_type='cotizacion',
+            doc_number=quotation.id,
+            pdf_data=pdf_data,
+            download_name=filename,
+            company_name=company.get('name'),
+        )
+        _log_pdf_event('cotizacion', quotation.id, 'ok', 'pdf generado y entregado')
+        return response
+    except Exception as exc:
+        app.logger.exception('Quotation PDF generation failed id=%s: %s', quotation_id, exc)
+        if archived.exists():
+            _log_pdf_event('cotizacion', quotation.id, 'fallback_ok', f'generacion fallo: {exc}; servido desde archivo')
+            try:
+                return send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
+            except TypeError:
+                return send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
+        _log_pdf_event('cotizacion', quotation.id, 'error', f'generacion fallo y no existe archivo: {exc}')
+        return ('No se pudo generar el PDF', 500)
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -3017,12 +3323,12 @@ def send_quotation_email(quotation_id):
         return redirect(url_for('list_quotations'))
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
-    pdf_data = generate_pdf_bytes('Cotización', company, client, quotation.items,
+    pdf_data = generate_pdf_bytes('Cotizacion', company, client, quotation.items,
                                   quotation.subtotal, quotation.itbis, quotation.total,
                                   seller=quotation.seller, payment_method=quotation.payment_method,
                                   bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
                                   date=quotation.date, valid_until=quotation.valid_until,
-                                  footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
+                                  footer=("Condiciones: Esta cotizacion es valida por 30 dias a partir de la fecha de emision. "
                                           "Los precios están sujetos a cambios sin previo aviso. "
                                           "El ITBIS ha sido calculado conforme a la ley vigente."))
     html = render_template('emails/quotation.html', client=client, company=company, quotation=quotation)
@@ -3110,6 +3416,15 @@ def quotation_to_order(quotation_id):
             )
             db.session.add(mov)
     db.session.commit()
+    company = get_company_info()
+    order_pdf_bytes = _build_order_pdf_bytes(order, company)
+    _archive_pdf_copy(
+        'pedido',
+        order.id,
+        order_pdf_bytes,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+    )
     flash('Pedido creado')
     notify('Pedido creado')
     return redirect(url_for('list_orders'))
@@ -3178,6 +3493,15 @@ def order_to_invoice(order_id):
         db.session.add(i_item)
     order.status = 'Entregado'
     db.session.commit()
+    company_info = get_company_info()
+    invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company_info)
+    _archive_pdf_copy(
+        'factura',
+        invoice.id,
+        invoice_pdf_bytes,
+        company_name=company_info.get('name'),
+        company_id=current_company_id(),
+    )
     flash('Factura generada')
     notify('Factura generada')
     log_audit('invoice_create', 'invoice', invoice.id, details=f'from_order={order.id};total={invoice.total:.2f}')
@@ -3189,13 +3513,7 @@ def order_pdf(order_id):
     company = get_company_info()
     filename = f'pedido_{order_id}.pdf'
     app.logger.info("Generating order PDF %s", order_id)
-    pdf_data = generate_pdf_bytes('Pedido', company, order.client, order.items,
-                                  order.subtotal, order.itbis, order.total,
-                                  seller=order.seller, payment_method=order.payment_method,
-                                  bank=order.bank, doc_number=order.id, note=order.note,
-                                  date=order.date,
-                                  footer=("Este pedido será procesado tras la confirmación de pago. "
-                                          "Tiempo estimado de entrega: 3 a 5 días hábiles."))
+    pdf_data = _build_order_pdf_bytes(order, company)
     return _archive_and_send_pdf(
         doc_type='pedido',
         doc_number=order.id,
@@ -3244,17 +3562,7 @@ def invoice_pdf(invoice_id):
     company = get_company_info()
     filename = f'factura_{invoice_id}.pdf'
     app.logger.info("Generating invoice PDF %s", invoice_id)
-    pdf_data = generate_pdf_bytes('Factura', company, invoice.client, invoice.items,
-                                  invoice.subtotal, invoice.itbis, invoice.total,
-                                  ncf=invoice.ncf, seller=invoice.seller,
-                                  payment_method=invoice.payment_method, bank=invoice.bank,
-                                  purchase_order=invoice.order.customer_po if invoice.order else None,
-                                  doc_number=invoice.id,
-                                  invoice_type=invoice.invoice_type, note=invoice.note,
-                                  date=invoice.date,
-                                  footer=("Factura generada electrónicamente, válida sin firma ni sello. "
-                                          "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
-                                          "Gracias por su preferencia."))
+    pdf_data = _build_invoice_pdf_bytes(invoice, company)
     return _archive_and_send_pdf(
         doc_type='factura',
         doc_number=invoice.id,
@@ -3263,15 +3571,16 @@ def invoice_pdf(invoice_id):
         company_name=company.get('name'),
     )
 
-@app.route('/pdfs/<path:filename>')
-def serve_pdf(filename):
+@app.route('/generated-docs/<path:filename>')
+@app.route('/generated_docs/<path:filename>')
+def download_generated_doc(filename):
     if '..' in filename or filename.startswith('/'):
         return ('Not Found', 404)
-    base = _company_pdf_dir().parent.resolve()
+    base = _archive_root_dir().resolve()
     file_path = (base / filename).resolve()
-    if not str(file_path).startswith(str(base.resolve())) or not file_path.exists():
+    if not str(file_path).startswith(str(base)) or not file_path.exists():
         return ('Not Found', 404)
-    return send_file(str(file_path), as_attachment=True)
+    return send_file(str(file_path), as_attachment=True, mimetype='application/pdf')
 
 def _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria):
     """Return an invoice query filtered by the provided parameters."""
@@ -3707,23 +4016,30 @@ def account_statement_detail(client_id):
             aging['121+'] += balance
     overdue = sum(r['balance'] for r in rows if datetime.strptime(r['due'], '%d/%m/%Y') < now)
     overdue_pct = (overdue / totals * 100) if totals else 0
+    company = {
+        'name': g.company.name,
+        'street': g.company.street,
+        'phone': g.company.phone,
+        'rnc': g.company.rnc,
+        'logo': g.company.logo,
+    }
+    full_name = " ".join(part for part in [(client.name or '').strip(), (client.last_name or '').strip()] if part).strip()
+    client_dict = {
+        'name': full_name or (client.name or ''),
+        'identifier': client.identifier,
+        'street': client.street,
+        'sector': client.sector,
+        'province': client.province,
+        'phone': client.phone,
+        'email': client.email,
+    }
+    statement_url = _archived_download_url(
+        'estado_cuenta',
+        client.id,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+    )
     if request.args.get('pdf') == '1':
-        company = {
-            'name': g.company.name,
-            'street': g.company.street,
-            'phone': g.company.phone,
-            'rnc': g.company.rnc,
-            'logo': g.company.logo,
-        }
-        client_dict = {
-            'name': client.name,
-            'identifier': client.identifier,
-            'street': client.street,
-            'sector': client.sector,
-            'province': client.province,
-            'phone': client.phone,
-            'email': client.email,
-        }
         pdf_data = generate_account_statement_pdf_bytes(company, client_dict, rows, totals, aging, overdue_pct)
         return _archive_and_send_pdf(
             doc_type='estado_cuenta',
@@ -3732,7 +4048,16 @@ def account_statement_detail(client_id):
             download_name=f'estado_cuenta_{client.id}.pdf',
             company_name=company.get('name'),
         )
-    return render_template('estado_cuenta_detalle.html', client=client, rows=rows, total=totals, aging=aging, overdue_pct=overdue_pct)
+    return render_template(
+        'estado_cuenta_detalle.html',
+        client=client,
+        client_display_name=client_dict['name'],
+        rows=rows,
+        total=totals,
+        aging=aging,
+        overdue_pct=overdue_pct,
+        statement_url=statement_url,
+    )
 
 
 @app.route('/reportes/export')
@@ -3744,7 +4069,7 @@ def export_reportes():
         if formato not in {'csv', 'xlsx'} or tipo != 'resumen':
             log_export(session.get('full_name') or session.get('username'), formato, tipo, {}, 'fail', 'permiso')
             return '', 403
-    elif role not in ('admin', 'manager'):
+    elif role not in ('admin', 'manager', 'company'):
         log_export(session.get('full_name') or session.get('username'), formato, tipo, {}, 'fail', 'permiso')
         return '', 403
 
