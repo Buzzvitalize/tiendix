@@ -1263,6 +1263,19 @@ def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, com
     except Exception as exc:  # pragma: no cover
         app.logger.warning('Could not archive PDF copy (%s %s): %s', doc_type, doc_number, exc)
         return None
+
+
+
+def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: bytes, download_name: str, company_name: str | None = None, archive: bool = True):
+    """Archive PDF copy (best-effort) and return download response."""
+    if archive:
+        _archive_pdf_copy(doc_type, doc_number, pdf_data, company_name=company_name)
+    return send_file(
+        BytesIO(pdf_data),
+        download_name=download_name,
+        mimetype='application/pdf',
+        as_attachment=True,
+    )
 # Routes
 @app.before_request
 def require_login():
@@ -2955,8 +2968,13 @@ def quotation_pdf(quotation_id):
                                   footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
                                           "Los precios están sujetos a cambios sin previo aviso. "
                                           "El ITBIS ha sido calculado conforme a la ley vigente."))
-    _archive_pdf_copy('cotizacion', quotation.id, pdf_data, company_name=company.get('name'))
-    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
+    return _archive_and_send_pdf(
+        doc_type='cotizacion',
+        doc_number=quotation.id,
+        pdf_data=pdf_data,
+        download_name=filename,
+        company_name=company.get('name'),
+    )
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -3147,8 +3165,13 @@ def order_pdf(order_id):
                                   date=order.date,
                                   footer=("Este pedido será procesado tras la confirmación de pago. "
                                           "Tiempo estimado de entrega: 3 a 5 días hábiles."))
-    _archive_pdf_copy('pedido', order.id, pdf_data, company_name=company.get('name'))
-    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
+    return _archive_and_send_pdf(
+        doc_type='pedido',
+        doc_number=order.id,
+        pdf_data=pdf_data,
+        download_name=filename,
+        company_name=company.get('name'),
+    )
 
 # Invoices
 @app.route('/facturas')
@@ -3201,8 +3224,13 @@ def invoice_pdf(invoice_id):
                                   footer=("Factura generada electrónicamente, válida sin firma ni sello. "
                                           "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
                                           "Gracias por su preferencia."))
-    _archive_pdf_copy('factura', invoice.id, pdf_data, company_name=company.get('name'))
-    return send_file(BytesIO(pdf_data), download_name=filename, mimetype='application/pdf', as_attachment=True)
+    return _archive_and_send_pdf(
+        doc_type='factura',
+        doc_number=invoice.id,
+        pdf_data=pdf_data,
+        download_name=filename,
+        company_name=company.get('name'),
+    )
 
 @app.route('/pdfs/<path:filename>')
 def serve_pdf(filename):
@@ -3653,12 +3681,12 @@ def account_statement_detail(client_id):
             'email': client.email,
         }
         pdf_data = generate_account_statement_pdf_bytes(company, client_dict, rows, totals, aging, overdue_pct)
-        _archive_pdf_copy('estado_cuenta', client.id, pdf_data, company_name=company.get('name'))
-        return send_file(
-            BytesIO(pdf_data),
-            as_attachment=True,
+        return _archive_and_send_pdf(
+            doc_type='estado_cuenta',
+            doc_number=client.id,
+            pdf_data=pdf_data,
             download_name=f'estado_cuenta_{client.id}.pdf',
-            mimetype='application/pdf',
+            company_name=company.get('name'),
         )
     return render_template('estado_cuenta_detalle.html', client=client, rows=rows, total=totals, aging=aging, overdue_pct=overdue_pct)
 
@@ -3901,13 +3929,16 @@ def export_reportes():
             subtotal,
             note=note,
         )
-        archived_path = _archive_pdf_copy('reporte', datetime.now().strftime('%Y%m%d%H%M%S'), pdf_data, company_name=company.get('name'))
+        report_doc_number = datetime.now().strftime('%Y%m%d%H%M%S')
+        archived_path = _archive_pdf_copy('reporte', report_doc_number, pdf_data, company_name=company.get('name'))
         log_export(user, formato, tipo, filtros, 'success', file_path=archived_path or 'memory:reportes.pdf')
-        return send_file(
-            BytesIO(pdf_data),
-            as_attachment=True,
+        return _archive_and_send_pdf(
+            doc_type='reporte',
+            doc_number=report_doc_number,
+            pdf_data=pdf_data,
             download_name='reportes.pdf',
-            mimetype='application/pdf',
+            company_name=company.get('name'),
+            archive=False,
         )
 
     return redirect(url_for('reportes'))

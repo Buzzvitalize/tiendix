@@ -191,15 +191,26 @@ def test_new_quotation_validity_period(client):
 
 def test_pdf_archive_folder_structure(client):
     login(client, 'user1', 'pass')
+
+    # Cotización
+    quote_resp = client.get('/cotizaciones/1/pdf')
+    assert quote_resp.status_code == 200
+
+    # Pedido + factura
     client.post('/cotizaciones/1/convertir')
     with app.app_context():
         order = Order.query.first()
         order_id = order.id
+    order_resp = client.get(f'/pedidos/{order_id}/pdf')
+    assert order_resp.status_code == 200
+
     client.get(f'/pedidos/{order_id}/facturar')
     with app.app_context():
         invoice = Invoice.query.first()
-    resp = client.get(f'/facturas/{invoice.id}/pdf')
-    assert resp.status_code == 200
+    invoice_resp = client.get(f'/facturas/{invoice.id}/pdf')
+    assert invoice_resp.status_code == 200
+
     archive_root = Path(app.config['PDF_ARCHIVE_ROOT'])
-    matches = list(archive_root.glob('compa/*/factura/*.pdf'))
-    assert matches, 'No se creó copia de PDF en la estructura de carpetas esperada'
+    assert list(archive_root.glob('compa/*/cotizacion/*.pdf'))
+    assert list(archive_root.glob('compa/*/pedido/*.pdf'))
+    assert list(archive_root.glob('compa/*/factura/*.pdf'))
