@@ -113,6 +113,7 @@
 document.querySelectorAll('.pdf-action').forEach((btn) => {
   let blobUrl = null;
   let ready = false;
+  let downloadUrl = null;
 
   function setLabel(label, icon = false) {
     btn.innerHTML = icon
@@ -121,9 +122,9 @@ document.querySelectorAll('.pdf-action').forEach((btn) => {
   }
 
   btn.addEventListener('click', async () => {
-    if (ready && blobUrl) {
+    if (ready && (downloadUrl || blobUrl)) {
       const a = document.createElement('a');
-      a.href = blobUrl;
+      a.href = downloadUrl || blobUrl;
       a.download = btn.dataset.filename || 'documento.pdf';
       document.body.appendChild(a);
       a.click();
@@ -137,8 +138,13 @@ document.querySelectorAll('.pdf-action').forEach((btn) => {
     try {
       const resp = await fetch(btn.dataset.pdfUrl, { credentials: 'same-origin' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const blob = await resp.blob();
-      blobUrl = URL.createObjectURL(blob);
+      const archivedUrl = resp.headers.get('X-Archived-Public-Url') || resp.headers.get('X-Archived-Url');
+      if (archivedUrl) {
+        downloadUrl = archivedUrl;
+      } else {
+        const blob = await resp.blob();
+        blobUrl = URL.createObjectURL(blob);
+      }
       ready = true;
       setLabel('Descargar PDF', true);
       btn.classList.remove('text-blue-500');

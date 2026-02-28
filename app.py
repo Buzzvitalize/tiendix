@@ -1426,17 +1426,39 @@ def _log_pdf_event(doc_type: str, doc_number: int | str, status: str, message: s
         app.logger.warning('Could not write PDF debug log (%s %s): %s', doc_type, doc_number, exc)
 
 
+def _relative_generated_doc_path(full_path: str | None) -> str | None:
+    if not full_path:
+        return None
+    try:
+        root = _archive_root_dir().resolve()
+        target = Path(full_path).resolve()
+        return str(target.relative_to(root)).replace('\\', '/')
+    except Exception:
+        return None
+
+
+def _archived_download_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None, full_path: str | None = None) -> str | None:
+    if full_path:
+        rel = _relative_generated_doc_path(full_path)
+    else:
+        rel = _relative_generated_doc_path(str(_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)))
+    if not rel:
+        return None
+    return url_for('download_generated_doc', filename=rel)
+
+
 def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: bytes, download_name: str, company_name: str | None = None, archive: bool = True):
     """Archive PDF copy (best-effort) and return download response.
 
     Uses a compatibility fallback for older Flask/Werkzeug versions that still
     expect ``attachment_filename`` instead of ``download_name``.
     """
+    archived_path = None
     if archive:
-        _archive_pdf_copy(doc_type, doc_number, pdf_data, company_name=company_name)
+        archived_path = _archive_pdf_copy(doc_type, doc_number, pdf_data, company_name=company_name)
     payload = BytesIO(pdf_data)
     try:
-        return send_file(
+        response = send_file(
             payload,
             download_name=download_name,
             mimetype='application/pdf',
@@ -1444,12 +1466,32 @@ def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: byt
         )
     except TypeError:
         payload.seek(0)
-        return send_file(
+        response = send_file(
             payload,
             attachment_filename=download_name,
             mimetype='application/pdf',
             as_attachment=True,
         )
+
+    download_url = _archived_download_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=current_company_id(),
+        full_path=archived_path,
+    )
+    if download_url:
+        response.headers['X-Archived-Url'] = download_url
+
+    public_url = _public_doc_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=current_company_id(),
+    )
+    if public_url:
+        response.headers['X-Archived-Public-Url'] = public_url
+    return response
 # Routes
 @app.before_request
 def require_login():
@@ -3471,15 +3513,15 @@ def invoice_pdf(invoice_id):
         company_name=company.get('name'),
     )
 
-@app.route('/pdfs/<path:filename>')
-def serve_pdf(filename):
+@app.route('/generated-docs/<path:filename>')
+def download_generated_doc(filename):
     if '..' in filename or filename.startswith('/'):
         return ('Not Found', 404)
-    base = _company_pdf_dir().parent.resolve()
+    base = _archive_root_dir().resolve()
     file_path = (base / filename).resolve()
-    if not str(file_path).startswith(str(base.resolve())) or not file_path.exists():
+    if not str(file_path).startswith(str(base)) or not file_path.exists():
         return ('Not Found', 404)
-    return send_file(str(file_path), as_attachment=True)
+    return send_file(str(file_path), as_attachment=True, mimetype='application/pdf')
 
 def _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria):
     """Return an invoice query filtered by the provided parameters."""

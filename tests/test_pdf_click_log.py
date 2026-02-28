@@ -45,6 +45,10 @@ def test_quotation_pdf_click_writes_ok_log(tmp_path):
         resp = client.get('/cotizaciones/1/pdf')
 
     assert resp.status_code == 200
+    archived_url = resp.headers.get('X-Archived-Url')
+    assert archived_url
+    download_resp = client.get(archived_url)
+    assert download_resp.status_code == 200
     log_file = tmp_path / 'logpdf' / 'cotizacion.log'
     assert log_file.exists()
     content = log_file.read_text(encoding='utf-8')
