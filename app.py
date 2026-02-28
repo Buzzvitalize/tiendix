@@ -297,6 +297,14 @@ EMAIL_METRICS = {
 }
 _email_queue = ThreadQueue()
 
+EMAIL_METRICS = {
+    'queued': 0,
+    'sent': 0,
+    'failed': 0,
+    'retries': 0,
+    'skipped': 0,
+}
+_email_queue = ThreadQueue()
 
 def _deliver_email(to, subject, html, attachments=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
@@ -3234,7 +3242,13 @@ def invoice_pdf(invoice_id):
 
 @app.route('/pdfs/<path:filename>')
 def serve_pdf(filename):
-    return send_from_directory(os.path.join(app.static_folder, 'pdfs'), filename)
+    if '..' in filename or filename.startswith('/'):
+        return ('Not Found', 404)
+    base = _company_pdf_dir().parent.resolve()
+    file_path = (base / filename).resolve()
+    if not str(file_path).startswith(str(base.resolve())) or not file_path.exists():
+        return ('Not Found', 404)
+    return send_file(str(file_path), as_attachment=True)
 
 def _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria):
     """Return an invoice query filtered by the provided parameters."""
