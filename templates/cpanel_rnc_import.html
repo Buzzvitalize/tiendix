@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="space-y-4">
+  <h1 class="text-2xl font-semibold">Importar RNC a base de datos</h1>
+  <p class="text-sm text-gray-600">Suba su archivo <code>RNC.txt</code> para actualizar la tabla en MySQL/PHPMyAdmin. Total cargados: <strong>{{ total }}</strong>.</p>
+
+  <form method="post" enctype="multipart/form-data" class="card space-y-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div>
+      <label for="rnc-file" class="block text-sm font-medium text-gray-700 mb-1">Archivo RNC (.txt)</label>
+      <input id="rnc-file" type="file" name="rnc_file" accept=".txt,text/plain" required>
+    </div>
+    <button class="btn-primary">Importar</button>
+  </form>
+
+  <div class="card overflow-x-auto">
+    <h2 class="font-semibold mb-2">Últimos RNC actualizados</h2>
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-100">
+        <tr>
+          <th class="p-2 text-left">RNC</th>
+          <th class="p-2 text-left">Nombre</th>
+          <th class="p-2 text-left">Fuente</th>
+          <th class="p-2 text-left">Actualizado</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in latest %}
+        <tr class="border-t">
+          <td class="p-2">{{ row.rnc }}</td>
+          <td class="p-2">{{ row.name }}</td>
+          <td class="p-2">{{ row.source }}</td>
+          <td class="p-2">{{ row.updated_at.strftime('%Y-%m-%d %H:%M:%S') if row.updated_at else '' }}</td>
+        </tr>
+      {% else %}
+        <tr><td class="p-2 text-gray-500" colspan="4">No hay registros cargados aún.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

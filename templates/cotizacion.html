@@ -31,6 +31,7 @@
       <div>
         <label for="new-client-id" class="block text-sm font-medium text-gray-700 mb-1">Documento</label>
         <input id="new-client-id" name="new_client_id" class="input id-mask" placeholder="Cédula">
+        <p id="new-client-rnc-status" class="text-xs mt-1 text-gray-500 hidden"></p>
       </div>
       <div>
         <label for="new-client-phone" class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
@@ -60,7 +61,7 @@
       </div>
     </div>
   </div>
-  <div class="grid md:grid-cols-4 gap-4">
+  <div class="grid md:grid-cols-5 gap-4">
     <div>
       <label class="block text-sm font-medium text-gray-700 mb-1">Vendedor</label>
       <select name="seller" class="input" required>
@@ -88,6 +89,15 @@
       </select>
     </div>
     <div>
+      <label for="validity-period" class="block text-sm font-medium text-gray-700 mb-1">Vigencia</label>
+      <select name="validity_period" id="validity-period" class="input">
+        <option value="15d">15 días</option>
+        <option value="1m" selected>1 mes</option>
+        <option value="2m">2 meses</option>
+        <option value="3m">3 meses</option>
+      </select>
+    </div>
+    <div>
       <label class="block text-sm font-medium text-gray-700 mb-1">Almacén</label>
       <select name="warehouse_id" class="input" required>
         <option value="">Seleccione almacén</option>
@@ -108,14 +118,14 @@
       <span>Total</span>
       <span>Acción</span>
     </div>
-    <datalist id="product-options">
-      {% for p in products %}
-      <option data-id="{{ p.id }}" data-unit="{{ p.unit }}" data-price="{{ p.price }}" value="{{ p.code }} - {{ p.name }}"></option>
-      {% endfor %}
-    </datalist>
     <div id="productos">
       <div class="grid grid-cols-1 sm:grid-cols-7 gap-2 mb-2 product-row">
-        <input class="input product-input" list="product-options" placeholder="Producto">
+        <select class="input product-select">
+          <option value="">Seleccione producto</option>
+          {% for p in products %}
+          <option value="{{ p.id }}" data-unit="{{ p.unit }}" data-price="{{ p.price }}">{{ p.code }} - {{ p.name }}</option>
+          {% endfor %}
+        </select>
         <input type="hidden" name="product_id[]" class="product-id">
         <input class="input unit-field" placeholder="Unidad" readonly>
         <input class="input price-field" placeholder="Precio" readonly>
@@ -152,6 +162,35 @@ window.addEventListener('load', () => {
   const idField=document.getElementById('new-client-id');
   const lastField=document.getElementById('new-client-last');
   const phoneField=document.getElementById('new-client-phone');
+  const nameField=document.getElementById('new-client-name');
+  const rncStatus=document.getElementById('new-client-rnc-status');
+
+  function setRncStatus(message, ok=false){
+    rncStatus.textContent = message;
+    rncStatus.classList.remove('hidden','text-gray-500','text-green-700','text-red-600');
+    rncStatus.classList.add(ok ? 'text-green-700' : 'text-red-600');
+  }
+
+  async function lookupRncForQuotation(){
+    if(idField.dataset.docType!=='rnc') return;
+    const r=(idField.value||'').replace(/-/g,'').trim();
+    if(r.length!==9){
+      setRncStatus('RNC incompleto. Debe tener 9 dígitos.');
+      return;
+    }
+    try{
+      const response = await fetch(`/api/rnc/${r}`);
+      const data = await response.json();
+      if(data.name){
+        if(!nameField.value.trim()) nameField.value=data.name;
+        setRncStatus('RNC disponible: empresa encontrada.', true);
+      }else{
+        setRncStatus('No ha sido encontrado este RNC.');
+      }
+    }catch(_err){
+      setRncStatus('No se pudo consultar el RNC en este momento.');
+    }
+  }
 
   function setClientInputsEnabled(enabled){
     clientPanel.querySelectorAll('input').forEach(i=>i.disabled=!enabled);
@@ -173,11 +212,15 @@ window.addEventListener('load', () => {
       idField.placeholder='Cédula';
       idField.dataset.docType='cedula';
       idField.required=false;
+      rncStatus.textContent='';
+      rncStatus.className='text-xs mt-1 text-gray-500 hidden';
     }else{
       lastField.classList.add('hidden');
       idField.placeholder='RNC *';
       idField.dataset.docType='rnc';
       idField.required=true;
+      rncStatus.className='text-xs mt-1 text-gray-500';
+      rncStatus.textContent='Digite RNC y salga del campo para validar disponibilidad.';
     }
     applyDocMask(idField);
   }
@@ -186,15 +229,7 @@ window.addEventListener('load', () => {
 
   phoneField.addEventListener('input',e=>{ e.target.value=formatPhone(e.target.value); });
   idField.addEventListener('input',e=>applyDocMask(e.target));
-  idField.addEventListener('blur',e=>{
-    if(e.target.dataset.docType==='rnc'){
-      const r=e.target.value.replace(/-/g,'');
-      fetch(`/api/rnc/${r}`).then(r=>r.json()).then(data=>{
-        const nameField=document.getElementById('new-client-name');
-        if(data.name && !nameField.value){ nameField.value=data.name; }
-      });
-    }
-  });
+  idField.addEventListener('blur', lookupRncForQuotation);
 
   document.getElementById('save-client').addEventListener('click', async () => {
     const payload={
@@ -222,7 +257,7 @@ window.addEventListener('load', () => {
       select.value=data.id;
       clientPanel.classList.add('hidden');
       setClientInputsEnabled(false);
-      document.getElementById('new-client-name').value='';
+      nameField.value='';
       document.getElementById('new-client-last').value='';
       idField.value='';
       phoneField.value='';
@@ -230,13 +265,15 @@ window.addEventListener('load', () => {
       document.getElementById('new-client-street').value='';
       document.getElementById('new-client-sector').value='';
       document.getElementById('new-client-province').value='';
+      rncStatus.textContent='';
+      rncStatus.className='text-xs mt-1 text-gray-500 hidden';
     } else {
       alert(data.error || 'Error');
     }
   });
 
   function bindProduct(row) {
-    const input = row.querySelector('.product-input');
+    const select = row.querySelector('.product-select');
     const idField = row.querySelector('.product-id');
     const unit = row.querySelector('.unit-field');
     const price = row.querySelector('.price-field');
@@ -250,10 +287,10 @@ window.addEventListener('load', () => {
       const d=parseFloat(disc.value)||0;
       total.value=(p*q*(1-d/100)).toFixed(2);
     }
-    input.addEventListener('input', function() {
-      const opt = document.querySelector(`#product-options option[value="${input.value}"]`);
-      if(opt){
-        idField.value = opt.dataset.id;
+    select.addEventListener('change', function() {
+      const opt = select.options[select.selectedIndex];
+      if(opt && opt.value){
+        idField.value = opt.value;
         unit.value = opt.dataset.unit || '';
         price.value = opt.dataset.price ? parseFloat(opt.dataset.price).toFixed(2) : '';
       }else{
@@ -274,6 +311,8 @@ window.addEventListener('load', () => {
   function addProductRow() {
     const row = templateRow.cloneNode(true);
     row.querySelectorAll('input').forEach(i => i.value = '');
+    const select = row.querySelector('.product-select');
+    if (select) select.selectedIndex = 0;
     productContainer.appendChild(row);
     bindProduct(row);
   }
