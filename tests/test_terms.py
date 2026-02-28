@@ -4,7 +4,7 @@ import pytest
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db
-from models import AccountRequest
+from models import AccountRequest, User, CompanyInfo
 
 
 @pytest.fixture
@@ -14,6 +14,13 @@ def client(tmp_path):
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
     with app.app_context():
         db.create_all()
+        company = CompanyInfo(name='Comp', street='', sector='', province='', phone='', rnc='')
+        db.session.add(company)
+        db.session.flush()
+        u = User(username='existing', first_name='Ex', last_name='Ist', role='company', company_id=company.id)
+        u.set_password('123456')
+        db.session.add(u)
+        db.session.commit()
     with app.test_client() as client:
         yield client
     with app.app_context():
@@ -34,8 +41,8 @@ def _base_data():
         'address': '',
         'website': '',
         'username': 'anita',
-        'password': 'pw',
-        'confirm_password': 'pw',
+        'password': '123456',
+        'confirm_password': '123456',
     }
 
 

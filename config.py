@@ -3,12 +3,7 @@ import warnings
 
 
 class BaseConfig:
-    """Base configuration with safe defaults.
-
-    Falls back to a development key when ``SECRET_KEY`` isn't supplied so the
-    application can still start in local environments.  A warning is emitted to
-    remind deployers to set a proper secret in production.
-    """
+    """Base configuration with safe defaults."""
 
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev")
     if SECRET_KEY == "dev":
@@ -18,14 +13,28 @@ class BaseConfig:
         )
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    WTF_CSRF_ENABLED = True
+    PDF_ARCHIVE_ROOT = os.environ.get("PDF_ARCHIVE_ROOT")
+
 
 class DevelopmentConfig(BaseConfig):
     SQLALCHEMY_DATABASE_URI = 'sqlite:///database.sqlite'
+
 
 class TestingConfig(BaseConfig):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite://'
     WTF_CSRF_ENABLED = False
 
+
 class ProductionConfig(BaseConfig):
+    SECRET_KEY = os.environ.get('SECRET_KEY')
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'sqlite:///database.sqlite')
+
+
+def validate_runtime_config(config: dict):
+    """Fail fast on insecure runtime configuration."""
+    if config.get('APP_ENV') == 'production' and not config.get('SECRET_KEY'):
+        raise RuntimeError('SECRET_KEY is required in production')
+    if not config.get('TESTING', False) and not config.get('WTF_CSRF_ENABLED', True):
+        raise RuntimeError('WTF_CSRF_ENABLED must be True outside test environments')

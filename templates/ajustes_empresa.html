@@ -8,7 +8,7 @@
   <a href="{{ url_for('settings_add_user') }}" class="btn-secondary">Agregar Usuarios</a>
   <a href="{{ url_for('settings_manage_users') }}" class="btn-secondary">Gestionar Usuarios</a>
 </div>
-<form method="post" enctype="multipart/form-data" class="card space-y-4 max-w-4xl mx-auto">
+<form method="post" enctype="multipart/form-data" class="card space-y-4 max-w-4xl mx-auto" data-unsaved-guard="1">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="grid md:grid-cols-2 gap-4">
     <div>
@@ -26,6 +26,11 @@
     <div>
       <label class="block text-sm font-medium text-gray-700 mb-1">Sitio web</label>
       <input name="website" value="{{ company.website }}" placeholder="Sitio Web" class="input" {% if is_manager %}disabled{% endif %}>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Correo del propietario</label>
+      <input name="owner_email" value="{{ owner_email or '' }}" class="input bg-gray-100" readonly>
+      <p class="text-xs text-gray-500 mt-1">Solo visualización. Este correo no se puede cambiar desde ajustes.</p>
     </div>
     <div>
       <label class="block text-sm font-medium text-gray-700 mb-1">Calle</label>
@@ -63,14 +68,48 @@
 <script>
 const input=document.getElementById('logo-input');
 const preview=document.getElementById('logo-preview');
+const settingsForm = document.querySelector('form[data-unsaved-guard="1"]');
+let hasUnsavedChanges = false;
+let isSubmitting = false;
+
 if(input){
   input.addEventListener('change', e=>{
     const file=e.target.files[0];
+    hasUnsavedChanges = true;
     if(file){
       const reader=new FileReader();
       reader.onload=ev=>{preview.src=ev.target.result;};
       reader.readAsDataURL(file);
     }
+  });
+}
+
+if (settingsForm) {
+  settingsForm.querySelectorAll('input, select, textarea').forEach((el) => {
+    if (el.type === 'hidden') return;
+    el.addEventListener('input', () => { hasUnsavedChanges = true; });
+    el.addEventListener('change', () => { hasUnsavedChanges = true; });
+  });
+
+  settingsForm.addEventListener('submit', () => {
+    isSubmitting = true;
+    hasUnsavedChanges = false;
+  });
+
+  window.addEventListener('beforeunload', (event) => {
+    if (!hasUnsavedChanges || isSubmitting) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
+  document.querySelectorAll('a[href]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      if (!hasUnsavedChanges || isSubmitting) return;
+      const ok = window.confirm('Aún no has guardado los cambios. ¿Deseas continuar? No se guardará nada.');
+      if (!ok) {
+        event.preventDefault();
+      }
+    });
   });
 }
 </script>

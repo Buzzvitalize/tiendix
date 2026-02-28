@@ -14,6 +14,7 @@
   <thead>
     <tr class="bg-gray-100">
       <th class="p-2 text-left">Usuario</th>
+      <th class="p-2 text-left">Datos</th>
       <th class="p-2 text-left">Rol</th>
       <th class="p-2 text-left">Credenciales</th>
       <th></th>
@@ -22,7 +23,16 @@
   <tbody>
   {% for u in users.items %}
   <tr class="border-t">
-    <td class="p-2">{{ u.username }}</td>
+    <td class="p-2">
+      <div class="font-semibold">{{ u.username }}</div>
+      <div class="text-xs text-gray-500">ID: {{ u.id }}</div>
+      <a class="text-xs text-blue-700 hover:underline" href="{{ url_for('cpanel_user_activity', user_id=u.id) }}">Ver actividad</a>
+    </td>
+    <td class="p-2 text-sm">
+      <div>{{ (u.first_name or '') ~ ' ' ~ (u.last_name or '') }}</div>
+      <div class="text-gray-600">{{ u.email or 'Sin correo' }}</div>
+      <div class="text-gray-500 text-xs">Empresa: {{ u.company_id or 'N/A' }}</div>
+    </td>
     <td class="p-2">
       <form method="post" action="{{ url_for('cpanel_user_role', user_id=u.id) }}" class="flex gap-2">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -40,6 +50,14 @@
     <td class="p-2">
       <form method="post" action="{{ url_for('cpanel_user_update', user_id=u.id) }}" class="flex gap-2">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div>
+          <label for="fname-{{u.id}}" class="block text-xs font-semibold text-gray-600 mb-1">Nombre</label>
+          <input id="fname-{{u.id}}" name="first_name" value="{{ u.first_name or '' }}" placeholder="Nombre" class="border p-1 rounded">
+        </div>
+        <div>
+          <label for="lname-{{u.id}}" class="block text-xs font-semibold text-gray-600 mb-1">Apellido</label>
+          <input id="lname-{{u.id}}" name="last_name" value="{{ u.last_name or '' }}" placeholder="Apellido" class="border p-1 rounded">
+        </div>
         <div>
           <label for="email-{{u.id}}" class="block text-xs font-semibold text-gray-600 mb-1">Correo</label>
           <input id="email-{{u.id}}" name="email" value="{{ u.email or '' }}" placeholder="Email" class="border p-1 rounded">
