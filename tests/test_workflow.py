@@ -175,6 +175,26 @@ def test_new_quotation_with_warehouse(client):
 
 
 
+def test_new_quotation_creates_archive_file(client):
+    login(client, 'user1', 'pass')
+    resp = client.post('/cotizaciones/nueva', data={
+        'client_id': '1',
+        'seller': 'User One',
+        'payment_method': 'Efectivo',
+        'warehouse_id': '1',
+        'product_id[]': ['1'],
+        'product_quantity[]': ['1'],
+        'product_discount[]': ['0'],
+    }, follow_redirects=False)
+
+    assert resp.status_code == 302
+    with app.app_context():
+        q = Quotation.query.order_by(Quotation.id.desc()).first()
+    archive_root = Path(app.config['PDF_ARCHIVE_ROOT'])
+    assert list(archive_root.glob(f'compa/*/cotizacion/{q.id:02d}.pdf'))
+
+
+
 def test_new_quotation_validity_period(client):
     login(client, 'user1', 'pass')
     resp = client.post('/cotizaciones/nueva', data={

@@ -1267,6 +1267,30 @@ def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str |
     return f"{base_url}/{short}/{token}/{safe_type}/{number}.pdf"
 
 
+def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
+    return generate_pdf_bytes(
+        'Cotización',
+        company,
+        quotation.client,
+        quotation.items,
+        quotation.subtotal,
+        quotation.itbis,
+        quotation.total,
+        seller=quotation.seller,
+        payment_method=quotation.payment_method,
+        bank=quotation.bank,
+        doc_number=quotation.id,
+        note=quotation.note,
+        date=quotation.date,
+        valid_until=quotation.valid_until,
+        footer=(
+            "Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
+            "Los precios están sujetos a cambios sin previo aviso. "
+            "El ITBIS ha sido calculado conforme a la ley vigente."
+        ),
+    )
+
+
 def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, company_name: str | None = None, company_id: int | None = None) -> str | None:
     # Create a cPanel-visible archive copy, without breaking download on failure.
     try:
@@ -2759,9 +2783,18 @@ def new_quotation():
         notify('Cotización guardada')
         log_audit('quotation_create', 'quotation', quotation.id, details=f'client={client.id};total={total:.2f}')
 
+        company = get_company_info()
+        quotation_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
+        _archive_pdf_copy(
+            'cotizacion',
+            quotation.id,
+            quotation_pdf_bytes,
+            company_name=company.get('name'),
+            company_id=current_company_id(),
+        )
+
         is_first_quotation = company_query(Quotation).count() == 1
         if is_first_quotation:
-            company = get_company_info()
             public_url = _public_doc_url(
                 'cotizacion',
                 quotation.id,
@@ -3017,14 +3050,7 @@ def quotation_pdf(quotation_id):
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
     app.logger.info("Generating quotation PDF %s", quotation_id)
-    pdf_data = generate_pdf_bytes('Cotización', company, quotation.client, quotation.items,
-                                  quotation.subtotal, quotation.itbis, quotation.total,
-                                  seller=quotation.seller, payment_method=quotation.payment_method,
-                                  bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
-                                  date=quotation.date, valid_until=quotation.valid_until,
-                                  footer=("Condiciones: Esta cotización es válida por 30 días a partir de la fecha de emisión. "
-                                          "Los precios están sujetos a cambios sin previo aviso. "
-                                          "El ITBIS ha sido calculado conforme a la ley vigente."))
+    pdf_data = _build_quotation_pdf_bytes(quotation, company)
     return _archive_and_send_pdf(
         doc_type='cotizacion',
         doc_number=quotation.id,
