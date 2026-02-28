@@ -3989,23 +3989,30 @@ def account_statement_detail(client_id):
             aging['121+'] += balance
     overdue = sum(r['balance'] for r in rows if datetime.strptime(r['due'], '%d/%m/%Y') < now)
     overdue_pct = (overdue / totals * 100) if totals else 0
+    company = {
+        'name': g.company.name,
+        'street': g.company.street,
+        'phone': g.company.phone,
+        'rnc': g.company.rnc,
+        'logo': g.company.logo,
+    }
+    full_name = " ".join(part for part in [(client.name or '').strip(), (client.last_name or '').strip()] if part).strip()
+    client_dict = {
+        'name': full_name or (client.name or ''),
+        'identifier': client.identifier,
+        'street': client.street,
+        'sector': client.sector,
+        'province': client.province,
+        'phone': client.phone,
+        'email': client.email,
+    }
+    statement_url = _archived_download_url(
+        'estado_cuenta',
+        client.id,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+    )
     if request.args.get('pdf') == '1':
-        company = {
-            'name': g.company.name,
-            'street': g.company.street,
-            'phone': g.company.phone,
-            'rnc': g.company.rnc,
-            'logo': g.company.logo,
-        }
-        client_dict = {
-            'name': client.name,
-            'identifier': client.identifier,
-            'street': client.street,
-            'sector': client.sector,
-            'province': client.province,
-            'phone': client.phone,
-            'email': client.email,
-        }
         pdf_data = generate_account_statement_pdf_bytes(company, client_dict, rows, totals, aging, overdue_pct)
         return _archive_and_send_pdf(
             doc_type='estado_cuenta',
@@ -4014,7 +4021,16 @@ def account_statement_detail(client_id):
             download_name=f'estado_cuenta_{client.id}.pdf',
             company_name=company.get('name'),
         )
-    return render_template('estado_cuenta_detalle.html', client=client, rows=rows, total=totals, aging=aging, overdue_pct=overdue_pct)
+    return render_template(
+        'estado_cuenta_detalle.html',
+        client=client,
+        client_display_name=client_dict['name'],
+        rows=rows,
+        total=totals,
+        aging=aging,
+        overdue_pct=overdue_pct,
+        statement_url=statement_url,
+    )
 
 
 @app.route('/reportes/export')
@@ -4026,7 +4042,7 @@ def export_reportes():
         if formato not in {'csv', 'xlsx'} or tipo != 'resumen':
             log_export(session.get('full_name') or session.get('username'), formato, tipo, {}, 'fail', 'permiso')
             return '', 403
-    elif role not in ('admin', 'manager'):
+    elif role not in ('admin', 'manager', 'company'):
         log_export(session.get('full_name') or session.get('username'), formato, tipo, {}, 'fail', 'permiso')
         return '', 403
 
