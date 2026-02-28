@@ -74,7 +74,7 @@ def test_inventory_adjust_entry(client):
     }, follow_redirects=True)
     assert resp.status_code == 200
     with app.app_context():
-        prod = Product.query.get(1)
+        prod = db.session.get(Product, 1)
         assert prod.stock == 10
         ps = ProductStock.query.filter_by(product_id=1, warehouse_id=1).first()
         assert ps.stock == 10
@@ -89,7 +89,7 @@ def test_inventory_import_csv(client):
     }, follow_redirects=True)
     assert resp.status_code == 200
     with app.app_context():
-        prod = Product.query.get(1)
+        prod = db.session.get(Product, 1)
         ps = ProductStock.query.filter_by(product_id=1, warehouse_id=1).first()
         assert prod.stock == 20
         assert ps.stock == 20
@@ -105,7 +105,7 @@ def test_inventory_import_invalid_header(client):
     }, follow_redirects=True)
     assert 'Cabeceras inválidas' in resp.get_data(as_text=True)
     with app.app_context():
-        prod = Product.query.get(1)
+        prod = db.session.get(Product, 1)
         assert prod.stock == 5
         assert InventoryMovement.query.count() == 0
 
@@ -118,7 +118,7 @@ def test_inventory_import_invalid_row(client):
     }, follow_redirects=True)
     assert 'Importación cancelada' in resp.get_data(as_text=True)
     with app.app_context():
-        prod = Product.query.get(1)
+        prod = db.session.get(Product, 1)
         assert prod.stock == 5
         assert InventoryMovement.query.count() == 0
 
@@ -137,7 +137,7 @@ def test_update_min_stock(client):
     resp = client.post('/inventario/1/minimo', data={'min_stock': '7'}, follow_redirects=True)
     assert resp.status_code == 200
     with app.app_context():
-        ps = ProductStock.query.get(1)
+        ps = db.session.get(ProductStock, 1)
         assert ps.min_stock == 7
 
 
@@ -268,7 +268,7 @@ def test_manager_create_delete_warehouse(manager_client):
         wid = w.id
     manager_client.post(f'/almacenes/{wid}/delete', follow_redirects=True)
     with app.app_context():
-        assert Warehouse.query.get(wid) is None
+        assert db.session.get(Warehouse, wid) is None
 
 
 def test_inventory_movement_tracks_user(client):
