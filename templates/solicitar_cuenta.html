@@ -32,7 +32,8 @@
           <span class="text-2xl font-bold text-blue-600">Tiendix</span>
         {% endif %}
       </div>
-      <form method="post" class="space-y-4">
+      <form method="post" class="space-y-4" id="signup-form">
+        <div id="form-alert" class="hidden text-sm rounded border px-3 py-2"></div>
         {{ form.csrf_token }}
         <div class="flex space-x-4 justify-center">
           <label class="flex items-center space-x-1">
@@ -85,14 +86,25 @@
         <div>
           <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
           <input id="password" type="password" name="password" placeholder="Contraseña" class="input" required>
+          <div class="mt-2">
+            <div class="h-2 w-full bg-gray-200 rounded">
+              <div id="password-strength-bar" class="h-2 rounded bg-gray-300" style="width: 0%"></div>
+            </div>
+            <p id="password-strength-text" class="text-xs text-gray-500 mt-1">Seguridad: Normal</p>
+          </div>
         </div>
         <div>
           <label for="confirm-password" class="block text-sm font-medium text-gray-700 mb-1">Confirmar contraseña</label>
           <input id="confirm-password" type="password" name="confirm_password" placeholder="Confirmar contraseña" class="input" required>
         </div>
+        <div>
+          <label for="captcha-answer" class="block text-sm font-medium text-gray-700 mb-1">Captcha de seguridad</label>
+          <div class="text-sm text-gray-600 mb-1">{{ captcha_question }}</div>
+          <input id="captcha-answer" name="captcha_answer" placeholder="Respuesta" class="input" required>
+        </div>
         <label class="flex items-center space-x-2 text-sm">
-          {{ form.accepted_terms(class_='form-checkbox', required=True) }}
-          <span>He leído y acepto los <a href="{{ url_for('terminos') }}" target="_blank" class="text-blue-600 underline">Términos y Condiciones</a></span>
+          {{ form.accepted_terms(class="rounded") }}
+          <span>Acepto los <a href="{{ url_for('terminos') }}" target="_blank" class="text-blue-600 underline">Términos y Condiciones</a></span>
         </label>
         <button class="btn-primary w-full">Enviar solicitud</button>
         {% with messages = get_flashed_messages(category_filter=['request']) %}
@@ -111,24 +123,78 @@
     const digits=v.replace(/\D/g,'').slice(0,10);
     return digits.replace(/(\d{3})(\d{3})(\d{0,4})/, (_,a,b,c)=> c?`${a}-${b}-${c}`:`${a}-${b}`).trim().replace(/-$/, '');
   }
+
   function formatRnc(v){
     const digits=v.replace(/\D/g,'').slice(0,9);
     return digits.replace(/(\d{3})(\d{5})(\d{0,1})/, (_,a,b,c)=> c?`${a}-${b}-${c}`:`${a}-${b}`).trim().replace(/-$/, '');
   }
+
   function formatCedula(v){
     const digits=v.replace(/\D/g,'').slice(0,11);
     return digits.replace(/(\d{3})(\d{7})(\d{0,1})/, (_,a,b,c)=> c?`${a}-${b}-${c}`:`${a}-${b}`).trim().replace(/-$/, '');
   }
-  document.querySelectorAll('.phone-mask').forEach(el=>{
-    el.value=formatPhone(el.value);
-    el.addEventListener('input',e=>{ e.target.value=formatPhone(e.target.value); });
-  });
-  const idField=document.getElementById('identifier');
+
+  const idField = document.getElementById('identifier');
+  const formAlert = document.getElementById('form-alert');
+  const passwordField = document.getElementById('password');
+  const confirmField = document.getElementById('confirm-password');
+  const strengthBar = document.getElementById('password-strength-bar');
+  const strengthText = document.getElementById('password-strength-text');
+  const signupForm = document.getElementById('signup-form');
+  const usernameField = document.getElementById('username');
+
   function applyIdMask(){
     const type=document.querySelector('input[name="account_type"]:checked').value;
-    idField.value = type==='empresarial' ? formatRnc(idField.value) : formatCedula(idField.value);
+    idField.value = type === 'empresarial' ? formatRnc(idField.value) : formatCedula(idField.value);
   }
-  idField.addEventListener('input',applyIdMask);
+
+  function showAlert(message){
+    formAlert.textContent = message;
+    formAlert.className = 'text-sm rounded border px-3 py-2 bg-red-50 border-red-200 text-red-700';
+  }
+
+  function clearAlert(){
+    formAlert.textContent = '';
+    formAlert.className = 'hidden text-sm rounded border px-3 py-2';
+  }
+
+  function passwordScore(v){
+    let score = 0;
+    if(v.length >= 6) score += 1;
+    if(v.length >= 10) score += 1;
+    if(/[A-Z]/.test(v) && /[a-z]/.test(v)) score += 1;
+    if(/\d/.test(v)) score += 1;
+    if(/[^A-Za-z0-9]/.test(v)) score += 1;
+    return score;
+  }
+
+  function updatePasswordStrength(){
+    const value = passwordField.value || '';
+    const score = passwordScore(value);
+
+    if(!value){
+      strengthBar.style.width = '0%';
+      strengthBar.className = 'h-2 rounded bg-gray-300';
+      strengthText.textContent = 'Seguridad: Normal';
+      strengthText.className = 'text-xs text-gray-500 mt-1';
+    } else if(score <= 2){
+      strengthBar.style.width = '35%';
+      strengthBar.className = 'h-2 rounded bg-yellow-400';
+      strengthText.textContent = 'Seguridad: Normal';
+      strengthText.className = 'text-xs text-yellow-700 mt-1';
+    } else if(score <= 4){
+      strengthBar.style.width = '70%';
+      strengthBar.className = 'h-2 rounded bg-blue-500';
+      strengthText.textContent = 'Seguridad: Segura';
+      strengthText.className = 'text-xs text-blue-700 mt-1';
+    } else {
+      strengthBar.style.width = '100%';
+      strengthBar.className = 'h-2 rounded bg-emerald-500';
+      strengthText.textContent = 'Seguridad: Fuerte';
+      strengthText.className = 'text-xs text-emerald-700 mt-1';
+    }
+  }
+
   function lookupRnc(){
     const r=idField.value.replace(/-/g,'');
     fetch(`/api/rnc/${r}`).then(r=>r.json()).then(data=>{
@@ -136,19 +202,65 @@
       if(data.name && field && !field.value){ field.value=data.name; }
     });
   }
-  idField.addEventListener('blur',()=>{
-    if(document.querySelector('input[name="account_type"]:checked').value==='empresarial'){
+
+  document.querySelectorAll('.phone-mask').forEach(el=>{
+    el.value = formatPhone(el.value);
+    el.addEventListener('input', e => { e.target.value = formatPhone(e.target.value); });
+  });
+
+  idField.addEventListener('input', applyIdMask);
+
+  idField.addEventListener('blur', ()=>{
+    if(document.querySelector('input[name="account_type"]:checked').value === 'empresarial'){
       lookupRnc();
     }
   });
+
   document.querySelectorAll('input[name="account_type"]').forEach(el=>{
     el.addEventListener('change',()=>{
-      const type=el.value;
-      const placeholder = type==='personal'? 'Cédula' : 'RNC o Cédula';
-      idField.placeholder = placeholder;
+      idField.placeholder = el.value === 'personal' ? 'Cédula' : 'RNC o Cédula';
       applyIdMask();
     });
   });
+
+  passwordField.addEventListener('input', updatePasswordStrength);
+  usernameField.addEventListener('input', () => {
+    usernameField.value = usernameField.value.toLowerCase();
+  });
+
+  signupForm.addEventListener('submit', (e)=>{
+    clearAlert();
+    const required = ['first-name','last-name','phone','company-name','identifier','username','email','password','confirm-password','captcha-answer'];
+    for(const id of required){
+      const el = document.getElementById(id);
+      if(!el || !String(el.value || '').trim()){
+        e.preventDefault();
+        showAlert('Complete todos los campos obligatorios antes de enviar.');
+        return;
+      }
+    }
+
+    if(passwordField.value !== confirmField.value){
+      e.preventDefault();
+      showAlert('La contraseña y su confirmación no coinciden.');
+      return;
+    }
+
+    if(passwordField.value.length < 6){
+      e.preventDefault();
+      showAlert('La contraseña debe tener mínimo 6 caracteres.');
+      return;
+    }
+
+    const terms = signupForm.querySelector('input[name="accepted_terms"]');
+    if(terms && !terms.checked){
+      e.preventDefault();
+      showAlert('Debe aceptar los Términos y Condiciones para continuar.');
+      return;
+    }
+  });
+
+  updatePasswordStrength();
   applyIdMask();
 </script>
 </body>

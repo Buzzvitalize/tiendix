@@ -91,6 +91,7 @@ except Exception:  # pragma: no cover
 import threading
 from queue import Queue as ThreadQueue, Empty
 import time
+import random
 
 load_dotenv()
 
@@ -1154,9 +1155,22 @@ def index():
     return redirect(url_for('list_quotations'))
 
 
+
+
+def _build_signup_captcha() -> tuple[str, str]:
+    a = random.randint(2, 9)
+    b = random.randint(1, 9)
+    return f"¿Cuánto es {a} + {b}?", str(a + b)
+
 @app.route('/solicitar-cuenta', methods=['GET', 'POST'])
 def request_account():
     form = AccountRequestForm()
+
+    if request.method == 'GET' or 'signup_captcha_answer' not in session:
+        q, answer = _build_signup_captcha()
+        session['signup_captcha_question'] = q
+        session['signup_captcha_answer'] = answer
+
     if form.validate_on_submit():
         if not form.accepted_terms.data:
             flash(
@@ -1175,6 +1189,30 @@ def request_account():
         if not username:
             flash('Debe ingresar un usuario válido', 'request')
             return redirect(url_for('request_account'))
+
+        required_labels = {
+            'first_name': 'Nombre',
+            'last_name': 'Apellido',
+            'phone': 'Teléfono',
+            'company': 'Empresa o marca',
+            'identifier': 'Cédula/RNC',
+            'email': 'Correo',
+            'username': 'Usuario',
+        }
+        missing = [label for key, label in required_labels.items() if not (request.form.get(key) or '').strip()]
+        if missing:
+            flash(f"Complete los campos requeridos: {', '.join(missing)}", 'request')
+            return redirect(url_for('request_account'))
+
+        if not app.config.get('TESTING', False):
+            expected = str(session.get('signup_captcha_answer') or '').strip()
+            got = (request.form.get('captcha_answer') or '').strip()
+            if not expected or got != expected:
+                flash('Captcha inválido. Intente nuevamente.', 'request')
+                q, answer = _build_signup_captcha()
+                session['signup_captcha_question'] = q
+                session['signup_captcha_answer'] = answer
+                return redirect(url_for('request_account'))
         existing_user = User.query.filter(func.lower(User.username) == username).first()
         pending_user = AccountRequest.query.filter(func.lower(AccountRequest.username) == username).first()
         if existing_user or pending_user:
@@ -1211,6 +1249,8 @@ def request_account():
             db.session.commit()
             log_audit('owner_bootstrap', 'user', owner.id, details=f'company={company.id};username={username}')
             flash('Cuenta principal creada: ahora eres Administrador (dueño).', 'login')
+            session.pop('signup_captcha_answer', None)
+            session.pop('signup_captcha_question', None)
             return redirect(url_for('auth.login'))
 
         req = AccountRequest(
@@ -1234,6 +1274,8 @@ def request_account():
         db.session.commit()
         log_audit('account_request_create', 'account_request', req.id, details=f'email={req.email};company={req.company}')
         flash('Solicitud enviada, espere aprobación', 'login')
+        session.pop('signup_captcha_answer', None)
+        session.pop('signup_captcha_question', None)
         return redirect(url_for('auth.login'))
     elif request.method == 'POST':
         flash(
@@ -1241,7 +1283,7 @@ def request_account():
             'request',
         )
         return redirect(url_for('request_account'))
-    return render_template('solicitar_cuenta.html', form=form)
+    return render_template('solicitar_cuenta.html', form=form, captcha_question=session.get('signup_captcha_question', ''))
 
 
 @app.route('/terminos')
