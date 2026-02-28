@@ -109,6 +109,8 @@ flask db upgrade
 
 Consulta también `CPANEL_PYTHON_GUIA.txt`, `CPANEL_MYSQL_BASE.sql`, `CPANEL_MYSQL_FULL_SCHEMA.sql` y `.env.cpanel.example`.
 
+Si ya tienes una instalación en producción y solo quieres actualizar el esquema sin reinstalar, ejecuta `DatabaseUpdate.sql` en tu base actual (phpMyAdmin).
+
 For company name auto-completion, download the latest `DGII_RNC.TXT` from the DGII and place it under `data/`.
 
 
