@@ -2887,7 +2887,15 @@ def settings_company():
         db.session.commit()
         flash('Ajustes guardados')
         return redirect(url_for('settings_company'))
-    return render_template('ajustes_empresa.html', company=company)
+    owner_user = (
+        User.query.filter_by(company_id=company.id, role='admin')
+        .order_by(User.id.asc())
+        .first()
+    )
+    if not owner_user:
+        owner_user = User.query.filter_by(company_id=company.id).order_by(User.id.asc()).first()
+    owner_email = owner_user.email if owner_user else ''
+    return render_template('ajustes_empresa.html', company=company, owner_email=owner_email)
 
 
 @app.route('/ajustes/usuarios/agregar', methods=['GET', 'POST'])
