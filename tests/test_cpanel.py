@@ -1,10 +1,11 @@
 import os
 import sys
 import pytest
+from io import BytesIO
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db
-from models import User, CompanyInfo, AccountRequest
+from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement, AppSetting, RNCRegistry
 from werkzeug.security import generate_password_hash
 
 @pytest.fixture
@@ -13,6 +14,7 @@ def client(tmp_path):
     app.config.from_object('config.TestingConfig')
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
     with app.app_context():
+        db.drop_all()
         db.create_all()
         company = CompanyInfo(name='Comp', street='', sector='', province='', phone='', rnc='')
         db.session.add(company)
@@ -44,18 +46,32 @@ def test_admin_access_and_role_change(client):
         user = User.query.filter_by(username='user').first()
     client.post(f'/cpaneltx/users/{user.id}/role', data={'role': 'manager'})
     with app.app_context():
-        assert User.query.get(user.id).role == 'manager'
+        assert db.session.get(User, user.id).role == 'manager'
 
 
 def test_admin_update_email_password(client):
     login(client, 'admin', '363636')
     with app.app_context():
         user = User.query.filter_by(username='user').first()
-    client.post(f'/cpaneltx/users/{user.id}/update', data={'email': 'new@ex.com', 'password': 'newpass'})
+    client.post(
+        f'/cpaneltx/users/{user.id}/update',
+        data={
+            'email': 'new@ex.com',
+            'first_name': 'Nuevo',
+            'last_name': 'Nombre',
+            'password': 'newpass',
+        },
+    )
     with app.app_context():
-        u = User.query.get(user.id)
+        u = db.session.get(User, user.id)
         assert u.email == 'new@ex.com'
+        assert u.first_name == 'Nuevo'
+        assert u.last_name == 'Nombre'
         assert u.check_password('newpass')
+        row = AuditLog.query.filter_by(action='cpanel_user_update', entity_id=str(user.id)).order_by(AuditLog.id.desc()).first()
+        assert row is not None
+        assert 'first_name' in (row.details or '')
+        assert 'password' in (row.details or '')
 
 
 def test_non_admin_denied(client):
@@ -99,3 +115,163 @@ def test_account_approval_sends_email(client, monkeypatch):
         # El hash nunca debe aparecer en el correo
         assert user.password not in sent['html']
         assert '/reset/' in sent['html']
+
+
+def test_cpanel_auditoria_view(client):
+    login(client, 'admin', '363636')
+    r = client.get('/cpaneltx/auditoria')
+    assert r.status_code == 200
+    assert b'Auditor' in r.data
+
+
+def test_account_request_approval_writes_audit(client, monkeypatch):
+    with app.app_context():
+        req = AccountRequest(
+            account_type='personal',
+            first_name='Luis',
+            last_name='Doe',
+            company='LuisCo',
+            identifier='002',
+            phone='123',
+            email='luis@example.com',
+            username='luis',
+            password=generate_password_hash('pw'),
+            accepted_terms=True,
+        )
+        db.session.add(req)
+        db.session.commit()
+        rid = req.id
+
+    monkeypatch.setattr('app.send_email', lambda *args, **kwargs: None)
+    login(client, 'admin', '363636')
+    client.post(f'/admin/solicitudes/{rid}/aprobar', data={'role': 'company'})
+
+    with app.app_context():
+        row = AuditLog.query.filter_by(action='account_request_approve').order_by(AuditLog.id.desc()).first()
+        assert row is not None
+        assert row.entity == 'account_request'
+
+
+def test_suspicious_ips_counts_only_request_creation_action(client):
+    with app.app_context():
+        db.session.add_all([
+            AuditLog(action='account_request_approve', entity='account_request', ip='10.10.10.10', status='ok'),
+            AuditLog(action='account_request_reject', entity='account_request', ip='10.10.10.10', status='ok'),
+        ])
+        db.session.commit()
+
+    login(client, 'admin', '363636')
+    resp = client.get('/cpaneltx/auditoria')
+    assert resp.status_code == 200
+    assert b'No hay IPs repetidas en solicitudes de cuenta' in resp.data
+
+
+def test_admin_can_create_system_announcement(client):
+    login(client, 'admin', '363636')
+    resp = client.post('/cpaneltx/avisos', data={
+        'title': 'Mantenimiento',
+        'message': 'Evite registrar cambios entre 10pm y 11pm',
+        'is_active': 'on',
+    }, follow_redirects=True)
+    assert resp.status_code == 200
+    with app.app_context():
+        ann = SystemAnnouncement.query.first()
+        assert ann is not None
+        assert ann.is_active is True
+
+
+
+def test_cpanel_companies_can_select_company_context(client):
+    with app.app_context():
+        other = CompanyInfo(name='Otra', street='', sector='', province='', phone='', rnc='')
+        db.session.add(other)
+        db.session.commit()
+        other_id = other.id
+
+    login(client, 'admin', '363636')
+    r = client.get(f'/cpaneltx/companies/select/{other_id}', follow_redirects=False)
+    assert r.status_code == 302
+
+    with client.session_transaction() as sess:
+        assert sess.get('company_id') == other_id
+
+    clear_resp = client.get('/cpaneltx/companies/clear', follow_redirects=False)
+    assert clear_resp.status_code == 302
+    with client.session_transaction() as sess:
+        assert sess.get('company_id') is None
+
+
+def test_cpanel_can_toggle_signup_mode(client):
+    login(client, 'admin', '363636')
+    resp = client.post('/cpaneltx/signup-mode', data={'signup_auto_approve': '1'}, follow_redirects=True)
+    assert resp.status_code == 200
+    with app.app_context():
+        setting = db.session.get(AppSetting, 'signup_auto_approve')
+        assert setting is not None
+        assert setting.value == '1'
+
+
+def test_cpanel_user_activity_page(client):
+    login(client, 'admin', '363636')
+    with app.app_context():
+        user = User.query.filter_by(username='user').first()
+
+    client.post(f'/cpaneltx/users/{user.id}/role', data={'role': 'manager'})
+    resp = client.get(f'/cpaneltx/users/{user.id}/actividad')
+    assert resp.status_code == 200
+    assert b'cpanel_user_role' in resp.data
+
+
+def test_signup_auto_approve_creates_manager_without_request(client):
+    login(client, 'admin', '363636')
+    client.post('/cpaneltx/signup-mode', data={'signup_auto_approve': '1'})
+
+    payload = {
+        'account_type': 'personal',
+        'first_name': 'Auto',
+        'last_name': 'Manager',
+        'company': 'AutoCo',
+        'identifier': '12345678901',
+        'phone': '8095551234',
+        'email': 'auto@example.com',
+        'address': 'Santo Domingo',
+        'website': '',
+        'username': 'AutoUser',
+        'password': '123456',
+        'confirm_password': '123456',
+        'accepted_terms': 'y',
+        'captcha_answer': '0',
+    }
+    resp = client.post('/solicitar-cuenta', data=payload, follow_redirects=False)
+    assert resp.status_code == 302
+
+    with app.app_context():
+        created = User.query.filter_by(username='autouser').first()
+        assert created is not None
+        assert created.role == 'manager'
+        assert AccountRequest.query.filter_by(username='autouser').first() is None
+
+
+def test_cpanel_can_import_rnc_file(client):
+    login(client, 'admin', '363636')
+    payload = {
+        'rnc_file': (BytesIO(b'101010101|Empresa Uno\n202020202|Empresa Dos\nlinea-invalida\n'), 'RNC.txt')
+    }
+    resp = client.post('/cpaneltx/rnc', data=payload, content_type='multipart/form-data', follow_redirects=True)
+    assert resp.status_code == 200
+    with app.app_context():
+        r1 = db.session.get(RNCRegistry, '101010101')
+        r2 = db.session.get(RNCRegistry, '202020202')
+        assert r1 is not None and r1.name == 'Empresa Uno'
+        assert r2 is not None and r2.name == 'Empresa Dos'
+
+
+def test_rnc_lookup_reads_registry_table(client):
+    login(client, 'admin', '363636')
+    with app.app_context():
+        db.session.add(RNCRegistry(rnc='303030303', name='Empresa Registry', source='test'))
+        db.session.commit()
+
+    resp = client.get('/api/rnc/303-03030-3')
+    assert resp.status_code == 200
+    assert resp.get_json().get('name') == 'Empresa Registry'
