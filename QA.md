@@ -14,4 +14,9 @@
 - [ ] Usuarios solo ven datos de su empresa (multi-tenant).
 - [ ] Roles sin permiso reciben mensaje de error al exportar.
 
+## Última verificación automatizada (entorno local CI)
+- ✅ `pytest`: **85 pruebas aprobadas**.
+- ⚠️ Se detectaron **211 warnings** (principalmente deprecaciones de SQLAlchemy `Query.get()`, parámetros `ln` en `fpdf2` y `SECRET_KEY` por defecto en configuración local).
+- ✅ Benchmark incluido en tests: `test_report_query[10000-3.0]` con media ~279 ms (< 3s).
+
 Revisar cada punto en ambiente de *staging* antes de desplegar a producción.

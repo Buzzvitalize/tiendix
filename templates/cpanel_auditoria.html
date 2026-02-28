@@ -1,0 +1,76 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="p-4 space-y-4">
+  <h1 class="text-2xl font-semibold">Auditoría del sistema</h1>
+
+  <form method="get" class="grid gap-3 md:grid-cols-5 bg-white p-4 rounded shadow">
+    <input type="text" name="action" value="{{ action }}" placeholder="Acción" class="border rounded px-3 py-2" />
+    <input type="text" name="user" value="{{ user }}" placeholder="Usuario" class="border rounded px-3 py-2" />
+    <input type="text" name="ip" value="{{ ip }}" placeholder="IP" class="border rounded px-3 py-2" />
+    <select name="status" class="border rounded px-3 py-2">
+      <option value="">Estado (todos)</option>
+      <option value="ok" {% if status == 'ok' %}selected{% endif %}>OK</option>
+      <option value="fail" {% if status == 'fail' %}selected{% endif %}>Fallido</option>
+    </select>
+    <button class="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-2">Filtrar</button>
+  </form>
+
+  <div class="bg-white p-4 rounded shadow">
+    <h2 class="font-semibold mb-2">IPs con múltiples solicitudes de cuenta</h2>
+    {% if suspicious_ips %}
+      <ul class="list-disc ml-6 text-sm">
+        {% for ip, qty in suspicious_ips %}
+          <li><span class="font-mono">{{ ip or 'sin-ip' }}</span> — {{ qty }} solicitudes</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="text-sm text-gray-600">No hay IPs repetidas en solicitudes de cuenta.</p>
+    {% endif %}
+  </div>
+
+  <div class="bg-white rounded shadow overflow-x-auto">
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-100 text-left">
+        <tr>
+          <th class="p-2">Fecha</th>
+          <th class="p-2">Usuario</th>
+          <th class="p-2">Acción</th>
+          <th class="p-2">Entidad</th>
+          <th class="p-2">Estado</th>
+          <th class="p-2">IP</th>
+          <th class="p-2">Detalles</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in logs.items %}
+          <tr class="border-t">
+            <td class="p-2 whitespace-nowrap">{{ row.created_at.strftime('%Y-%m-%d %H:%M:%S') if row.created_at else '' }}</td>
+            <td class="p-2">{{ row.username or ('ID ' ~ row.user_id if row.user_id else '-') }}</td>
+            <td class="p-2 font-mono">{{ row.action }}</td>
+            <td class="p-2">{{ row.entity }}{% if row.entity_id %} #{{ row.entity_id }}{% endif %}</td>
+            <td class="p-2">
+              <span class="px-2 py-1 rounded text-xs {% if row.status == 'ok' %}bg-green-100 text-green-700{% else %}bg-red-100 text-red-700{% endif %}">
+                {{ row.status }}
+              </span>
+            </td>
+            <td class="p-2 font-mono">{{ row.ip }}</td>
+            <td class="p-2">{{ row.details }}</td>
+          </tr>
+        {% else %}
+          <tr><td class="p-3 text-center text-gray-500" colspan="7">No hay registros.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="flex gap-2">
+    {% if logs.has_prev %}
+      <a class="px-3 py-2 bg-white border rounded" href="{{ url_for('cpanel_auditoria', page=logs.prev_num, action=action, status=status, ip=ip, user=user) }}">Anterior</a>
+    {% endif %}
+    <span class="px-3 py-2">Página {{ logs.page }} de {{ logs.pages or 1 }}</span>
+    {% if logs.has_next %}
+      <a class="px-3 py-2 bg-white border rounded" href="{{ url_for('cpanel_auditoria', page=logs.next_num, action=action, status=status, ip=ip, user=user) }}">Siguiente</a>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

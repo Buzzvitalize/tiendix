@@ -23,6 +23,7 @@
     <div>
       <label for="identifier" class="block text-sm font-medium text-gray-700 mb-1">Documento</label>
       <input name="identifier" placeholder="Cédula" class="input id-mask" id="identifier" data-doc-type="cedula">
+      <p id="rnc-lookup-status" class="text-xs mt-1 text-gray-500 hidden"></p>
     </div>
     <div>
       <label for="client-phone" class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
@@ -99,6 +100,36 @@ window.addEventListener('load', () => {
   const idField=document.getElementById('identifier');
   const lastField=document.getElementById('last_name');
   const lastFieldWrapper=document.getElementById('last-name-wrapper');
+  const nameField=document.getElementById('client-name');
+  const statusField=document.getElementById('rnc-lookup-status');
+
+  function setRncStatus(message, ok=false){
+    statusField.textContent = message;
+    statusField.classList.remove('hidden','text-gray-500','text-green-700','text-red-600');
+    statusField.classList.add(ok ? 'text-green-700' : 'text-red-600');
+  }
+
+  async function lookupRncClient(){
+    if(idField.dataset.docType!=='rnc') return;
+    const rnc=(idField.value||'').replace(/-/g,'').trim();
+    if(rnc.length!==9){
+      setRncStatus('RNC incompleto. Debe tener 9 dígitos.');
+      return;
+    }
+    try{
+      const response = await fetch(`/api/rnc/${rnc}`);
+      const data = await response.json();
+      if(data.name){
+        if(!nameField.value.trim()) nameField.value = data.name;
+        setRncStatus('RNC disponible: empresa encontrada.', true);
+      }else{
+        setRncStatus('No ha sido encontrado este RNC.');
+      }
+    }catch(_err){
+      setRncStatus('No se pudo consultar el RNC en este momento.');
+    }
+  }
+
   function toggle(){
     if(document.querySelector('input[name="type"]:checked').value==='final'){
       lastFieldWrapper.classList.remove('hidden');
@@ -106,16 +137,21 @@ window.addEventListener('load', () => {
       idField.placeholder='Cédula';
       idField.required=false;
       idField.dataset.docType='cedula';
+      statusField.textContent='';
+      statusField.className='text-xs mt-1 text-gray-500 hidden';
     }else{
       lastFieldWrapper.classList.add('hidden');
       lastField.required=false;
       idField.placeholder='RNC *';
       idField.required=true;
       idField.dataset.docType='rnc';
+      statusField.className='text-xs mt-1 text-gray-500';
+      statusField.textContent='Digite RNC y salga del campo para validar disponibilidad.';
     }
     applyDocMask(idField);
   }
   typeRadios.forEach(r=>r.addEventListener('change',toggle));
+  idField.addEventListener('blur', lookupRncClient);
   toggle();
 });
 </script>

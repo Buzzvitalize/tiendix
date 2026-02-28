@@ -232,7 +232,7 @@ class CompanyInfo(db.Model):
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(128), nullable=False)
+    password = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(120))
     first_name = db.Column(db.String(120), nullable=False, default='')
     last_name = db.Column(db.String(120), nullable=False, default='')
@@ -258,7 +258,7 @@ class AccountRequest(db.Model):
     address = db.Column(db.String(200))
     website = db.Column(db.String(120))
     username = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(120), nullable=False)
+    password = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=dom_now)
     accepted_terms = db.Column(db.Boolean, nullable=False, default=False)
     accepted_terms_at = db.Column(db.DateTime)
@@ -296,3 +296,58 @@ class Notification(db.Model):
     message = db.Column(db.String(200), nullable=False)
     is_read = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=dom_now)
+
+
+class ErrorReport(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    username = db.Column(db.String(80))
+    company_id = db.Column(db.Integer)
+    title = db.Column(db.String(180), nullable=False)
+    module = db.Column(db.String(80), nullable=False)
+    severity = db.Column(db.String(20), nullable=False, default='media')
+    status = db.Column(db.String(20), nullable=False, default='abierto')
+    page_url = db.Column(db.String(255))
+    happened_at = db.Column(db.DateTime)
+    expected_behavior = db.Column(db.Text)
+    actual_behavior = db.Column(db.Text, nullable=False)
+    steps_to_reproduce = db.Column(db.Text, nullable=False)
+    contact_email = db.Column(db.String(120))
+    ip = db.Column(db.String(45))
+    user_agent = db.Column(db.String(255))
+    admin_notes = db.Column(db.Text)
+
+
+class SystemAnnouncement(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(180), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    scheduled_for = db.Column(db.DateTime)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
+
+
+
+class AppSetting(db.Model):
+    key = db.Column(db.String(80), primary_key=True)
+    value = db.Column(db.String(255), nullable=False)
+    updated_at = db.Column(db.DateTime, default=dom_now, onupdate=dom_now, nullable=False)
+
+class AuditLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=dom_now, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    username = db.Column(db.String(80))
+    role = db.Column(db.String(20))
+    company_id = db.Column(db.Integer)
+    action = db.Column(db.String(80), nullable=False)
+    entity = db.Column(db.String(80), nullable=False)
+    entity_id = db.Column(db.String(80))
+    status = db.Column(db.String(20), default='ok')
+    details = db.Column(db.Text)
+    ip = db.Column(db.String(45))
+    user_agent = db.Column(db.String(255))

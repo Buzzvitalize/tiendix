@@ -1,0 +1,206 @@
+import os
+import sys
+
+import pytest
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+import app as app_module
+from config import validate_runtime_config
+
+
+def test_validate_runtime_config_requires_secret_in_production():
+    with pytest.raises(RuntimeError, match='SECRET_KEY is required in production'):
+        validate_runtime_config({'APP_ENV': 'production', 'SECRET_KEY': '', 'WTF_CSRF_ENABLED': True})
+
+
+def test_validate_runtime_config_requires_csrf_outside_tests():
+    with pytest.raises(RuntimeError, match='WTF_CSRF_ENABLED must be True'):
+        validate_runtime_config({'APP_ENV': 'development', 'TESTING': False, 'WTF_CSRF_ENABLED': False, 'SECRET_KEY': 'x'})
+
+
+def test_send_email_retries_and_metrics(monkeypatch):
+    attempts = {'count': 0}
+
+    class FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def starttls(self):
+            return None
+
+        def login(self, *_):
+            return None
+
+        def sendmail(self, *_):
+            attempts['count'] += 1
+            if attempts['count'] < 3:
+                raise RuntimeError('smtp down')
+
+    monkeypatch.setattr(app_module, 'MAIL_SERVER', 'smtp.example.com')
+    monkeypatch.setattr(app_module, 'MAIL_DEFAULT_SENDER', 'no-reply@example.com')
+    monkeypatch.setattr(app_module, 'MAIL_MAX_RETRIES', 3)
+    monkeypatch.setattr(app_module, 'MAIL_RETRY_DELAY_SEC', 0)
+    monkeypatch.setattr(app_module.smtplib, 'SMTP', FakeSMTP)
+
+    for key in app_module.EMAIL_METRICS:
+        app_module.EMAIL_METRICS[key] = 0
+
+    app_module.send_email('to@example.com', 'subject', '<b>ok</b>', asynchronous=False)
+
+    assert attempts['count'] == 3
+    assert app_module.EMAIL_METRICS['retries'] == 2
+    assert app_module.EMAIL_METRICS['sent'] == 1
+    assert app_module.EMAIL_METRICS['failed'] == 0
+
+
+def test_normalized_database_url_for_mysql_scheme():
+    assert app_module._normalized_database_url('mysql://u:p@localhost/db') == 'mysql+pymysql://u:p@localhost/db'
+    assert app_module._normalized_database_url('mysql+pymysql://u:p@localhost/db') == 'mysql+pymysql://u:p@localhost/db'
+
+
+def test_database_url_from_parts_builds_mysql_url(monkeypatch):
+    monkeypatch.setenv('DB_NAME', 'cpanel_db')
+    monkeypatch.setenv('DB_USER', 'cpanel_user')
+    monkeypatch.setenv('DB_PASSWORD', 'my pass@123')
+    monkeypatch.setenv('DB_HOST', 'localhost')
+    monkeypatch.setenv('DB_PORT', '3306')
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+
+    built = app_module._database_url_from_parts()
+
+    assert built == 'mysql+pymysql://cpanel_user:my+pass%40123@localhost:3306/cpanel_db?charset=utf8mb4'
+
+
+def test_resolve_database_url_prioritizes_database_url(monkeypatch):
+    monkeypatch.setenv('DATABASE_URL', 'mysql://u:p@localhost/db')
+    monkeypatch.setenv('DB_NAME', 'ignored_db')
+    monkeypatch.setenv('DB_USER', 'ignored_user')
+    monkeypatch.setenv('DB_PASSWORD', 'ignored_password')
+
+    resolved, source = app_module._resolve_database_url()
+
+    assert resolved == 'mysql+pymysql://u:p@localhost/db'
+    assert source == 'DATABASE_URL'
+
+
+def test_app_version_metadata_present():
+    assert app_module.APP_VERSION
+    assert isinstance(app_module.APP_VERSION_HIGHLIGHTS, list)
+    assert app_module.APP_VERSION_HIGHLIGHTS
+
+
+def test_unhandled_exception_returns_custom_500_page(monkeypatch):
+    def _boom():
+        raise RuntimeError('boom')
+
+    monkeypatch.setitem(app_module.app.view_functions, 'index', _boom)
+
+    client = app_module.app.test_client()
+    with client.session_transaction() as sess:
+        sess['user_id'] = 1
+    resp = client.get('/')
+
+    assert resp.status_code == 500
+    assert b'ID de error' in resp.data
+
+
+
+def test_apply_database_uri_override_sets_uri():
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'sqlite:///database.sqlite'}
+    app_module._apply_database_uri_override(cfg, 'mysql+pymysql://u:p@localhost/db?charset=utf8mb4')
+    assert cfg['SQLALCHEMY_DATABASE_URI'] == 'mysql+pymysql://u:p@localhost/db?charset=utf8mb4'
+
+
+def test_apply_database_uri_override_keeps_existing_when_none():
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'sqlite:///database.sqlite'}
+    app_module._apply_database_uri_override(cfg, None)
+    assert cfg['SQLALCHEMY_DATABASE_URI'] == 'sqlite:///database.sqlite'
+
+
+def test_ensure_mysql_driver_available_switches_to_mysqldb(monkeypatch):
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'mysql+pymysql://u:p@localhost/db'}
+
+    monkeypatch.setattr(app_module, '_module_available', lambda name: name == 'MySQLdb')
+
+    app_module._ensure_mysql_driver_available(cfg)
+
+    assert cfg['SQLALCHEMY_DATABASE_URI'].startswith('mysql+mysqldb://')
+
+
+def test_ensure_mysql_driver_available_falls_back_to_sqlite_when_no_driver(monkeypatch):
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'mysql+pymysql://u:p@localhost/db'}
+
+    monkeypatch.setattr(app_module, '_module_available', lambda _name: False)
+
+    app_module._ensure_mysql_driver_available(cfg)
+
+    assert cfg['SQLALCHEMY_DATABASE_URI'] == 'sqlite:///database.sqlite'
+
+
+
+
+def test_maybe_fix_cpanel_access_denied_switches_to_db_user(monkeypatch):
+    class FakeConn:
+        def close(self):
+            return None
+
+    class FakePyMySQL:
+        class Error(Exception):
+            pass
+
+        def __init__(self):
+            self.calls = []
+
+        def connect(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs['database'] == 'target_db':
+                raise self.Error('(1044, "Access denied for user")')
+            return FakeConn()
+
+    fake_module = FakePyMySQL()
+    monkeypatch.setattr(app_module, '_module_available', lambda name: name == 'pymysql')
+    import sys as _sys
+    _sys.modules['pymysql'] = fake_module
+
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'mysql+pymysql://db_user:pw@localhost:3306/target_db?charset=utf8mb4'}
+    monkeypatch.setenv('DB_USER', 'db_user')
+
+    app_module._maybe_fix_cpanel_access_denied(cfg)
+
+    assert cfg['SQLALCHEMY_DATABASE_URI'].startswith('mysql+pymysql://db_user:pw@localhost:3306/db_user')
+
+
+def test_maybe_fix_cpanel_access_denied_keeps_uri_when_not_1044(monkeypatch):
+    class FakePyMySQL:
+        class Error(Exception):
+            pass
+
+        def connect(self, **kwargs):
+            raise self.Error('network error')
+
+    monkeypatch.setattr(app_module, '_module_available', lambda name: name == 'pymysql')
+    import sys as _sys
+    _sys.modules['pymysql'] = FakePyMySQL()
+
+    original = 'mysql+pymysql://db_user:pw@localhost:3306/target_db?charset=utf8mb4'
+    cfg = {'SQLALCHEMY_DATABASE_URI': original}
+    monkeypatch.setenv('DB_USER', 'db_user')
+
+    app_module._maybe_fix_cpanel_access_denied(cfg)
+
+    assert cfg['SQLALCHEMY_DATABASE_URI'] == original
+
+
+
+def test_password_columns_are_wide_enough_for_werkzeug_hashes():
+    from models import User, AccountRequest
+
+    assert User.password.property.columns[0].type.length >= 255
+    assert AccountRequest.password.property.columns[0].type.length >= 255
