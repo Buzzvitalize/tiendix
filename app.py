@@ -3993,7 +3993,11 @@ def download_generated_doc(filename):
         return ('Not Found', 404)
     base = _archive_root_dir().resolve()
     file_path = (base / filename).resolve()
-    if not str(file_path).startswith(str(base)) or not file_path.exists():
+    if (
+        not str(file_path).startswith(str(base))
+        or not file_path.exists()
+        or not file_path.is_file()
+    ):
         return ('Not Found', 404)
     return send_file(str(file_path), as_attachment=True, mimetype='application/pdf')
 
