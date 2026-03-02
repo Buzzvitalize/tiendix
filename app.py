@@ -331,6 +331,7 @@ MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')
 MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', MAIL_USERNAME)
 MAIL_MAX_RETRIES = int(os.getenv('MAIL_MAX_RETRIES', 3))
 MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
+MAIL_CONNECT_TIMEOUT_SEC = float(os.getenv('MAIL_CONNECT_TIMEOUT_SEC', 8))
 
 
 def _strip_accents(value: str | None) -> str:
@@ -369,7 +370,7 @@ EMAIL_METRICS = {
 _email_queue = ThreadQueue()
 
 
-def _deliver_email(to, subject, html, attachments=None):
+def _deliver_email(to, subject, html, attachments=None, max_retries=None):
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
         EMAIL_METRICS['skipped'] += 1
         app.logger.warning('Email settings missing; skipping send to %s', to)
@@ -386,10 +387,11 @@ def _deliver_email(to, subject, html, attachments=None):
         part['Content-Disposition'] = f'attachment; filename="{filename}"'
         msg.attach(part)
 
-    for attempt in range(1, MAIL_MAX_RETRIES + 1):
+    retries = MAIL_MAX_RETRIES if max_retries is None else max(1, int(max_retries))
+    for attempt in range(1, retries + 1):
         try:
             smtp_cls = smtplib.SMTP_SSL if MAIL_USE_SSL else smtplib.SMTP
-            with smtp_cls(MAIL_SERVER, MAIL_PORT) as s:
+            with smtp_cls(MAIL_SERVER, MAIL_PORT, timeout=MAIL_CONNECT_TIMEOUT_SEC) as s:
                 if MAIL_USE_TLS and not MAIL_USE_SSL:
                     s.starttls()
                 if MAIL_USERNAME and MAIL_PASSWORD:
@@ -398,13 +400,13 @@ def _deliver_email(to, subject, html, attachments=None):
             EMAIL_METRICS['sent'] += 1
             return
         except Exception as e:  # pragma: no cover
-            if attempt < MAIL_MAX_RETRIES:
+            if attempt < retries:
                 EMAIL_METRICS['retries'] += 1
-                app.logger.warning('Email send failed (attempt %s/%s) to %s: %s', attempt, MAIL_MAX_RETRIES, to, e)
+                app.logger.warning('Email send failed (attempt %s/%s) to %s: %s', attempt, retries, to, e)
                 time.sleep(MAIL_RETRY_DELAY_SEC)
                 continue
             EMAIL_METRICS['failed'] += 1
-            app.logger.error('Email send failed after %s attempts to %s: %s', MAIL_MAX_RETRIES, to, e)
+            app.logger.error('Email send failed after %s attempts to %s: %s', retries, to, e)
 
 
 def _email_worker():  # pragma: no cover - background helper
@@ -423,12 +425,12 @@ _email_worker_thread = threading.Thread(target=_email_worker, daemon=True)
 _email_worker_thread.start()
 
 
-def send_email(to, subject, html, attachments=None, asynchronous=True):
+def send_email(to, subject, html, attachments=None, asynchronous=True, max_retries=None):
     if asynchronous:
         EMAIL_METRICS['queued'] += 1
-        _email_queue.put((to, subject, html, attachments))
+        _email_queue.put((to, subject, html, attachments, max_retries))
         return
-    _deliver_email(to, subject, html, attachments)
+    _deliver_email(to, subject, html, attachments, max_retries)
 
 
 def _fmt_money(value):
@@ -3654,7 +3656,7 @@ def send_quotation_email(quotation_id):
         show_validity=True,
         validity_days=validity_days,
     )
-    send_email(client.email, subject, html, asynchronous=False)
+    send_email(client.email, subject, html, asynchronous=False, max_retries=1)
     flash(f'Cotización enviada con éxito a {client.email}')
     return redirect(url_for('list_quotations'))
 
@@ -3792,7 +3794,7 @@ def send_order_email(order_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, asynchronous=False)
+    send_email(client.email, subject, html, asynchronous=False, max_retries=1)
     flash(f'Pedido enviado con exito a {client.email}')
     return redirect(url_for('list_orders'))
 
@@ -3922,7 +3924,7 @@ def send_invoice_email(invoice_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, asynchronous=False)
+    send_email(client.email, subject, html, asynchronous=False, max_retries=1)
     flash(f'Factura enviada con exito a {client.email}')
     return redirect(url_for('list_invoices'))
 
