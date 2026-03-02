@@ -1523,19 +1523,12 @@ def _resolve_archived_pdf_path(doc_type: str, doc_number: int | str, *, company_
 
 
 def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> str | None:
-    base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
-    if not base_url:
-        return None
-    parsed = urlparse(base_url)
-    if not parsed.scheme:
-        base_url = f"https://{base_url.lstrip('/')}".rstrip('/')
-    cid = company_id if company_id is not None else current_company_id()
-    name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
-    short = _company_short_slug(name)
-    token = _company_private_token(cid, name)
-    safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
-    stem = _doc_file_stem(doc_type, doc_number, company_name=name, company_id=cid)
-    return f"{base_url}/{short}/{token}/{safe_type}/{stem}.pdf"
+    return _archived_download_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=company_id,
+    )
 
 
 def _archive_root_dir() -> Path:
