@@ -60,6 +60,96 @@ def test_send_email_retries_and_metrics(monkeypatch):
     assert app_module.EMAIL_METRICS['failed'] == 0
 
 
+def test_deliver_email_uses_smtp_ssl_without_starttls(monkeypatch):
+    calls = {'smtp': 0, 'smtp_ssl': 0, 'starttls': 0, 'login': 0, 'sendmail': 0}
+
+    class FakeSMTPSSL:
+        def __init__(self, *args, **kwargs):
+            calls['smtp_ssl'] += 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def starttls(self):
+            calls['starttls'] += 1
+
+        def login(self, *_):
+            calls['login'] += 1
+
+        def sendmail(self, *_):
+            calls['sendmail'] += 1
+
+    class FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            calls['smtp'] += 1
+
+    monkeypatch.setattr(app_module, 'MAIL_SERVER', 'smtp.example.com')
+    monkeypatch.setattr(app_module, 'MAIL_PORT', 465)
+    monkeypatch.setattr(app_module, 'MAIL_DEFAULT_SENDER', 'no-reply@example.com')
+    monkeypatch.setattr(app_module, 'MAIL_USERNAME', 'user@example.com')
+    monkeypatch.setattr(app_module, 'MAIL_PASSWORD', 'secret')
+    monkeypatch.setattr(app_module, 'MAIL_USE_SSL', True)
+    monkeypatch.setattr(app_module, 'MAIL_USE_TLS', False)
+    monkeypatch.setattr(app_module.smtplib, 'SMTP_SSL', FakeSMTPSSL)
+    monkeypatch.setattr(app_module.smtplib, 'SMTP', FakeSMTP)
+
+    app_module._deliver_email('to@example.com', 'subject', '<b>ok</b>')
+
+    assert calls['smtp_ssl'] == 1
+    assert calls['smtp'] == 0
+    assert calls['starttls'] == 0
+    assert calls['login'] == 1
+    assert calls['sendmail'] == 1
+
+
+def test_deliver_email_uses_starttls_when_enabled(monkeypatch):
+    calls = {'smtp': 0, 'smtp_ssl': 0, 'starttls': 0, 'login': 0, 'sendmail': 0}
+
+    class FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            calls['smtp'] += 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def starttls(self):
+            calls['starttls'] += 1
+
+        def login(self, *_):
+            calls['login'] += 1
+
+        def sendmail(self, *_):
+            calls['sendmail'] += 1
+
+    class FakeSMTPSSL:
+        def __init__(self, *args, **kwargs):
+            calls['smtp_ssl'] += 1
+
+    monkeypatch.setattr(app_module, 'MAIL_SERVER', 'smtp.example.com')
+    monkeypatch.setattr(app_module, 'MAIL_PORT', 587)
+    monkeypatch.setattr(app_module, 'MAIL_DEFAULT_SENDER', 'no-reply@example.com')
+    monkeypatch.setattr(app_module, 'MAIL_USERNAME', 'user@example.com')
+    monkeypatch.setattr(app_module, 'MAIL_PASSWORD', 'secret')
+    monkeypatch.setattr(app_module, 'MAIL_USE_SSL', False)
+    monkeypatch.setattr(app_module, 'MAIL_USE_TLS', True)
+    monkeypatch.setattr(app_module.smtplib, 'SMTP_SSL', FakeSMTPSSL)
+    monkeypatch.setattr(app_module.smtplib, 'SMTP', FakeSMTP)
+
+    app_module._deliver_email('to@example.com', 'subject', '<b>ok</b>')
+
+    assert calls['smtp'] == 1
+    assert calls['smtp_ssl'] == 0
+    assert calls['starttls'] == 1
+    assert calls['login'] == 1
+    assert calls['sendmail'] == 1
+
+
 def test_normalized_database_url_for_mysql_scheme():
     assert app_module._normalized_database_url('mysql://u:p@localhost/db') == 'mysql+pymysql://u:p@localhost/db'
     assert app_module._normalized_database_url('mysql+pymysql://u:p@localhost/db') == 'mysql+pymysql://u:p@localhost/db'

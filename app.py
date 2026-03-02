@@ -290,6 +290,17 @@ MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', MAIL_USERNAME)
 MAIL_MAX_RETRIES = int(os.getenv('MAIL_MAX_RETRIES', 3))
 MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+MAIL_USE_SSL = _env_bool('MAIL_USE_SSL', False)
+MAIL_USE_TLS = _env_bool('MAIL_USE_TLS', True)
+
 EMAIL_METRICS = {
     'queued': 0,
     'sent': 0,
@@ -319,9 +330,11 @@ def _deliver_email(to, subject, html, attachments=None):
 
     for attempt in range(1, MAIL_MAX_RETRIES + 1):
         try:
-            with smtplib.SMTP(MAIL_SERVER, MAIL_PORT) as s:
-                if MAIL_USERNAME and MAIL_PASSWORD:
+            smtp_cls = smtplib.SMTP_SSL if MAIL_USE_SSL else smtplib.SMTP
+            with smtp_cls(MAIL_SERVER, MAIL_PORT) as s:
+                if MAIL_USE_TLS and not MAIL_USE_SSL:
                     s.starttls()
+                if MAIL_USERNAME and MAIL_PASSWORD:
                     s.login(MAIL_USERNAME, MAIL_PASSWORD)
                 s.sendmail(MAIL_DEFAULT_SENDER, [to], msg.as_string())
             EMAIL_METRICS['sent'] += 1
