@@ -275,3 +275,17 @@ def test_pdf_archive_folder_structure(client):
     assert list(archive_root.glob('compa/*/cotizacion/*.pdf'))
     assert list(archive_root.glob('compa/*/pedido/*.pdf'))
     assert list(archive_root.glob('compa/*/factura/*.pdf'))
+
+
+def test_new_quotation_missing_client_redirects_to_list(client):
+    login(client, 'user1', 'pass')
+    resp = client.post('/cotizaciones/nueva', data={
+        'seller': 'User One',
+        'payment_method': 'Efectivo',
+        'warehouse_id': '1',
+        'product_id[]': ['1'],
+        'product_quantity[]': ['1'],
+        'product_discount[]': ['0'],
+    }, follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers['Location'].endswith('/cotizaciones')

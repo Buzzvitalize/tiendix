@@ -940,7 +940,9 @@ AUTO_RUN_MIGRATIONS = _is_auto_run_migrations_enabled()
 if AUTO_RUN_MIGRATIONS:
     run_auto_migrations()
 else:
-    app.logger.info('AUTO_RUN_MIGRATIONS disabled: skipping startup Alembic upgrade; schema changes must be applied manually.')
+    app.logger.info('AUTO_RUN_MIGRATIONS disabled: skipping startup Alembic upgrade; applying lightweight legacy schema sync only.')
+    with app.app_context():
+        _migrate_legacy_schema()
 
 
 SIGNUP_AUTO_APPROVE_KEY = 'signup_auto_approve'
@@ -3217,19 +3219,19 @@ def new_quotation():
         client_id = request.form.get('client_id')
         if not client_id:
             flash('Debe seleccionar un cliente registrado')
-            return redirect(url_for('new_quotation'))
+            return redirect(url_for('list_quotations'))
         client = company_get(Client, client_id)
         wid = request.form.get('warehouse_id')
         if not wid:
             flash('Seleccione un almacén')
-            return redirect(url_for('new_quotation'))
+            return redirect(url_for('list_quotations'))
         product_ids = request.form.getlist('product_id[]')
         quantities = request.form.getlist('product_quantity[]')
         discounts = request.form.getlist('product_discount[]')
         items = build_items(product_ids, quantities, discounts)
         if not items:
             flash('Debe agregar al menos un producto')
-            return redirect(url_for('new_quotation'))
+            return redirect(url_for('list_quotations'))
         subtotal, itbis, total = calculate_totals(items)
         payment_method = request.form.get('payment_method')
         bank = request.form.get('bank') if payment_method == 'Transferencia' else None
@@ -4409,6 +4411,22 @@ def account_statement_detail(client_id):
     )
     if request.args.get('pdf') == '1':
         pdf_data = generate_account_statement_pdf_bytes(company, client_dict, rows, totals, aging, overdue_pct)
+        archived_path = _archive_pdf_copy(
+            'estado_cuenta',
+            client.id,
+            pdf_data,
+            company_name=company.get('name'),
+            company_id=current_company_id(),
+        )
+        archived_url = _archived_download_url(
+            'estado_cuenta',
+            client.id,
+            company_name=company.get('name'),
+            company_id=current_company_id(),
+            full_path=archived_path,
+        )
+        if archived_url:
+            return redirect(archived_url)
         return _archive_and_send_pdf(
             doc_type='estado_cuenta',
             doc_number=client.id,
@@ -4675,7 +4693,7 @@ def export_reportes():
             pdf_data=pdf_data,
             download_name='reportes.pdf',
             company_name=company.get('name'),
-            archive=False,
+            archive=True,
         )
 
     return redirect(url_for('reportes'))
