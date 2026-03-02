@@ -59,7 +59,7 @@
         <td class="p-2">{{ q.total | money }}</td>
         <td class="p-2">{{ q.status }}</td>
         <td class="p-2 space-x-2">
-          <button type="button" class="text-blue-500 inline-flex items-center gap-1 pdf-action" data-pdf-url="{{ archived_urls.get(q.id) or url_for('quotation_pdf', quotation_id=q.id) }}" data-filename="cotizacion_{{ q.id }}.pdf">
+          <button type="button" class="text-blue-500 inline-flex items-center gap-1 pdf-action" data-pdf-url="{{ archived_urls.get(q.id) or url_for('quotation_pdf', quotation_id=q.id) }}" data-filename="cotizacion_{{ q.id }}.pdf" data-archived-url="{{ archived_urls.get(q.id) or '' }}">
             <span class="pdf-label">Generar PDF</span>
           </button>
           <form method="post" action="{{ url_for('send_quotation_email', quotation_id=q.id) }}" class="inline">
@@ -121,14 +121,27 @@ document.querySelectorAll('.pdf-action').forEach((btn) => {
       : `<span class="pdf-label">${label}</span>`;
   }
 
+  const preArchivedUrl = (btn.dataset.archivedUrl || '').trim();
+  if (preArchivedUrl) {
+    downloadUrl = preArchivedUrl;
+    ready = true;
+    setLabel('Descargar PDF', true);
+    btn.classList.remove('text-blue-500');
+    btn.classList.add('text-green-600');
+  }
+
   btn.addEventListener('click', async () => {
     if (ready && (downloadUrl || blobUrl)) {
-      const a = document.createElement('a');
-      a.href = downloadUrl || blobUrl;
-      a.download = btn.dataset.filename || 'documento.pdf';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      if (downloadUrl) {
+        window.open(downloadUrl, '_blank', 'noopener');
+      } else {
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = btn.dataset.filename || 'documento.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
       return;
     }
 

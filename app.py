@@ -1456,6 +1456,21 @@ def _archived_download_url(doc_type: str, doc_number: int | str, *, company_name
     return url_for('download_generated_doc', filename=rel)
 
 
+def _set_archived_headers(response, *, doc_type: str, doc_number: int | str, company_name: str | None = None, full_path: str | None = None):
+    download_url = _archived_download_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=current_company_id(),
+        full_path=full_path,
+    )
+    if download_url:
+        response.headers['X-Archived-Url'] = download_url
+        if download_url.startswith('http://') or download_url.startswith('https://'):
+            response.headers['X-Archived-Public-Url'] = download_url
+    return response
+
+
 def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: bytes, download_name: str, company_name: str | None = None, archive: bool = True):
     """Archive PDF copy (best-effort) and return download response.
 
@@ -3002,7 +3017,18 @@ def new_quotation():
         except Exception as exc:
             app.logger.exception('Quotation archive generation failed id=%s: %s', quotation.id, exc)
 
-        if not archived_path:
+        archived_url = None
+        if archived_path:
+            archived_url = _archived_download_url(
+                'cotizacion',
+                quotation.id,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+                full_path=archived_path,
+            )
+            if archived_url:
+                flash(f'PDF generado: {archived_url}')
+        else:
             flash('La cotización fue creada, pero el PDF no se pudo generar en este momento.')
 
         is_first_quotation = company_query(Quotation).count() == 1
@@ -3287,9 +3313,16 @@ def quotation_pdf(quotation_id):
     if archived.exists():
         _log_pdf_event('cotizacion', quotation.id, 'ok', 'servido desde generated_docs')
         try:
-            return send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
+            response = send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
         except TypeError:
-            return send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
+            response = send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
+        return _set_archived_headers(
+            response,
+            doc_type='cotizacion',
+            doc_number=quotation.id,
+            company_name=company.get('name'),
+            full_path=str(archived),
+        )
 
     try:
         pdf_data = _build_quotation_pdf_bytes(quotation, company)
