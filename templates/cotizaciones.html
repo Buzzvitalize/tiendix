@@ -2,7 +2,10 @@
 {% block title %}Cotizaciones{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-4">Cotizaciones</h1>
-<a href="{{ url_for('new_quotation') }}" class="btn-primary inline-block mb-4">Nueva Cotización</a>
+<div class="mb-4 action-bar">
+  <a href="{{ url_for('new_quotation') }}" class="action-btn is-primary">Nueva Cotización</a>
+  <a href="{{ url_for('new_service_quotation') }}" class="action-btn is-info">Nuevo Servicio</a>
+</div>
 <div class="max-w-4xl mx-auto space-y-3 mb-4">
   <form method="get" class="card p-4 flex flex-wrap items-end gap-2">
     <input type="hidden" name="status" value="{{ status or '' }}">
@@ -69,7 +72,10 @@
           </form>
           <a class="action-btn is-warning px-3 py-1 rounded-md text-white font-semibold" style="background-color:#d97706" href="{{ url_for('edit_quotation', quotation_id=q.id) }}">Editar</a>
           {% set expired = q.valid_until < now %}
-          {% if expired %}
+          {% set is_service = q.warehouse_id is none %}
+          {% if is_service %}
+            <span class="action-btn is-disabled px-3 py-1 rounded-md text-white font-semibold" style="background-color:#9ca3af">Sin pedido</span>
+          {% elif expired %}
             <span class="action-btn is-disabled px-3 py-1 rounded-md text-white font-semibold" style="background-color:#9ca3af">Crear Pedido</span>
           {% else %}
             <a class="action-btn is-success px-3 py-1 rounded-md text-white font-semibold" style="background-color:#16a34a" href="{{ url_for('quotation_to_order', quotation_id=q.id) }}">Crear Pedido</a>
