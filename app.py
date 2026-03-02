@@ -76,7 +76,7 @@ import importlib.util
 import hashlib
 import imghdr
 from ai import recommend_products
-from weasy_pdf import generate_pdf, generate_pdf_bytes
+from weasy_pdf import generate_pdf, generate_pdf_bytes, generate_service_pdf_bytes
 from account_pdf import generate_account_statement_pdf, generate_account_statement_pdf_bytes
 from functools import wraps
 from auth import auth_bp, generate_reset_token
@@ -332,6 +332,14 @@ MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', MAIL_USERNAME)
 MAIL_MAX_RETRIES = int(os.getenv('MAIL_MAX_RETRIES', 3))
 MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
 MAIL_CONNECT_TIMEOUT_SEC = float(os.getenv('MAIL_CONNECT_TIMEOUT_SEC', 8))
+LOW_STOCK_SCAN_INTERVAL_SEC = int(os.getenv('LOW_STOCK_SCAN_INTERVAL_SEC', 1800))
+LOW_STOCK_SCAN_MAX_ITEMS = int(os.getenv('LOW_STOCK_SCAN_MAX_ITEMS', 200))
+NOTIFICATION_REFRESH_INTERVAL_SEC = int(os.getenv('NOTIFICATION_REFRESH_INTERVAL_SEC', 120))
+ENABLE_LOW_STOCK_SCAN = str(os.getenv('ENABLE_LOW_STOCK_SCAN', '0')).strip().lower() in {'1','true','yes','on'}
+ENABLE_NOTIFICATIONS_CONTEXT = str(os.getenv('ENABLE_NOTIFICATIONS_CONTEXT', '1')).strip().lower() in {'1','true','yes','on'}
+ANNOUNCEMENT_REFRESH_INTERVAL_SEC = int(os.getenv('ANNOUNCEMENT_REFRESH_INTERVAL_SEC', 120))
+
+_active_announcement_cache = {'ts': 0, 'obj': None}
 
 
 def _strip_accents(value: str | None) -> str:
@@ -1270,6 +1278,45 @@ def calculate_totals(items):
     return subtotal, itbis, subtotal + itbis
 
 
+def build_service_items(service_names, service_descriptions, quantities, rates):
+    items = []
+    for idx, (name, description, qty_raw, rate_raw) in enumerate(zip(service_names, service_descriptions, quantities, rates), start=1):
+        service_name = (name or '').strip()
+        service_desc = (description or '').strip()
+        qty = max(_to_int(qty_raw), 1)
+        rate = max(_to_float(rate_raw), 0.0)
+        if not service_name and not service_desc:
+            continue
+        label = service_name or f"Servicio {idx}"
+        combined_name = f"{label}: {service_desc}" if service_desc else label
+        items.append({
+            'code': str(len(items) + 1),
+            'reference': '',
+            'product_name': combined_name,
+            'unit': 'Servicio',
+            'unit_price': rate,
+            'quantity': qty,
+            'discount': 0.0,
+            'category': 'Servicios',
+            'has_itbis': False,
+            'company_id': current_company_id(),
+        })
+    return items
+
+
+def _quotation_doc_type(quotation: Quotation) -> str:
+    # Backward-compatible detection: only treat as service when warehouse is empty
+    # and items were explicitly created as service lines.
+    if quotation.warehouse_id is not None:
+        return 'cotizacion'
+    items = list(getattr(quotation, 'items', []) or [])
+    if not items:
+        return 'cotizacion'
+    if all((getattr(i, 'category', '') or '').lower() == 'servicios' for i in items):
+        return 'servicios'
+    return 'cotizacion'
+
+
 def build_items(product_ids, quantities, discounts):
     # Convert the list of product ids to integers, ignoring any non-numeric
     # values that may come from malformed form submissions. Previously a
@@ -1352,47 +1399,71 @@ def inject_company():
     active_announcement = None
     try:
         cid = current_company_id()
-        if 'user_id' in session and cid:
-            # Avoid expensive inventory scans on every request.
-            # Refresh low-stock notifications at most once every 5 minutes per session.
+        if 'user_id' in session and cid and ENABLE_NOTIFICATIONS_CONTEXT:
             now_ts = int(time.time())
-            last_scan = session.get('low_stock_scan_at', 0)
-            if now_ts - last_scan >= 300:
-                low_stock = (
-                    company_query(ProductStock)
-                    .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
+
+            # Optional background-like scan for low stock; disabled by default to protect worker capacity.
+            if ENABLE_LOW_STOCK_SCAN:
+                last_scan = session.get('low_stock_scan_at', 0)
+                if now_ts - last_scan >= LOW_STOCK_SCAN_INTERVAL_SEC:
+                    low_stock = (
+                        company_query(ProductStock)
+                        .join(Product, Product.id == ProductStock.product_id)
+                        .options(load_only(ProductStock.id, ProductStock.product_id), joinedload(ProductStock.product).load_only(Product.name))
+                        .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
+                        .limit(LOW_STOCK_SCAN_MAX_ITEMS)
+                        .all()
+                    )
+                    if low_stock:
+                        messages = [f"Stock bajo: {ps.product.name}" for ps in low_stock if ps.product and ps.product.name]
+                        existing_messages = {
+                            row[0]
+                            for row in db.session.query(Notification.message)
+                            .filter(Notification.company_id == cid, Notification.message.in_(messages))
+                            .all()
+                        } if messages else set()
+                        for msg in messages:
+                            if msg not in existing_messages:
+                                db.session.add(Notification(company_id=cid, message=msg))
+                        if len(messages) != len(existing_messages):
+                            db.session.commit()
+                    session['low_stock_scan_at'] = now_ts
+
+            # Throttle notification queries to reduce DB pressure under concurrent load.
+            last_notif_refresh = session.get('notif_refresh_at', 0)
+            if now_ts - last_notif_refresh >= NOTIFICATION_REFRESH_INTERVAL_SEC:
+                notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
+                session['notif_refresh_at'] = now_ts
+                session['notif_count_cache'] = int(notif_count)
+            else:
+                notif_count = int(session.get('notif_count_cache', 0) or 0)
+
+            # Load notification lists only on the notifications page.
+            if request.path.startswith('/notificaciones'):
+                unread_notifications = (
+                    Notification.query
+                    .filter_by(company_id=cid, is_read=False)
+                    .order_by(Notification.created_at.desc())
+                    .limit(30)
                     .all()
                 )
-                for ps in low_stock:
-                    msg = f"Stock bajo: {ps.product.name}"
-                    exists = Notification.query.filter_by(company_id=cid, message=msg).first()
-                    if not exists:
-                        db.session.add(Notification(company_id=cid, message=msg))
-                if low_stock:
-                    db.session.commit()
-                session['low_stock_scan_at'] = now_ts
-
-            notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
-            unread_notifications = (
-                Notification.query
-                .filter_by(company_id=cid, is_read=False)
-                .order_by(Notification.created_at.desc())
-                .limit(30)
-                .all()
+                archived_notifications = (
+                    Notification.query
+                    .filter_by(company_id=cid, is_read=True)
+                    .order_by(*_archived_notification_ordering())
+                    .limit(50)
+                    .all()
+                )
+        ann_now = int(time.time())
+        if ann_now - int(_active_announcement_cache.get('ts', 0) or 0) >= ANNOUNCEMENT_REFRESH_INTERVAL_SEC:
+            _active_announcement_cache['obj'] = (
+                SystemAnnouncement.query
+                .filter_by(is_active=True)
+                .order_by(SystemAnnouncement.updated_at.desc())
+                .first()
             )
-            archived_notifications = (
-                Notification.query
-                .filter_by(company_id=cid, is_read=True)
-                .order_by(*_archived_notification_ordering())
-                .limit(50)
-                .all()
-            )
-        active_announcement = (
-            SystemAnnouncement.query
-            .filter_by(is_active=True)
-            .order_by(SystemAnnouncement.updated_at.desc())
-            .first()
-        )
+            _active_announcement_cache['ts'] = ann_now
+        active_announcement = _active_announcement_cache.get('obj')
     except Exception as exc:
         app.logger.exception('Failed to compute notifications: %s', exc)
     return {
@@ -1442,7 +1513,7 @@ def _doc_client_slug(doc_type: str, doc_number: int | str, *, company_id: int | 
     cid = company_id if company_id is not None else current_company_id()
     try:
         n = int(doc_number)
-        if doc_type == 'cotizacion':
+        if doc_type in ('cotizacion', 'servicios'):
             rec = company_query(Quotation).filter_by(id=n).first()
             raw_name = rec.client.name if rec and rec.client else ''
         elif doc_type == 'pedido':
@@ -1467,7 +1538,7 @@ def _doc_date_parts(doc_type: str, doc_number: int | str) -> tuple[int, int, int
     if str(doc_number).isdigit():
         try:
             n = int(doc_number)
-            if doc_type == 'cotizacion':
+            if doc_type in ('cotizacion', 'servicios'):
                 rec = company_query(Quotation).filter_by(id=n).first()
                 dt = rec.date if rec else None
             elif doc_type == 'pedido':
@@ -1523,19 +1594,12 @@ def _resolve_archived_pdf_path(doc_type: str, doc_number: int | str, *, company_
 
 
 def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> str | None:
-    base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
-    if not base_url:
-        return None
-    parsed = urlparse(base_url)
-    if not parsed.scheme:
-        base_url = f"https://{base_url.lstrip('/')}".rstrip('/')
-    cid = company_id if company_id is not None else current_company_id()
-    name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
-    short = _company_short_slug(name)
-    token = _company_private_token(cid, name)
-    safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
-    stem = _doc_file_stem(doc_type, doc_number, company_name=name, company_id=cid)
-    return f"{base_url}/{short}/{token}/{safe_type}/{stem}.pdf"
+    return _archived_download_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=company_id,
+    )
 
 
 def _archive_root_dir() -> Path:
@@ -1581,6 +1645,32 @@ def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | No
             f"Condiciones: Esta cotizacion es valida por {validity_days} dias a partir de la fecha de emision. "
             "Los precios estan sujetos a cambios sin previo aviso. "
             "El ITBIS ha sido calculado conforme a la ley vigente."
+        ),
+    )
+
+
+def _build_service_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
+    validity_days = 30
+    if quotation.valid_until and quotation.date:
+        try:
+            validity_days = max((quotation.valid_until.date() - quotation.date.date()).days, 1)
+        except Exception:
+            validity_days = 30
+    return generate_service_pdf_bytes(
+        'Servicio',
+        company,
+        quotation.client,
+        quotation.items,
+        quotation.total,
+        seller=quotation.seller,
+        payment_method=quotation.payment_method,
+        bank=quotation.bank,
+        doc_number=quotation.id,
+        note=quotation.note,
+        date=quotation.date,
+        valid_until=quotation.valid_until,
+        footer=(
+            f"Condiciones: Este servicio es valido por {validity_days} dias a partir de la fecha de emision."
         ),
     )
 
@@ -1640,7 +1730,7 @@ def _ensure_company_archive_dirs(company_id: int | None, company_name: str | Non
         short = _company_short_slug(company_name)
         token = _company_private_token(company_id, company_name)
         base = _archive_root_dir() / short / token
-        for doc_type in ('cotizacion', 'pedido', 'factura', 'estado_cuenta', 'reporte', 'reportes'):
+        for doc_type in ('cotizacion', 'servicios', 'pedido', 'factura', 'estado_cuenta', 'reporte', 'reportes'):
             (base / doc_type).mkdir(parents=True, exist_ok=True)
     except Exception as exc:
         app.logger.warning('Could not create company PDF directories (%s): %s', company_id, exc)
@@ -3221,15 +3311,16 @@ def list_quotations():
     )
     archived_urls = {}
     for q in quotations.items:
+        doc_type = _quotation_doc_type(q)
         archived = _resolve_archived_pdf_path(
-            'cotizacion',
+            doc_type,
             q.id,
             company_name=(getattr(g, 'company', None).name if getattr(g, 'company', None) else None),
             company_id=current_company_id(),
         )
         if archived.exists():
             url = _archived_download_url(
-                'cotizacion',
+                doc_type,
                 q.id,
                 company_name=(getattr(g, 'company', None).name if getattr(g, 'company', None) else None),
                 company_id=current_company_id(),
@@ -3251,7 +3342,6 @@ def list_quotations():
 @app.route('/cotizaciones/nueva', methods=['GET', 'POST'])
 def new_quotation():
     if request.method == 'POST':
-        print('Form data:', dict(request.form))
         client_id = request.form.get('client_id')
         if not client_id:
             flash('Debe seleccionar un cliente registrado')
@@ -3338,6 +3428,75 @@ def new_quotation():
     warehouses = company_query(Warehouse).order_by(Warehouse.name).all()
     sellers = company_query(User).options(load_only(User.id, User.first_name, User.last_name)).all()
     return render_template('cotizacion.html', clients=clients, products=products, warehouses=warehouses, sellers=sellers, validity_options=QUOTATION_VALIDITY_OPTIONS)
+
+
+@app.route('/cotizaciones/nuevo-servicio', methods=['GET', 'POST'])
+def new_service_quotation():
+    if request.method == 'POST':
+        client_id = request.form.get('client_id')
+        if not client_id:
+            flash('Debe seleccionar un cliente registrado')
+            return redirect(url_for('list_quotations'))
+        client = company_get(Client, client_id)
+        items = build_service_items(
+            request.form.getlist('service_name[]'),
+            request.form.getlist('service_description[]'),
+            request.form.getlist('service_quantity[]'),
+            request.form.getlist('service_rate[]'),
+        )
+        if not items:
+            flash('Debe agregar al menos un servicio')
+            return redirect(url_for('new_service_quotation'))
+
+        subtotal, itbis, total = calculate_totals(items)
+        payment_method = request.form.get('payment_method')
+        bank = request.form.get('bank') if payment_method == 'Transferencia' else None
+        date = dom_now()
+        validity_days = _quotation_validity_days(request.form.get('validity_period'))
+        valid_until = date + timedelta(days=validity_days)
+        quotation = Quotation(
+            client_id=client.id,
+            subtotal=subtotal,
+            itbis=itbis,
+            total=total,
+            seller=request.form.get('seller'),
+            payment_method=payment_method,
+            bank=bank,
+            note=request.form.get('note'),
+            warehouse_id=None,
+            company_id=current_company_id(),
+            date=date,
+            valid_until=valid_until,
+        )
+        db.session.add(quotation)
+        db.session.flush()
+        for it in items:
+            db.session.add(QuotationItem(quotation_id=quotation.id, **it))
+        db.session.commit()
+
+        flash('Servicio guardado')
+        notify('Servicio guardado')
+        log_audit('service_create', 'quotation', quotation.id, details=f'client={client.id};total={total:.2f}')
+
+        company = get_company_info()
+        try:
+            service_pdf_bytes = _build_service_quotation_pdf_bytes(quotation, company)
+            _archive_pdf_copy(
+                'servicios',
+                quotation.id,
+                service_pdf_bytes,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+            )
+        except Exception as exc:
+            app.logger.exception('Service quote archive generation failed id=%s: %s', quotation.id, exc)
+
+        return redirect(url_for('list_quotations'))
+
+    clients = company_query(Client).options(load_only(Client.id, Client.name, Client.identifier)).all()
+    sellers = company_query(User).options(load_only(User.id, User.first_name, User.last_name)).all()
+    return render_template('cotizacion_servicio.html', clients=clients, sellers=sellers, validity_options=QUOTATION_VALIDITY_OPTIONS)
+
 
 @app.route('/cotizaciones/editar/<int:quotation_id>', methods=['GET', 'POST'])
 def edit_quotation(quotation_id):
@@ -3586,49 +3745,50 @@ def settings_manage_users():
 def quotation_pdf(quotation_id):
     quotation = company_get(Quotation, quotation_id)
     company = get_company_info()
-    filename = f'cotizacion_{quotation_id}.pdf'
+    doc_type = _quotation_doc_type(quotation)
+    filename = f'{doc_type}_{quotation_id}.pdf'
     app.logger.info("Generating quotation PDF %s", quotation_id)
 
     archived = _resolve_archived_pdf_path(
-        'cotizacion',
+        doc_type,
         quotation.id,
         company_name=company.get('name'),
         company_id=current_company_id(),
     )
     if archived.exists():
-        _log_pdf_event('cotizacion', quotation.id, 'ok', 'servido desde generated_docs')
+        _log_pdf_event(doc_type, quotation.id, 'ok', 'servido desde generated_docs')
         try:
             response = send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
         except TypeError:
             response = send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
         return _set_archived_headers(
             response,
-            doc_type='cotizacion',
+            doc_type=doc_type,
             doc_number=quotation.id,
             company_name=company.get('name'),
             full_path=str(archived),
         )
 
     try:
-        pdf_data = _build_quotation_pdf_bytes(quotation, company)
+        pdf_data = _build_service_quotation_pdf_bytes(quotation, company) if doc_type == 'servicios' else _build_quotation_pdf_bytes(quotation, company)
         response = _archive_and_send_pdf(
-            doc_type='cotizacion',
+            doc_type=doc_type,
             doc_number=quotation.id,
             pdf_data=pdf_data,
             download_name=filename,
             company_name=company.get('name'),
         )
-        _log_pdf_event('cotizacion', quotation.id, 'ok', 'pdf generado y entregado')
+        _log_pdf_event(doc_type, quotation.id, 'ok', 'pdf generado y entregado')
         return response
     except Exception as exc:
         app.logger.exception('Quotation PDF generation failed id=%s: %s', quotation_id, exc)
         if archived.exists():
-            _log_pdf_event('cotizacion', quotation.id, 'fallback_ok', f'generacion fallo: {exc}; servido desde archivo')
+            _log_pdf_event(doc_type, quotation.id, 'fallback_ok', f'generacion fallo: {exc}; servido desde archivo')
             try:
                 return send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
             except TypeError:
                 return send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
-        _log_pdf_event('cotizacion', quotation.id, 'error', f'generacion fallo y no existe archivo: {exc}')
+        _log_pdf_event(doc_type, quotation.id, 'error', f'generacion fallo y no existe archivo: {exc}')
         return ('No se pudo generar el PDF', 500)
 
 
@@ -3640,17 +3800,20 @@ def send_quotation_email(quotation_id):
         flash('El cliente no tiene correo registrado')
         return redirect(url_for('list_quotations'))
     company = get_company_info()
+    doc_type = _quotation_doc_type(quotation)
+    is_service = doc_type == 'servicios'
     validity_days = max((quotation.valid_until.date() - quotation.date.date()).days, 1) if quotation.valid_until and quotation.date else 30
-    download_url = _document_download_url('cotizacion', quotation.id, company_name=company.get('name'))
+    download_url = _document_download_url(doc_type, quotation.id, company_name=company.get('name'))
     if not download_url:
         download_url = url_for('quotation_pdf', quotation_id=quotation.id, _external=True)
-    email_ref = _document_email_reference(download_url, 'cotizacion', quotation.id, company_name=company.get('name'))
-    subject = _document_email_subject(company.get('name', 'Empresa'), 'cotizacion', email_ref, validity_days=validity_days)
+    email_ref = _document_email_reference(download_url, doc_type, quotation.id, company_name=company.get('name'))
+    doc_label = 'servicio' if is_service else 'cotizacion'
+    subject = _document_email_subject(company.get('name', 'Empresa'), doc_label, email_ref, validity_days=validity_days)
     html = render_template(
         'emails/document_send.html',
         company=company,
         client=client,
-        doc_label='cotizacion',
+        doc_label=doc_label,
         doc_number=email_ref,
         download_url=download_url,
         show_validity=True,
@@ -3663,6 +3826,9 @@ def send_quotation_email(quotation_id):
 @app.route('/cotizaciones/<int:quotation_id>/convertir', methods=['GET', 'POST'])
 def quotation_to_order(quotation_id):
     quotation = company_get(Quotation, quotation_id)
+    if _quotation_doc_type(quotation) == 'servicios':
+        flash('Los servicios no requieren crear pedido desde inventario')
+        return redirect(url_for('list_quotations'))
     warehouses = company_query(Warehouse).all()
     if request.method == 'GET':
         return render_template('quotation_convert.html', quotation=quotation, warehouses=warehouses)
@@ -3993,7 +4159,11 @@ def download_generated_doc(filename):
         return ('Not Found', 404)
     base = _archive_root_dir().resolve()
     file_path = (base / filename).resolve()
-    if not str(file_path).startswith(str(base)) or not file_path.exists():
+    if (
+        not str(file_path).startswith(str(base))
+        or not file_path.exists()
+        or not file_path.is_file()
+    ):
         return ('Not Found', 404)
     return send_file(str(file_path), as_attachment=True, mimetype='application/pdf')
 
