@@ -3,13 +3,27 @@
 <h1 class="text-2xl font-bold mb-4">Convertir Cotización</h1>
 <form method="post" class="space-y-4 max-w-md">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <p class="mb-2">Seleccione el almacén origen para los productos.</p>
-  <select name="warehouse_id" class="input" required>
-    {% for w in warehouses %}
-    <option value="{{ w.id }}" {% if quotation.warehouse_id == w.id %}selected{% endif %}>{{ w.name }}</option>
-    {% endfor %}
-  </select>
-  <input name="customer_po" placeholder="Orden de compra del cliente" class="input" value="{{ quotation.order.customer_po if quotation.order else '' }}">
+
+  <div class="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+    <p class="font-semibold">Orden de compra (opcional)</p>
+    <p>No es necesario llenar este campo si no tienes una orden de compra. Es solo una guía y puedes dejarlo vacío.</p>
+  </div>
+
+  <div>
+    <label for="warehouse_id" class="block text-sm font-medium text-gray-700 mb-1">Almacén de salida</label>
+    <p class="text-xs text-gray-500 mb-2">Asegúrate de seleccionar el almacén correcto desde donde se descontará la existencia de los productos al convertir la cotización.</p>
+    <select id="warehouse_id" name="warehouse_id" class="input" required>
+      {% for w in warehouses %}
+      <option value="{{ w.id }}" {% if quotation.warehouse_id == w.id %}selected{% endif %}>{{ w.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label for="customer_po" class="block text-sm font-medium text-gray-700 mb-1">Orden de compra del cliente</label>
+    <input id="customer_po" name="customer_po" placeholder="Ej.: OC-2026-001 (opcional)" class="input" value="{{ quotation.order.customer_po if quotation.order else '' }}">
+  </div>
+
   <button type="submit" class="btn-primary">Convertir</button>
 </form>
 {% endblock %}

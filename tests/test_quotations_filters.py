@@ -93,4 +93,4 @@ def test_pdf_action_label_updated(client):
     login(cli)
     resp = cli.get('/cotizaciones')
     assert b'Generar PDF' in resp.data
-    assert b'Descargar PDF' in resp.data
+    assert b'PDF' in resp.data

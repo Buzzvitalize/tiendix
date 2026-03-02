@@ -159,8 +159,8 @@ def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_numbe
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Helvetica', '', 10)
     if doc_number is not None:
-        _cell(pdf, 0, 5, _safe_text(f"{title} N° {doc_number}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    _cell(pdf, 0, 5, _safe_text(f"Fecha de creación: {date.strftime('%d/%m/%Y %I:%M %p')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"{title} No. {doc_number}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    _cell(pdf, 0, 5, _safe_text(f"Fecha de creacion: {date.strftime('%d/%m/%Y %I:%M %p')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if ncf:
         _cell(pdf, 0, 5, _safe_text(f"NCF: {ncf}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if valid_until:

@@ -10,7 +10,7 @@ from flask import (
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from forms import LoginForm, ResetRequestForm
-from models import User, db
+from models import User, AppSetting, db
 from sqlalchemy import func
 
 auth_bp = Blueprint('auth', __name__)
@@ -78,7 +78,12 @@ def login():
         from app import log_audit
         log_audit('login_failed', 'auth', status='fail', details=f'username={username or ""}')
         flash('Credenciales inválidas', 'login')
-    return render_template('login.html', form=form, company=None)
+    social_links = {}
+    for network in ('facebook', 'instagram', 'whatsapp', 'telegram', 'youtube', 'linkedin'):
+        key = f'login_social_{network}'
+        setting = db.session.get(AppSetting, key)
+        social_links[network] = setting.value.strip() if setting and setting.value else ''
+    return render_template('login.html', form=form, company=None, social_links=social_links)
 
 @auth_bp.route('/logout')
 def logout():

@@ -8,3 +8,18 @@
 .nav-link:hover{background-color:#374151}
 .input{border:1px solid #d1d5db;border-radius:.375rem;padding:.5rem .75rem;width:100%;transition:border-color .2s,box-shadow .2s}
 .input:focus{outline:none;box-shadow:0 0 0 2px #2563eb;border-color:#2563eb}
+
+
+/* Responsive polish for phones/tablets */
+@media (max-width: 1024px){
+  .card{padding:1rem}
+}
+
+@media (max-width: 768px){
+  .text-2xl{font-size:1.35rem!important;line-height:1.75rem!important}
+  .text-xl{font-size:1.15rem!important;line-height:1.5rem!important}
+  .btn-primary,.btn-secondary{font-size:.9rem;padding:.45rem .75rem}
+  .input{font-size:.95rem;padding:.5rem .65rem}
+  table{display:block;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap}
+  thead,tbody,tr{width:100%}
+}

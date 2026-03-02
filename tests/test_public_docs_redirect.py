@@ -55,7 +55,8 @@ def test_first_quotation_redirects_to_public_docs_url(tmp_path):
 
     assert resp.status_code == 302
     assert resp.headers['Location'].startswith('https://app.ecosea.do/eco-sea-srl/')
-    assert '/cotizacion/01.pdf' in resp.headers['Location']
+    assert '/cotizacion/' in resp.headers['Location']
+    assert '/cotizacion/01.pdf' not in resp.headers['Location']
     token = resp.headers['Location'].split('/')[4]
     assert len(token) == 6
     assert token.isdigit()

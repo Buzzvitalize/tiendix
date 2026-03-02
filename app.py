@@ -132,12 +132,12 @@ app = Flask(__name__)
 APP_ENV = os.getenv('APP_ENV', 'development').strip().lower()
 
 
-APP_VERSION = os.getenv('APP_VERSION', '2.0.5').strip() or '2.0.5'
+APP_VERSION = os.getenv('APP_VERSION', '2.0.8').strip() or '2.0.8'
 APP_VERSION_HIGHLIGHTS = [
-    'Conexión MySQL/cPanel simplificada con soporte DB_* y DATABASE_URL.',
-    'Reportar Problema, anuncios del sistema y panel administrativo ampliado.',
-    'Renderizado PDF con fpdf2 para descargas más estables en hosting compartido.',
-    'Refuerzo de seguridad: validación runtime, bloqueo de rutas sensibles y mejoras de auditoría.',
+    '2026-03-02 · Ajustes de UX en Convertir Cotización: notas de Orden de Compra y guía de almacén.',
+    '2026-03-02 · Corrección de envío de correos SMTP para SSL/TLS (cPanel puerto 465).',
+    '2026-03-01 · Renderizado PDF con fpdf2 para descargas más estables en hosting compartido.',
+    '2026-03-01 · Refuerzo de seguridad: validación runtime, bloqueo de rutas sensibles y mejoras de auditoría.',
 ]
 
 def _normalized_database_url(url: str | None) -> str | None:
@@ -189,6 +189,46 @@ if database_url:
     os.environ['DATABASE_URL'] = database_url
 
 
+
+
+def _configure_sqlalchemy_engine_options(config: dict):
+    """Tune SQLAlchemy pool settings for MySQL/cPanel stability."""
+    uri = config.get('SQLALCHEMY_DATABASE_URI') or ''
+    if not isinstance(uri, str) or not uri.startswith('mysql+'):
+        return
+
+    recycle_seconds_raw = (os.getenv('DB_POOL_RECYCLE_SECONDS') or '280').strip()
+    try:
+        recycle_seconds = max(int(recycle_seconds_raw), 30)
+    except ValueError:
+        recycle_seconds = 280
+
+    pool_size_raw = (os.getenv('DB_POOL_SIZE') or '5').strip()
+    max_overflow_raw = (os.getenv('DB_MAX_OVERFLOW') or '10').strip()
+    try:
+        pool_size = max(int(pool_size_raw), 1)
+    except ValueError:
+        pool_size = 5
+    try:
+        max_overflow = max(int(max_overflow_raw), 0)
+    except ValueError:
+        max_overflow = 10
+
+    timeout_raw = (os.getenv('DB_POOL_TIMEOUT_SECONDS') or '30').strip()
+    try:
+        pool_timeout = max(int(timeout_raw), 5)
+    except ValueError:
+        pool_timeout = 30
+
+    config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': recycle_seconds,
+        'pool_size': pool_size,
+        'max_overflow': max_overflow,
+        'pool_timeout': pool_timeout,
+        'pool_use_lifo': True,
+    }
+
 def _apply_database_uri_override(config: dict, resolved_url: str | None):
     """Ensure runtime config uses resolved DB URL even after class import-time defaults."""
     if resolved_url:
@@ -204,6 +244,7 @@ app.config.from_object(config_map.get(APP_ENV, DevelopmentConfig))
 _apply_database_uri_override(app.config, database_url)
 app.config['APP_ENV'] = APP_ENV
 validate_runtime_config(app.config)
+_configure_sqlalchemy_engine_options(app.config)
 
 SENSITIVE_PATHS = {
     'app.py',
@@ -290,6 +331,17 @@ MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', MAIL_USERNAME)
 MAIL_MAX_RETRIES = int(os.getenv('MAIL_MAX_RETRIES', 3))
 MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+MAIL_USE_SSL = _env_bool('MAIL_USE_SSL', False)
+MAIL_USE_TLS = _env_bool('MAIL_USE_TLS', True)
+
 EMAIL_METRICS = {
     'queued': 0,
     'sent': 0,
@@ -319,9 +371,11 @@ def _deliver_email(to, subject, html, attachments=None):
 
     for attempt in range(1, MAIL_MAX_RETRIES + 1):
         try:
-            with smtplib.SMTP(MAIL_SERVER, MAIL_PORT) as s:
-                if MAIL_USERNAME and MAIL_PASSWORD:
+            smtp_cls = smtplib.SMTP_SSL if MAIL_USE_SSL else smtplib.SMTP
+            with smtp_cls(MAIL_SERVER, MAIL_PORT) as s:
+                if MAIL_USE_TLS and not MAIL_USE_SSL:
                     s.starttls()
+                if MAIL_USERNAME and MAIL_PASSWORD:
                     s.login(MAIL_USERNAME, MAIL_PASSWORD)
                 s.sendmail(MAIL_DEFAULT_SENDER, [to], msg.as_string())
             EMAIL_METRICS['sent'] += 1
@@ -367,6 +421,24 @@ def _fmt_money(value):
 app.jinja_env.filters['money'] = _fmt_money
 
 
+
+def _document_download_url(doc_type: str, doc_number: int, company_name: str | None = None) -> str | None:
+    archived = _resolve_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=current_company_id())
+    if not archived.exists():
+        return None
+    return _archived_download_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=current_company_id(),
+        full_path=str(archived),
+    )
+
+
+def _document_email_subject(company_name: str, doc_label: str, doc_number: int, validity_days: int | None = None) -> str:
+    if validity_days is not None:
+        return f"{company_name} - Le acaba de enviar una {doc_label} #{doc_number}, con tiempo de vigencia de {validity_days} dias"
+    return f"{company_name} - Le acaba de enviar una {doc_label} #{doc_number}"
 
 def _module_available(module_name: str) -> bool:
     try:
@@ -699,6 +771,14 @@ def _migrate_legacy_schema():
                 "ALTER TABLE inventory_movement ADD COLUMN executed_by INTEGER REFERENCES user(id)"
             )
 
+    if inspector.has_table('notification'):
+        try:
+            notif_cols = {c['name'] for c in inspector.get_columns('notification')}
+        except NoSuchTableError:  # pragma: no cover
+            notif_cols = set()
+        if 'read_at' not in notif_cols:
+            statements.append("ALTER TABLE notification ADD COLUMN read_at DATETIME")
+
     if inspector.has_table('quotation'):
         try:
             quote_cols = {c['name'] for c in inspector.get_columns('quotation')}
@@ -849,11 +929,54 @@ def ensure_admin():
 
 # Run migrations when the module is imported so that new fields are available
 # even if ``flask db upgrade`` wasn't executed manually.
-run_auto_migrations()
+def _is_auto_run_migrations_enabled() -> bool:
+    value = os.getenv('AUTO_RUN_MIGRATIONS')
+    if value is None:
+        return True
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+AUTO_RUN_MIGRATIONS = _is_auto_run_migrations_enabled()
+if AUTO_RUN_MIGRATIONS:
+    run_auto_migrations()
+else:
+    app.logger.info('AUTO_RUN_MIGRATIONS disabled: skipping startup Alembic upgrade; schema changes must be applied manually.')
 
 
 SIGNUP_AUTO_APPROVE_KEY = 'signup_auto_approve'
 
+
+
+LOGIN_SOCIAL_LINK_KEYS = {
+    'facebook': 'login_social_facebook',
+    'instagram': 'login_social_instagram',
+    'whatsapp': 'login_social_whatsapp',
+    'telegram': 'login_social_telegram',
+    'youtube': 'login_social_youtube',
+    'linkedin': 'login_social_linkedin',
+}
+
+
+def get_login_social_links() -> dict[str, str]:
+    links: dict[str, str] = {}
+    for network, key in LOGIN_SOCIAL_LINK_KEYS.items():
+        setting = db.session.get(AppSetting, key)
+        links[network] = (setting.value.strip() if setting and setting.value else '')
+    return links
+
+
+def _set_login_social_links_from_form(form_data) -> dict[str, str]:
+    links = {}
+    for network, key in LOGIN_SOCIAL_LINK_KEYS.items():
+        value = (form_data.get(f'social_{network}') or '').strip()
+        links[network] = value
+        setting = db.session.get(AppSetting, key)
+        if not setting:
+            setting = AppSetting(key=key, value=value)
+            db.session.add(setting)
+        else:
+            setting.value = value
+    return links
 
 def _is_signup_auto_approve_enabled() -> bool:
     setting = db.session.get(AppSetting, SIGNUP_AUTO_APPROVE_KEY)
@@ -1186,6 +1309,8 @@ def load_company():
 @app.context_processor
 def inject_company():
     notif_count = 0
+    unread_notifications = []
+    archived_notifications = []
     active_announcement = None
     try:
         cid = current_company_id()
@@ -1210,6 +1335,20 @@ def inject_company():
                 session['low_stock_scan_at'] = now_ts
 
             notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
+            unread_notifications = (
+                Notification.query
+                .filter_by(company_id=cid, is_read=False)
+                .order_by(Notification.created_at.desc())
+                .limit(30)
+                .all()
+            )
+            archived_notifications = (
+                Notification.query
+                .filter_by(company_id=cid, is_read=True)
+                .order_by(Notification.read_at.desc().nullslast(), Notification.created_at.desc())
+                .limit(50)
+                .all()
+            )
         active_announcement = (
             SystemAnnouncement.query
             .filter_by(is_active=True)
@@ -1221,6 +1360,8 @@ def inject_company():
     return {
         'company': getattr(g, 'company', None),
         'notification_count': notif_count,
+        'unread_notifications': unread_notifications,
+        'archived_notifications': archived_notifications,
         'current_dom_time': dom_now().strftime('%d/%m/%Y %I:%M %p'),
         'active_announcement': active_announcement,
         'app_version': APP_VERSION,
@@ -1257,6 +1398,92 @@ def _company_private_token(company_id: int | None, company_name: str | None) -> 
     return f"{token_number:06d}"
 
 
+def _doc_client_slug(doc_type: str, doc_number: int | str, *, company_id: int | None = None) -> str:
+    if not str(doc_number).isdigit():
+        return 'documento'
+    cid = company_id if company_id is not None else current_company_id()
+    try:
+        n = int(doc_number)
+        if doc_type == 'cotizacion':
+            rec = company_query(Quotation).filter_by(id=n).first()
+            raw_name = rec.client.name if rec and rec.client else ''
+        elif doc_type == 'pedido':
+            rec = company_query(Order).filter_by(id=n).first()
+            raw_name = rec.client.name if rec and rec.client else ''
+        elif doc_type == 'factura':
+            rec = company_query(Invoice).filter_by(id=n).first()
+            raw_name = rec.client.name if rec and rec.client else ''
+        elif doc_type == 'estado_cuenta':
+            rec = company_query(Client).filter_by(id=n).first()
+            raw_name = rec.name if rec else ''
+        else:
+            raw_name = ''
+        first_name = (raw_name or '').strip().split(' ')[0] if raw_name else ''
+        safe = secure_filename(first_name.lower())
+        return safe or 'documento'
+    except Exception:
+        return 'documento'
+
+
+def _doc_date_parts(doc_type: str, doc_number: int | str) -> tuple[int, int, int]:
+    if str(doc_number).isdigit():
+        try:
+            n = int(doc_number)
+            if doc_type == 'cotizacion':
+                rec = company_query(Quotation).filter_by(id=n).first()
+                dt = rec.date if rec else None
+            elif doc_type == 'pedido':
+                rec = company_query(Order).filter_by(id=n).first()
+                dt = rec.date if rec else None
+            elif doc_type == 'factura':
+                rec = company_query(Invoice).filter_by(id=n).first()
+                dt = rec.date if rec else None
+            else:
+                dt = None
+            if dt is not None:
+                return int(dt.day), int(dt.month), int(dt.year)
+        except Exception:
+            pass
+    now = dom_now()
+    return int(now.day), int(now.month), int(now.year)
+
+
+def _doc_security_pin(doc_type: str, doc_number: int | str, *, company_id: int | None = None, company_name: str | None = None) -> str:
+    cid = company_id if company_id is not None else current_company_id()
+    seed = f"{app.config.get('SECRET_KEY','tiendix')}|{cid}|{company_name or ''}|{doc_type}|{doc_number}"
+    number = int(hashlib.sha256(seed.encode('utf-8')).hexdigest(), 16) % 10000
+    return f"{number:04d}"
+
+
+def _doc_file_stem(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> str:
+    if not str(doc_number).isdigit():
+        return secure_filename(str(doc_number)) or 'documento'
+    client_slug = _doc_client_slug(doc_type, doc_number, company_id=company_id)
+    pin = _doc_security_pin(doc_type, doc_number, company_id=company_id, company_name=company_name)
+    day, month, year = _doc_date_parts(doc_type, doc_number)
+    return f"{client_slug}{pin}-{day}-{month}-{year}"
+
+
+def _legacy_archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> Path:
+    cid = company_id if company_id is not None else current_company_id()
+    name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    short = _company_short_slug(name)
+    token = _company_private_token(cid, name)
+    safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
+    return _archive_root_dir() / short / token / safe_type / f"{number}.pdf"
+
+
+def _resolve_archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> Path:
+    current = _archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)
+    if current.exists():
+        return current
+    legacy = _legacy_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)
+    if legacy.exists():
+        return legacy
+    return current
+
+
 def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> str | None:
     base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
     if not base_url:
@@ -1269,8 +1496,8 @@ def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str |
     short = _company_short_slug(name)
     token = _company_private_token(cid, name)
     safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
-    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
-    return f"{base_url}/{short}/{token}/{safe_type}/{number}.pdf"
+    stem = _doc_file_stem(doc_type, doc_number, company_name=name, company_id=cid)
+    return f"{base_url}/{short}/{token}/{safe_type}/{stem}.pdf"
 
 
 def _archive_root_dir() -> Path:
@@ -1286,11 +1513,17 @@ def _archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: st
     short = _company_short_slug(name)
     token = _company_private_token(cid, name)
     safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
-    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
-    return _archive_root_dir() / short / token / safe_type / f"{number}.pdf"
+    stem = _doc_file_stem(doc_type, doc_number, company_name=name, company_id=cid)
+    return _archive_root_dir() / short / token / safe_type / f"{stem}.pdf"
 
 
 def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
+    validity_days = 30
+    if quotation.valid_until and quotation.date:
+        try:
+            validity_days = max((quotation.valid_until.date() - quotation.date.date()).days, 1)
+        except Exception:
+            validity_days = 30
     return generate_pdf_bytes(
         'Cotizacion',
         company,
@@ -1307,8 +1540,8 @@ def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | No
         date=quotation.date,
         valid_until=quotation.valid_until,
         footer=(
-            "Condiciones: Esta cotizacion es valida por 30 dias a partir de la fecha de emision. "
-            "Los precios están sujetos a cambios sin previo aviso. "
+            f"Condiciones: Esta cotizacion es valida por {validity_days} dias a partir de la fecha de emision. "
+            "Los precios estan sujetos a cambios sin previo aviso. "
             "El ITBIS ha sido calculado conforme a la ley vigente."
         ),
     )
@@ -1330,8 +1563,8 @@ def _build_order_pdf_bytes(order: Order, company: dict[str, str | None]) -> byte
         note=order.note,
         date=order.date,
         footer=(
-            "Este pedido será procesado tras la confirmación de pago. "
-            "Tiempo estimado de entrega: 3 a 5 días hábiles."
+            "Este pedido sera procesado tras la confirmacion de pago. "
+            "Tiempo estimado de entrega: 3 a 5 dias habiles."
         ),
     )
 
@@ -1355,8 +1588,8 @@ def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -
         note=invoice.note,
         date=invoice.date,
         footer=(
-            "Factura generada electrónicamente, válida sin firma ni sello. "
-            "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emisión. "
+            "Factura generada electronicamente, valida sin firma ni sello. "
+            "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emision. "
             "Gracias por su preferencia."
         ),
     )
@@ -1369,7 +1602,7 @@ def _ensure_company_archive_dirs(company_id: int | None, company_name: str | Non
         short = _company_short_slug(company_name)
         token = _company_private_token(company_id, company_name)
         base = _archive_root_dir() / short / token
-        for doc_type in ('cotizacion', 'pedido', 'factura', 'estado_cuenta', 'reporte'):
+        for doc_type in ('cotizacion', 'pedido', 'factura', 'estado_cuenta', 'reporte', 'reportes'):
             (base / doc_type).mkdir(parents=True, exist_ok=True)
     except Exception as exc:
         app.logger.warning('Could not create company PDF directories (%s): %s', company_id, exc)
@@ -1444,7 +1677,8 @@ def _archived_download_url(doc_type: str, doc_number: int | str, *, company_name
     if full_path:
         rel = _relative_generated_doc_path(full_path)
     else:
-        rel = _relative_generated_doc_path(str(_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)))
+        resolved = _resolve_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)
+        rel = _relative_generated_doc_path(str(resolved))
     if not rel:
         return None
     base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
@@ -1872,7 +2106,11 @@ def report_error():
 @app.route('/cpaneltx')
 @admin_only
 def cpanel_home():
-    return render_template('cpaneltx.html', signup_auto_approve=_is_signup_auto_approve_enabled())
+    return render_template(
+        'cpaneltx.html',
+        signup_auto_approve=_is_signup_auto_approve_enabled(),
+        social_links=get_login_social_links(),
+    )
 
 
 @app.post('/cpaneltx/signup-mode')
@@ -1886,6 +2124,17 @@ def cpanel_signup_mode():
         flash('Aprobación automática activada: nuevas cuentas se crearán directamente con rol Manager.')
     else:
         flash('Aprobación automática desactivada: las solicitudes requerirán aprobación de administrador.')
+    return redirect(url_for('cpanel_home'))
+
+
+
+@app.post('/cpaneltx/login-social-links')
+@admin_only
+def cpanel_login_social_links():
+    links = _set_login_social_links_from_form(request.form)
+    db.session.commit()
+    log_audit('cpanel_login_social_links', 'app_setting', details=links)
+    flash('Redes sociales del login actualizadas')
     return redirect(url_for('cpanel_home'))
 
 
@@ -2934,7 +3183,7 @@ def list_quotations():
     )
     archived_urls = {}
     for q in quotations.items:
-        archived = _archived_pdf_path(
+        archived = _resolve_archived_pdf_path(
             'cotizacion',
             q.id,
             company_name=(getattr(g, 'company', None).name if getattr(g, 'company', None) else None),
@@ -3304,7 +3553,7 @@ def quotation_pdf(quotation_id):
     filename = f'cotizacion_{quotation_id}.pdf'
     app.logger.info("Generating quotation PDF %s", quotation_id)
 
-    archived = _archived_pdf_path(
+    archived = _resolve_archived_pdf_path(
         'cotizacion',
         quotation.id,
         company_name=company.get('name'),
@@ -3356,16 +3605,28 @@ def send_quotation_email(quotation_id):
         return redirect(url_for('list_quotations'))
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
+    validity_days = max((quotation.valid_until.date() - quotation.date.date()).days, 1) if quotation.valid_until and quotation.date else 30
     pdf_data = generate_pdf_bytes('Cotizacion', company, client, quotation.items,
                                   quotation.subtotal, quotation.itbis, quotation.total,
                                   seller=quotation.seller, payment_method=quotation.payment_method,
                                   bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
                                   date=quotation.date, valid_until=quotation.valid_until,
-                                  footer=("Condiciones: Esta cotizacion es valida por 30 dias a partir de la fecha de emision. "
-                                          "Los precios están sujetos a cambios sin previo aviso. "
+                                  footer=(f"Condiciones: Esta cotizacion es valida por {validity_days} dias a partir de la fecha de emision. "
+                                          "Los precios estan sujetos a cambios sin previo aviso. "
                                           "El ITBIS ha sido calculado conforme a la ley vigente."))
-    html = render_template('emails/quotation.html', client=client, company=company, quotation=quotation)
-    send_email(client.email, 'Cotización', html, attachments=[(filename, pdf_data)])
+    download_url = _document_download_url('cotizacion', quotation.id, company_name=company.get('name'))
+    subject = _document_email_subject(company.get('name', 'Empresa'), 'cotizacion', quotation.id, validity_days=validity_days)
+    html = render_template(
+        'emails/document_send.html',
+        company=company,
+        client=client,
+        doc_label='cotizacion',
+        doc_number=quotation.id,
+        download_url=download_url,
+        show_validity=True,
+        validity_days=validity_days,
+    )
+    send_email(client.email, subject, html, attachments=[(filename, pdf_data)])
     flash(f'Cotización enviada con éxito a {client.email}')
     return redirect(url_for('list_quotations'))
 
@@ -3473,12 +3734,39 @@ def list_orders():
     archived_order_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for o in orders:
-        archived = _archived_pdf_path('pedido', o.id, company_name=company_name, company_id=current_company_id())
+        archived = _resolve_archived_pdf_path('pedido', o.id, company_name=company_name, company_id=current_company_id())
         if archived.exists():
             url = _archived_download_url('pedido', o.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:
                 archived_order_urls[o.id] = url
     return render_template('pedido.html', orders=orders, q=q, archived_order_urls=archived_order_urls)
+
+@app.route('/pedidos/<int:order_id>/enviar', methods=['POST'])
+def send_order_email(order_id):
+    order = company_get(Order, order_id)
+    client = order.client
+    if not client.email:
+        flash('Alerta: este cliente no tiene correo')
+        return redirect(url_for('list_orders'))
+    company = get_company_info()
+    filename = f'pedido_{order_id}.pdf'
+    pdf_data = _build_order_pdf_bytes(order, company)
+    download_url = _document_download_url('pedido', order.id, company_name=company.get('name'))
+    subject = _document_email_subject(company.get('name', 'Empresa'), 'pedido', order.id)
+    html = render_template(
+        'emails/document_send.html',
+        company=company,
+        client=client,
+        doc_label='pedido',
+        doc_number=order.id,
+        download_url=download_url,
+        show_validity=False,
+        validity_days=None,
+    )
+    send_email(client.email, subject, html, attachments=[(filename, pdf_data)])
+    flash(f'Pedido enviado con exito a {client.email}')
+    return redirect(url_for('list_orders'))
+
 
 @app.route('/pedidos/<int:order_id>/facturar')
 def order_to_invoice(order_id):
@@ -3574,12 +3862,39 @@ def list_invoices():
     archived_invoice_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for f in invoices:
-        archived = _archived_pdf_path('factura', f.id, company_name=company_name, company_id=current_company_id())
+        archived = _resolve_archived_pdf_path('factura', f.id, company_name=company_name, company_id=current_company_id())
         if archived.exists():
             url = _archived_download_url('factura', f.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:
                 archived_invoice_urls[f.id] = url
     return render_template('factura.html', invoices=invoices, q=q, archived_invoice_urls=archived_invoice_urls)
+
+
+@app.route('/facturas/<int:invoice_id>/enviar', methods=['POST'])
+def send_invoice_email(invoice_id):
+    invoice = company_get(Invoice, invoice_id)
+    client = invoice.client
+    if not client.email:
+        flash('Alerta: este cliente no tiene correo')
+        return redirect(url_for('list_invoices'))
+    company = get_company_info()
+    filename = f'factura_{invoice_id}.pdf'
+    pdf_data = _build_invoice_pdf_bytes(invoice, company)
+    download_url = _document_download_url('factura', invoice.id, company_name=company.get('name'))
+    subject = _document_email_subject(company.get('name', 'Empresa'), 'factura', invoice.id)
+    html = render_template(
+        'emails/document_send.html',
+        company=company,
+        client=client,
+        doc_label='factura',
+        doc_number=invoice.id,
+        download_url=download_url,
+        show_validity=False,
+        validity_days=None,
+    )
+    send_email(client.email, subject, html, attachments=[(filename, pdf_data)])
+    flash(f'Factura enviada con exito a {client.email}')
+    return redirect(url_for('list_invoices'))
 
 
 @app.route('/facturas/<int:invoice_id>/pagar', methods=['POST'])
@@ -3594,16 +3909,20 @@ def pay_invoice(invoice_id):
 
 @app.route('/notificaciones')
 def notifications_view():
-    notifs = company_query(Notification).order_by(Notification.created_at.desc()).all()
-    return render_template('notifications.html', notifications=notifs)
+    unread = company_query(Notification).filter_by(is_read=False).order_by(Notification.created_at.desc()).all()
+    archived = company_query(Notification).filter_by(is_read=True).order_by(Notification.read_at.desc().nullslast(), Notification.created_at.desc()).all()
+    return render_template('notifications.html', notifications=unread + archived, unread_notifications=unread, archived_notifications=archived)
 
 
 @app.post('/notificaciones/<int:nid>/leer')
 def notifications_read(nid):
     notif = company_get(Notification, nid)
     notif.is_read = True
+    notif.read_at = dom_now()
     db.session.commit()
-    return redirect(url_for('notifications_view'))
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.accept_mimetypes.best == 'application/json':
+        return jsonify({'ok': True, 'id': notif.id, 'read_at': notif.read_at.strftime('%d/%m/%Y %I:%M %p') if notif.read_at else ''})
+    return redirect(request.referrer or url_for('notifications_view'))
 
 @app.route('/facturas/<int:invoice_id>/pdf')
 def invoice_pdf(invoice_id):
@@ -4348,10 +4667,10 @@ def export_reportes():
             note=note,
         )
         report_doc_number = datetime.now().strftime('%Y%m%d%H%M%S')
-        archived_path = _archive_pdf_copy('reporte', report_doc_number, pdf_data, company_name=company.get('name'))
+        archived_path = _archive_pdf_copy('reportes', report_doc_number, pdf_data, company_name=company.get('name'))
         log_export(user, formato, tipo, filtros, 'success', file_path=archived_path or 'memory:reportes.pdf')
         return _archive_and_send_pdf(
-            doc_type='reporte',
+            doc_type='reportes',
             doc_number=report_doc_number,
             pdf_data=pdf_data,
             download_name='reportes.pdf',

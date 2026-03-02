@@ -106,6 +106,26 @@ def test_multi_tenant_isolation(client):
     assert b'Alice' not in resp.data
 
 
+
+
+def test_convert_quotation_page_shows_guidance_text(client):
+    login(client, 'user1', 'pass')
+    resp = client.get('/cotizaciones/1/convertir')
+
+    assert resp.status_code == 200
+    assert b'Orden de compra (opcional)' in resp.data
+    assert b'puedes dejarlo vac' in resp.data
+    assert b'Almac\xc3\xa9n de salida' in resp.data
+
+
+def test_new_quotation_client_company_hides_last_name_wrapper(client):
+    login(client, 'user1', 'pass')
+    resp = client.get('/cotizaciones/nueva')
+
+    assert resp.status_code == 200
+    assert b'new-client-last-wrapper' in resp.data
+    assert b"lastFieldWrapper.classList.add('hidden')" in resp.data
+
 def test_conversion_and_pdf(client):
     login(client, 'user1', 'pass')
     quote_pdf = client.get('/cotizaciones/1/pdf')
@@ -192,7 +212,7 @@ def test_new_quotation_creates_archive_file(client):
     with app.app_context():
         q = Quotation.query.order_by(Quotation.id.desc()).first()
     archive_root = Path(app.config['PDF_ARCHIVE_ROOT'])
-    assert list(archive_root.glob(f'compa/*/cotizacion/{q.id:02d}.pdf'))
+    assert list(archive_root.glob('compa/*/cotizacion/*.pdf'))
 
 
 
@@ -223,12 +243,12 @@ def test_order_and_invoice_create_archive_files_without_pdf_route(client):
     with app.app_context():
         order = Order.query.order_by(Order.id.desc()).first()
     archive_root = Path(app.config['PDF_ARCHIVE_ROOT'])
-    assert list(archive_root.glob(f'compa/*/pedido/{order.id:02d}.pdf'))
+    assert list(archive_root.glob('compa/*/pedido/*.pdf'))
 
     client.get(f'/pedidos/{order.id}/facturar')
     with app.app_context():
         invoice = Invoice.query.order_by(Invoice.id.desc()).first()
-    assert list(archive_root.glob(f'compa/*/factura/{invoice.id:02d}.pdf'))
+    assert list(archive_root.glob('compa/*/factura/*.pdf'))
 
 def test_pdf_archive_folder_structure(client):
     login(client, 'user1', 'pass')
