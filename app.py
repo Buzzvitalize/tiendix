@@ -423,7 +423,7 @@ app.jinja_env.filters['money'] = _fmt_money
 
 
 def _document_download_url(doc_type: str, doc_number: int, company_name: str | None = None) -> str | None:
-    archived = _archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=current_company_id())
+    archived = _resolve_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=current_company_id())
     if not archived.exists():
         return None
     return _archived_download_url(
@@ -1340,6 +1340,92 @@ def _company_private_token(company_id: int | None, company_name: str | None) -> 
     return f"{token_number:06d}"
 
 
+def _doc_client_slug(doc_type: str, doc_number: int | str, *, company_id: int | None = None) -> str:
+    if not str(doc_number).isdigit():
+        return 'documento'
+    cid = company_id if company_id is not None else current_company_id()
+    try:
+        n = int(doc_number)
+        if doc_type == 'cotizacion':
+            rec = company_query(Quotation).filter_by(id=n).first()
+            raw_name = rec.client.name if rec and rec.client else ''
+        elif doc_type == 'pedido':
+            rec = company_query(Order).filter_by(id=n).first()
+            raw_name = rec.client.name if rec and rec.client else ''
+        elif doc_type == 'factura':
+            rec = company_query(Invoice).filter_by(id=n).first()
+            raw_name = rec.client.name if rec and rec.client else ''
+        elif doc_type == 'estado_cuenta':
+            rec = company_query(Client).filter_by(id=n).first()
+            raw_name = rec.name if rec else ''
+        else:
+            raw_name = ''
+        first_name = (raw_name or '').strip().split(' ')[0] if raw_name else ''
+        safe = secure_filename(first_name.lower())
+        return safe or 'documento'
+    except Exception:
+        return 'documento'
+
+
+def _doc_date_parts(doc_type: str, doc_number: int | str) -> tuple[int, int, int]:
+    if str(doc_number).isdigit():
+        try:
+            n = int(doc_number)
+            if doc_type == 'cotizacion':
+                rec = company_query(Quotation).filter_by(id=n).first()
+                dt = rec.date if rec else None
+            elif doc_type == 'pedido':
+                rec = company_query(Order).filter_by(id=n).first()
+                dt = rec.date if rec else None
+            elif doc_type == 'factura':
+                rec = company_query(Invoice).filter_by(id=n).first()
+                dt = rec.date if rec else None
+            else:
+                dt = None
+            if dt is not None:
+                return int(dt.day), int(dt.month), int(dt.year)
+        except Exception:
+            pass
+    now = dom_now()
+    return int(now.day), int(now.month), int(now.year)
+
+
+def _doc_security_pin(doc_type: str, doc_number: int | str, *, company_id: int | None = None, company_name: str | None = None) -> str:
+    cid = company_id if company_id is not None else current_company_id()
+    seed = f"{app.config.get('SECRET_KEY','tiendix')}|{cid}|{company_name or ''}|{doc_type}|{doc_number}"
+    number = int(hashlib.sha256(seed.encode('utf-8')).hexdigest(), 16) % 10000
+    return f"{number:04d}"
+
+
+def _doc_file_stem(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> str:
+    if not str(doc_number).isdigit():
+        return secure_filename(str(doc_number)) or 'documento'
+    client_slug = _doc_client_slug(doc_type, doc_number, company_id=company_id)
+    pin = _doc_security_pin(doc_type, doc_number, company_id=company_id, company_name=company_name)
+    day, month, year = _doc_date_parts(doc_type, doc_number)
+    return f"{client_slug}{pin}-{day}-{month}-{year}"
+
+
+def _legacy_archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> Path:
+    cid = company_id if company_id is not None else current_company_id()
+    name = company_name or (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    short = _company_short_slug(name)
+    token = _company_private_token(cid, name)
+    safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
+    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
+    return _archive_root_dir() / short / token / safe_type / f"{number}.pdf"
+
+
+def _resolve_archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> Path:
+    current = _archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)
+    if current.exists():
+        return current
+    legacy = _legacy_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)
+    if legacy.exists():
+        return legacy
+    return current
+
+
 def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None) -> str | None:
     base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
     if not base_url:
@@ -1352,8 +1438,8 @@ def _public_doc_url(doc_type: str, doc_number: int | str, *, company_name: str |
     short = _company_short_slug(name)
     token = _company_private_token(cid, name)
     safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
-    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
-    return f"{base_url}/{short}/{token}/{safe_type}/{number}.pdf"
+    stem = _doc_file_stem(doc_type, doc_number, company_name=name, company_id=cid)
+    return f"{base_url}/{short}/{token}/{safe_type}/{stem}.pdf"
 
 
 def _archive_root_dir() -> Path:
@@ -1369,8 +1455,8 @@ def _archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: st
     short = _company_short_slug(name)
     token = _company_private_token(cid, name)
     safe_type = secure_filename((doc_type or 'documento').lower()) or 'documento'
-    number = f"{int(doc_number):02d}" if str(doc_number).isdigit() else secure_filename(str(doc_number))
-    return _archive_root_dir() / short / token / safe_type / f"{number}.pdf"
+    stem = _doc_file_stem(doc_type, doc_number, company_name=name, company_id=cid)
+    return _archive_root_dir() / short / token / safe_type / f"{stem}.pdf"
 
 
 def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
@@ -1533,7 +1619,8 @@ def _archived_download_url(doc_type: str, doc_number: int | str, *, company_name
     if full_path:
         rel = _relative_generated_doc_path(full_path)
     else:
-        rel = _relative_generated_doc_path(str(_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)))
+        resolved = _resolve_archived_pdf_path(doc_type, doc_number, company_name=company_name, company_id=company_id)
+        rel = _relative_generated_doc_path(str(resolved))
     if not rel:
         return None
     base_url = (app.config.get('PUBLIC_DOCS_BASE_URL') or '').strip().rstrip('/')
@@ -3023,7 +3110,7 @@ def list_quotations():
     )
     archived_urls = {}
     for q in quotations.items:
-        archived = _archived_pdf_path(
+        archived = _resolve_archived_pdf_path(
             'cotizacion',
             q.id,
             company_name=(getattr(g, 'company', None).name if getattr(g, 'company', None) else None),
@@ -3393,7 +3480,7 @@ def quotation_pdf(quotation_id):
     filename = f'cotizacion_{quotation_id}.pdf'
     app.logger.info("Generating quotation PDF %s", quotation_id)
 
-    archived = _archived_pdf_path(
+    archived = _resolve_archived_pdf_path(
         'cotizacion',
         quotation.id,
         company_name=company.get('name'),
@@ -3574,7 +3661,7 @@ def list_orders():
     archived_order_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for o in orders:
-        archived = _archived_pdf_path('pedido', o.id, company_name=company_name, company_id=current_company_id())
+        archived = _resolve_archived_pdf_path('pedido', o.id, company_name=company_name, company_id=current_company_id())
         if archived.exists():
             url = _archived_download_url('pedido', o.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:
@@ -3702,7 +3789,7 @@ def list_invoices():
     archived_invoice_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for f in invoices:
-        archived = _archived_pdf_path('factura', f.id, company_name=company_name, company_id=current_company_id())
+        archived = _resolve_archived_pdf_path('factura', f.id, company_name=company_name, company_id=current_company_id())
         if archived.exists():
             url = _archived_download_url('factura', f.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:

@@ -166,5 +166,5 @@ def test_new_quotation_calls_pdf_builder_and_archives_file(tmp_path, monkeypatch
         assert quotation is not None
         slug = _company_short_slug('Eco Sea SRL')
         token = _company_private_token(quotation.company_id, 'Eco Sea SRL')
-    pdf_path = tmp_path / 'pdf_archive' / slug / token / 'cotizacion' / f'{quotation.id:02d}.pdf'
-    assert pdf_path.exists()
+    pdf_dir = tmp_path / 'pdf_archive' / slug / token / 'cotizacion'
+    assert list(pdf_dir.glob('*.pdf'))
