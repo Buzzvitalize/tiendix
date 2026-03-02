@@ -8,6 +8,14 @@
 .nav-link:hover{background-color:#374151}
 .input{border:1px solid #d1d5db;border-radius:.375rem;padding:.5rem .75rem;width:100%;transition:border-color .2s,box-shadow .2s}
 .input:focus{outline:none;box-shadow:0 0 0 2px #2563eb;border-color:#2563eb}
+.action-bar{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}
+.action-btn{display:inline-flex;align-items:center;gap:.35rem;padding:.3rem .65rem;border:1px solid #e5e7eb;border-radius:9999px;background-color:#fff;color:#374151;font-size:.875rem;font-weight:500;line-height:1.1;transition:all .2s}
+.action-btn:hover{background-color:#f9fafb;border-color:#d1d5db;color:#111827}
+.action-btn:focus{outline:none;box-shadow:0 0 0 2px #93c5fd}
+.action-btn.is-disabled{color:#9ca3af;border-color:#e5e7eb;background-color:#f9fafb;cursor:not-allowed}
+.action-btn.is-primary{color:#1d4ed8;border-color:#bfdbfe;background-color:#eff6ff}
+.action-btn.is-success{color:#047857;border-color:#a7f3d0;background-color:#ecfdf5}
+.action-btn.is-warning{color:#b45309;border-color:#fde68a;background-color:#fffbeb}
 
 
 /* Responsive polish for phones/tablets */
@@ -20,6 +28,8 @@
   .text-xl{font-size:1.15rem!important;line-height:1.5rem!important}
   .btn-primary,.btn-secondary{font-size:.9rem;padding:.45rem .75rem}
   .input{font-size:.95rem;padding:.5rem .65rem}
+  .action-bar{gap:.3rem}
+  .action-btn{font-size:.8rem;padding:.25rem .55rem}
   table{display:block;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:nowrap}
   thead,tbody,tr{width:100%}
 }
