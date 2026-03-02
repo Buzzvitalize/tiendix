@@ -193,6 +193,7 @@
     }
     async function markNotificationRead(id, triggerBtn=null){
       const csrfToken = '{{ csrf_token() }}';
+      let completed = false;
       if (triggerBtn){
         triggerBtn.disabled = true;
         triggerBtn.textContent = 'Procesando...';
@@ -212,8 +213,17 @@
           },
           body: payload.toString()
         });
+        if (!resp.ok) {
+          throw new Error('Error HTTP al archivar notificación');
+        }
+        const contentType = resp.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          throw new Error('Respuesta inválida del servidor');
+        }
         const data = await resp.json();
-        if(!data.ok) return;
+        if(!data.ok) {
+          throw new Error(data.error || 'No se pudo archivar');
+        }
         const card = document.querySelector(`[data-notif-id="${id}"]`);
         if(card){
           card.querySelector('button')?.remove();
@@ -230,8 +240,10 @@
             if(n-1<=0){ node.remove(); }
           }
         });
+        completed = true;
       }catch(_e){
-        if (triggerBtn){
+      } finally {
+        if (triggerBtn && !completed){
           triggerBtn.disabled = false;
           triggerBtn.textContent = 'Marcar como leído';
         }
