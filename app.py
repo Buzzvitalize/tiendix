@@ -189,6 +189,46 @@ if database_url:
     os.environ['DATABASE_URL'] = database_url
 
 
+
+
+def _configure_sqlalchemy_engine_options(config: dict):
+    """Tune SQLAlchemy pool settings for MySQL/cPanel stability."""
+    uri = config.get('SQLALCHEMY_DATABASE_URI') or ''
+    if not isinstance(uri, str) or not uri.startswith('mysql+'):
+        return
+
+    recycle_seconds_raw = (os.getenv('DB_POOL_RECYCLE_SECONDS') or '280').strip()
+    try:
+        recycle_seconds = max(int(recycle_seconds_raw), 30)
+    except ValueError:
+        recycle_seconds = 280
+
+    pool_size_raw = (os.getenv('DB_POOL_SIZE') or '5').strip()
+    max_overflow_raw = (os.getenv('DB_MAX_OVERFLOW') or '10').strip()
+    try:
+        pool_size = max(int(pool_size_raw), 1)
+    except ValueError:
+        pool_size = 5
+    try:
+        max_overflow = max(int(max_overflow_raw), 0)
+    except ValueError:
+        max_overflow = 10
+
+    timeout_raw = (os.getenv('DB_POOL_TIMEOUT_SECONDS') or '30').strip()
+    try:
+        pool_timeout = max(int(timeout_raw), 5)
+    except ValueError:
+        pool_timeout = 30
+
+    config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': recycle_seconds,
+        'pool_size': pool_size,
+        'max_overflow': max_overflow,
+        'pool_timeout': pool_timeout,
+        'pool_use_lifo': True,
+    }
+
 def _apply_database_uri_override(config: dict, resolved_url: str | None):
     """Ensure runtime config uses resolved DB URL even after class import-time defaults."""
     if resolved_url:
@@ -204,6 +244,7 @@ app.config.from_object(config_map.get(APP_ENV, DevelopmentConfig))
 _apply_database_uri_override(app.config, database_url)
 app.config['APP_ENV'] = APP_ENV
 validate_runtime_config(app.config)
+_configure_sqlalchemy_engine_options(app.config)
 
 SENSITIVE_PATHS = {
     'app.py',

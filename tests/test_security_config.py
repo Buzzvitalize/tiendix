@@ -214,6 +214,33 @@ def test_apply_database_uri_override_keeps_existing_when_none():
     assert cfg['SQLALCHEMY_DATABASE_URI'] == 'sqlite:///database.sqlite'
 
 
+
+
+def test_configure_sqlalchemy_engine_options_for_mysql(monkeypatch):
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'mysql+pymysql://u:p@localhost/db'}
+    monkeypatch.setenv('DB_POOL_RECYCLE_SECONDS', '300')
+    monkeypatch.setenv('DB_POOL_SIZE', '8')
+    monkeypatch.setenv('DB_MAX_OVERFLOW', '12')
+    monkeypatch.setenv('DB_POOL_TIMEOUT_SECONDS', '20')
+
+    app_module._configure_sqlalchemy_engine_options(cfg)
+
+    options = cfg.get('SQLALCHEMY_ENGINE_OPTIONS')
+    assert options['pool_pre_ping'] is True
+    assert options['pool_recycle'] == 300
+    assert options['pool_size'] == 8
+    assert options['max_overflow'] == 12
+    assert options['pool_timeout'] == 20
+    assert options['pool_use_lifo'] is True
+
+
+def test_configure_sqlalchemy_engine_options_ignores_non_mysql():
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'sqlite:///database.sqlite'}
+
+    app_module._configure_sqlalchemy_engine_options(cfg)
+
+    assert 'SQLALCHEMY_ENGINE_OPTIONS' not in cfg
+
 def test_ensure_mysql_driver_available_switches_to_mysqldb(monkeypatch):
     cfg = {'SQLALCHEMY_DATABASE_URI': 'mysql+pymysql://u:p@localhost/db'}
 
