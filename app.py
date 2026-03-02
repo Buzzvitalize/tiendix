@@ -332,6 +332,8 @@ MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', MAIL_USERNAME)
 MAIL_MAX_RETRIES = int(os.getenv('MAIL_MAX_RETRIES', 3))
 MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
 MAIL_CONNECT_TIMEOUT_SEC = float(os.getenv('MAIL_CONNECT_TIMEOUT_SEC', 8))
+LOW_STOCK_SCAN_INTERVAL_SEC = int(os.getenv('LOW_STOCK_SCAN_INTERVAL_SEC', 1800))
+LOW_STOCK_SCAN_MAX_ITEMS = int(os.getenv('LOW_STOCK_SCAN_MAX_ITEMS', 200))
 
 
 def _strip_accents(value: str | None) -> str:
@@ -1297,7 +1299,16 @@ def build_service_items(service_names, service_descriptions, quantities, rates):
 
 
 def _quotation_doc_type(quotation: Quotation) -> str:
-    return 'servicios' if quotation.warehouse_id is None else 'cotizacion'
+    # Backward-compatible detection: only treat as service when warehouse is empty
+    # and items were explicitly created as service lines.
+    if quotation.warehouse_id is not None:
+        return 'cotizacion'
+    items = list(getattr(quotation, 'items', []) or [])
+    if not items:
+        return 'cotizacion'
+    if all((getattr(i, 'category', '') or '').lower() == 'servicios' for i in items):
+        return 'servicios'
+    return 'cotizacion'
 
 
 def build_items(product_ids, quantities, discounts):
@@ -1384,22 +1395,31 @@ def inject_company():
         cid = current_company_id()
         if 'user_id' in session and cid:
             # Avoid expensive inventory scans on every request.
-            # Refresh low-stock notifications at most once every 5 minutes per session.
+            # Refresh low-stock notifications at most once per configured interval.
             now_ts = int(time.time())
             last_scan = session.get('low_stock_scan_at', 0)
-            if now_ts - last_scan >= 300:
+            if now_ts - last_scan >= LOW_STOCK_SCAN_INTERVAL_SEC:
                 low_stock = (
                     company_query(ProductStock)
+                    .join(Product, Product.id == ProductStock.product_id)
+                    .options(load_only(ProductStock.id, ProductStock.product_id), joinedload(ProductStock.product).load_only(Product.name))
                     .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
+                    .limit(LOW_STOCK_SCAN_MAX_ITEMS)
                     .all()
                 )
-                for ps in low_stock:
-                    msg = f"Stock bajo: {ps.product.name}"
-                    exists = Notification.query.filter_by(company_id=cid, message=msg).first()
-                    if not exists:
-                        db.session.add(Notification(company_id=cid, message=msg))
                 if low_stock:
-                    db.session.commit()
+                    messages = [f"Stock bajo: {ps.product.name}" for ps in low_stock if ps.product and ps.product.name]
+                    existing_messages = {
+                        row[0]
+                        for row in db.session.query(Notification.message)
+                        .filter(Notification.company_id == cid, Notification.message.in_(messages))
+                        .all()
+                    } if messages else set()
+                    for msg in messages:
+                        if msg not in existing_messages:
+                            db.session.add(Notification(company_id=cid, message=msg))
+                    if len(messages) != len(existing_messages):
+                        db.session.commit()
                 session['low_stock_scan_at'] = now_ts
 
             notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
