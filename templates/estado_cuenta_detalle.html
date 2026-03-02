@@ -7,6 +7,7 @@
   <p>{{ client.street }} {{ client.sector }} {{ client.province }}</p>
   <p>{{ client.phone }} {{ client.email }}</p>
 </div>
+<div class="overflow-x-auto">
 <table class="min-w-full bg-white mb-4">
   <thead>
     <tr class="bg-gray-200 text-left">
@@ -33,6 +34,7 @@
   {% endfor %}
   </tbody>
 </table>
+</div>
 <p class="text-right font-semibold">Total: {{ total | money }}</p>
 <p class="text-right text-sm">% vencido: {{ overdue_pct|round(2) }}%</p>
 <a href="{{ url_for('account_statement_detail', client_id=client.id, pdf=1) }}" target="_blank" rel="noopener" class="btn-primary mt-2 inline-block">Exportar PDF</a>
