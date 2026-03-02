@@ -3641,21 +3641,7 @@ def send_quotation_email(quotation_id):
         return redirect(url_for('list_quotations'))
     company = get_company_info()
     validity_days = max((quotation.valid_until.date() - quotation.date.date()).days, 1) if quotation.valid_until and quotation.date else 30
-    pdf_data = _build_quotation_pdf_bytes(quotation, company)
-    archived_path = _archive_pdf_copy(
-        'cotizacion',
-        quotation.id,
-        pdf_data,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-    )
-    download_url = _archived_download_url(
-        'cotizacion',
-        quotation.id,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-        full_path=archived_path,
-    ) if archived_path else None
+    download_url = _document_download_url('cotizacion', quotation.id, company_name=company.get('name'))
     if not download_url:
         download_url = url_for('quotation_pdf', quotation_id=quotation.id, _external=True)
     email_ref = _document_email_reference(download_url, 'cotizacion', quotation.id, company_name=company.get('name'))
@@ -3670,7 +3656,7 @@ def send_quotation_email(quotation_id):
         show_validity=True,
         validity_days=validity_days,
     )
-    send_email(client.email, subject, html, asynchronous=False)
+    send_email(client.email, subject, html)
     flash(f'Cotización enviada con éxito a {client.email}')
     return redirect(url_for('list_quotations'))
 
@@ -3793,21 +3779,7 @@ def send_order_email(order_id):
         flash('Alerta: este cliente no tiene correo')
         return redirect(url_for('list_orders'))
     company = get_company_info()
-    pdf_data = _build_order_pdf_bytes(order, company)
-    archived_path = _archive_pdf_copy(
-        'pedido',
-        order.id,
-        pdf_data,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-    )
-    download_url = _archived_download_url(
-        'pedido',
-        order.id,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-        full_path=archived_path,
-    ) if archived_path else None
+    download_url = _document_download_url('pedido', order.id, company_name=company.get('name'))
     if not download_url:
         download_url = url_for('order_pdf', order_id=order.id, _external=True)
     email_ref = _document_email_reference(download_url, 'pedido', order.id, company_name=company.get('name'))
@@ -3822,7 +3794,7 @@ def send_order_email(order_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, asynchronous=False)
+    send_email(client.email, subject, html)
     flash(f'Pedido enviado con exito a {client.email}')
     return redirect(url_for('list_orders'))
 
@@ -3937,21 +3909,7 @@ def send_invoice_email(invoice_id):
         flash('Alerta: este cliente no tiene correo')
         return redirect(url_for('list_invoices'))
     company = get_company_info()
-    pdf_data = _build_invoice_pdf_bytes(invoice, company)
-    archived_path = _archive_pdf_copy(
-        'factura',
-        invoice.id,
-        pdf_data,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-    )
-    download_url = _archived_download_url(
-        'factura',
-        invoice.id,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-        full_path=archived_path,
-    ) if archived_path else None
+    download_url = _document_download_url('factura', invoice.id, company_name=company.get('name'))
     if not download_url:
         download_url = url_for('invoice_pdf', invoice_id=invoice.id, _external=True)
     email_ref = _document_email_reference(download_url, 'factura', invoice.id, company_name=company.get('name'))
@@ -3966,7 +3924,7 @@ def send_invoice_email(invoice_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, asynchronous=False)
+    send_email(client.email, subject, html)
     flash(f'Factura enviada con exito a {client.email}')
     return redirect(url_for('list_invoices'))
 
