@@ -166,6 +166,11 @@ document.querySelectorAll('.pdf-action').forEach((btn) => {
       btn.classList.remove('text-blue-500');
       btn.classList.add('text-green-600');
       btn.disabled = false;
+
+      const immediateUrl = downloadUrl || blobUrl;
+      if (immediateUrl) {
+        window.open(immediateUrl, '_blank', 'noopener');
+      }
     } catch (_err) {
       setLabel('Error PDF');
       btn.classList.remove('text-blue-500');

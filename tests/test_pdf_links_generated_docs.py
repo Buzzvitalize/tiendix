@@ -36,5 +36,7 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
         orders_html = c.get('/pedidos').get_data(as_text=True)
         invoices_html = c.get('/facturas').get_data(as_text=True)
 
-    assert '/pedidos/1/pdf' not in orders_html
-    assert '/facturas/1/pdf' not in invoices_html
+    assert '/pedidos/1/pdf' in orders_html
+    assert '/facturas/1/pdf' in invoices_html
+    assert 'target="_blank"' in orders_html
+    assert 'target="_blank"' in invoices_html
