@@ -78,3 +78,18 @@ def test_client_to_dict_omits_none_literals():
     assert client['phone'] == ''
     assert client['identifier'] == ''
     assert client['email'] == ''
+
+
+def test_fit_cell_text_truncates_long_reference():
+    pdf = weasy_pdf.FPDF()
+    pdf.add_page()
+    pdf.set_font('Helvetica', '', 8)
+    txt = 'REFERENCIA-MUY-LARGA-QUE-SOBRESALE-DE-COLUMNA'
+    fitted = weasy_pdf._fit_cell_text(pdf, txt, 18)
+    assert len(fitted) < len(txt)
+    assert pdf.get_string_width(fitted) <= 18
+
+
+def test_strip_accents_for_account_statement_text():
+    from account_pdf import _plain_text
+    assert _plain_text('Categoria: Crédito y Dirección') == 'Categoria: Credito y Direccion'

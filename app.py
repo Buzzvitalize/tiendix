@@ -97,6 +97,7 @@ import threading
 from queue import Queue as ThreadQueue, Empty
 import time
 import random
+import unicodedata
 
 load_dotenv()
 
@@ -330,6 +331,11 @@ MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')
 MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', MAIL_USERNAME)
 MAIL_MAX_RETRIES = int(os.getenv('MAIL_MAX_RETRIES', 3))
 MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
+
+
+def _strip_accents(value: str | None) -> str:
+    text = '' if value is None else str(value)
+    return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -4662,9 +4668,9 @@ def export_reportes():
         items = [
             {
                 'code': inv.id,
-                'reference': inv.client.name if inv.client else '',
+                'reference': _strip_accents(inv.client.name if inv.client else ''),
                 'product_name': inv.date.strftime('%d/%m/%Y'),
-                'unit': inv.status or '',
+                'unit': _strip_accents(inv.status or ''),
                 'unit_price': inv.total,
                 'quantity': 1,
                 'discount': 0,
@@ -4674,9 +4680,9 @@ def export_reportes():
         subtotal = sum(inv.total for inv in invoices)
         note = (
             f"Rango: {(fecha_inicio or 'Todas')} - {(fecha_fin or 'Todas')} | "
-            f"Estado: {(estado or 'Todos')} | "
-            f"Categoría: {(categoria or 'Todas')} | "
-            f"Usuario: {user} | Facturas: {len(invoices)}"
+            f"Estado: {_strip_accents(estado or 'Todos')} | "
+            f"Categoria: {_strip_accents(categoria or 'Todas')} | "
+            f"Usuario: {_strip_accents(user)} | Facturas: {len(invoices)}"
         )
         pdf_data = generate_pdf_bytes(
             'Reporte de Facturas',

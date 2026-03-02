@@ -4,12 +4,19 @@ from fpdf.enums import XPos, YPos
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
+import unicodedata
 
 BLUE = (30, 58, 138)
 DOM_TZ = ZoneInfo("America/Santo_Domingo")
 
 def _money(v: float) -> str:
     return f"RD$ {v:,.2f}"
+
+
+def _plain_text(value: str) -> str:
+    text = '' if value is None else str(value)
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+    return text
 
 def generate_account_statement_pdf_bytes(company: dict, client: dict, rows: list, total: float,
                                          aging: dict, overdue_pct: float) -> bytes:
@@ -26,32 +33,32 @@ def generate_account_statement_pdf_bytes(company: dict, client: dict, rows: list
             pdf.image(str(logo_path), 10, 8, 30)
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 16)
-    pdf.cell(0, 10, company.get('name', ''), align='C', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 10, _plain_text(company.get('name', '')), align='C', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Helvetica', '', 10)
     details = f"{company.get('street','')}\nTel: {company.get('phone','')}\nRNC: {company.get('rnc','')}"
-    pdf.multi_cell(0, 5, details, align='C')
+    pdf.multi_cell(0, 5, _plain_text(details), align='C')
     pdf.ln(2)
     pdf.set_text_color(*BLUE)
     pdf.set_font('Helvetica', 'B', 14)
     pdf.cell(0, 8, 'Estado de Cuenta de Cliente', align='C', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_text_color(0,0,0)
     pdf.set_font('Helvetica', '', 10)
-    pdf.cell(0, 5, f"Fecha: {datetime.now(DOM_TZ).strftime('%d/%m/%Y')}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 5, _plain_text(f"Fecha: {datetime.now(DOM_TZ).strftime('%d/%m/%Y')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(4)
     # client info
     pdf.set_font('Helvetica', 'B', 10)
-    pdf.cell(0, 5, f"Cliente: {client.get('name','')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 5, _plain_text(f"Cliente: {client.get('name','')}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_font('Helvetica', '', 10)
     if client.get('identifier'):
-        pdf.cell(0,5,f"RNC: {client.get('identifier')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0,5,_plain_text(f"RNC: {client.get('identifier')}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     addr = ", ".join(filter(None,[client.get('street'), client.get('sector'), client.get('province')]))
     if addr:
-        pdf.cell(0,5,f"Dirección: {addr}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0,5,_plain_text(f"Direccion: {addr}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('phone'):
-        pdf.cell(0,5,f"Tel: {client.get('phone')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0,5,_plain_text(f"Tel: {client.get('phone')}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if client.get('email'):
-        pdf.cell(0,5,f"Email: {client.get('email')}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(0,5,_plain_text(f"Email: {client.get('email')}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(4)
     # table
     headers = ["Documento","No. Pedido","Fecha doc.","Fecha venc.","Info","Importe","Saldo"]
@@ -60,29 +67,29 @@ def generate_account_statement_pdf_bytes(company: dict, client: dict, rows: list
     pdf.set_text_color(255,255,255)
     pdf.set_font('Helvetica','B',9)
     for h,w in zip(headers,widths):
-        pdf.cell(w,8,h,1,new_x=XPos.RIGHT,new_y=YPos.TOP,align='C',fill=True)
+        pdf.cell(w,8,_plain_text(h),1,new_x=XPos.RIGHT,new_y=YPos.TOP,align='C',fill=True)
     pdf.ln()
     pdf.set_font('Helvetica','',9)
     pdf.set_text_color(0,0,0)
     for r in rows:
-        pdf.cell(widths[0],6,r['document'],1)
+        pdf.cell(widths[0],6,_plain_text(r['document']),1)
         pdf.cell(widths[1],6,str(r['order'] or ''),1)
-        pdf.cell(widths[2],6,r['date'],1)
-        pdf.cell(widths[3],6,r['due'],1)
-        pdf.cell(widths[4],6,r['info'][:30],1)
+        pdf.cell(widths[2],6,_plain_text(r['date']),1)
+        pdf.cell(widths[3],6,_plain_text(r['due']),1)
+        pdf.cell(widths[4],6,_plain_text(r['info'][:30]),1)
         pdf.cell(widths[5],6,_money(r['amount']),1,new_x=XPos.RIGHT,new_y=YPos.TOP,align='R')
         pdf.cell(widths[6],6,_money(r['balance']),1,new_x=XPos.RIGHT,new_y=YPos.TOP,align='R')
         pdf.ln()
     pdf.ln(4)
     pdf.set_font('Helvetica','B',10)
-    pdf.cell(0,6,f'Total general: {_money(total)}',align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0,6,_plain_text(f'Total general: {_money(total)}'),align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_font('Helvetica','',9)
     bucket_line = (
         f"0-30: {_money(aging['0-30'])}  31-60: {_money(aging['31-60'])}  "
         f"61-90: {_money(aging['61-90'])}  91-120: {_money(aging['91-120'])}  121+: {_money(aging['121+'])}"
     )
-    pdf.multi_cell(0,5,bucket_line,align='R')
-    pdf.cell(0,5,f"% vencido: {overdue_pct:.2f}%",align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.multi_cell(0,5,_plain_text(bucket_line),align='R')
+    pdf.cell(0,5,_plain_text(f"% vencido: {overdue_pct:.2f}%"),align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(8)
     pdf.set_font('Helvetica','',8)
     pdf.multi_cell(0,4,'Pagos a cuentas: ______\nLas facturas no pagadas luego de la fecha de vencimiento generan un cargo mensual de un 3% de mora.')

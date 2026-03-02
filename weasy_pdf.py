@@ -63,6 +63,18 @@ def _safe_text(value) -> str:
 
 
 
+
+def _fit_cell_text(pdf: FPDF, value, max_width: float, ellipsis: str = '...') -> str:
+    text = _safe_text(value)
+    if not text:
+        return ''
+    if pdf.get_string_width(text) <= max_width:
+        return text
+    trimmed = text
+    while trimmed and pdf.get_string_width(trimmed + ellipsis) > max_width:
+        trimmed = trimmed[:-1]
+    return (trimmed + ellipsis) if trimmed else ''
+
 def _clean_optional(value) -> str:
     if value is None:
         return ''
@@ -219,7 +231,7 @@ def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
         row = [
             str(i.get('code', '')),
             str(i.get('reference', '')),
-            str(i.get('product_name', ''))[:28],
+            str(i.get('product_name', '')),
             str(i.get('unit', '')),
             _fmt_money(i['unit_price']),
             str(i['quantity']),
@@ -228,7 +240,8 @@ def _draw_items_table(pdf: FPDF, items: list[dict], min_rows: int = 15):
         ]
         for idx, (text, w) in enumerate(zip(row, widths)):
             align = 'R' if idx in (4, 6, 7) else ('C' if idx == 5 else 'L')
-            _cell(pdf, w, 6, _safe_text(text), border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
+            display_text = _fit_cell_text(pdf, text, max(w - 1.5, 1)) if idx in (0, 1, 2, 3, 5) else _safe_text(text)
+            _cell(pdf, w, 6, display_text, border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.ln()
 
     # Añade filas vacías para que el documento no se vea vacío cuando hay pocos productos.
