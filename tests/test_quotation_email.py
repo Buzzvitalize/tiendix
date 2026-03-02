@@ -54,12 +54,11 @@ def test_send_quotation_email(client, monkeypatch):
     def fake_send(to, subject, html, attachments=None):
         sent['to'] = to
         sent['attachments'] = attachments
+        sent['html'] = html
     monkeypatch.setattr('app.send_email', fake_send)
     resp = cli.post(f'/cotizaciones/{qid}/enviar', follow_redirects=True)
     assert resp.status_code == 200
     assert f'Cotización enviada con éxito a {email}'.encode() in resp.data
     assert sent['to'] == email
-    assert sent['attachments']
-    filename, data = sent['attachments'][0]
-    assert filename == f'cotizacion_{qid}.pdf'
-    assert data.startswith(b'%PDF')
+    assert sent['attachments'] is None
+    assert '/generated_docs/' in sent['html'] or '/cotizaciones/' in sent['html']
