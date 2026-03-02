@@ -3421,15 +3421,13 @@ def settings_company():
         flash('Seleccione una empresa')
         return redirect(url_for('admin_companies'))
     if request.method == 'POST':
-        role = session.get('role')
-        if role != 'manager':
-            company.name = request.form.get('name', company.name)
-            company.street = request.form.get('street', company.street)
-            company.sector = request.form.get('sector', company.sector)
-            company.province = request.form.get('province', company.province)
-            company.phone = request.form.get('phone', company.phone)
-            company.rnc = request.form.get('rnc', company.rnc)
-            company.website = request.form.get('website') or None
+        company.name = request.form.get('name', company.name)
+        company.street = request.form.get('street', company.street)
+        company.sector = request.form.get('sector', company.sector)
+        company.province = request.form.get('province', company.province)
+        company.phone = request.form.get('phone', company.phone)
+        company.rnc = request.form.get('rnc', company.rnc)
+        company.website = request.form.get('website') or None
         if request.form.get('remove_logo'):
             if company.logo:
                 try:
