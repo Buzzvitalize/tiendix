@@ -3936,6 +3936,10 @@ def notifications_view():
 @app.post('/notificaciones/<int:nid>/leer')
 def notifications_read(nid):
     notif = company_get(Notification, nid)
+    if notif.is_read:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.accept_mimetypes.best == 'application/json':
+            return jsonify({'ok': True, 'id': notif.id, 'read_at': notif.read_at.strftime('%d/%m/%Y %I:%M %p') if notif.read_at else ''})
+        return redirect(request.referrer or url_for('notifications_view'))
     notif.is_read = True
     notif.read_at = dom_now()
     db.session.commit()
