@@ -771,6 +771,14 @@ def _migrate_legacy_schema():
                 "ALTER TABLE inventory_movement ADD COLUMN executed_by INTEGER REFERENCES user(id)"
             )
 
+    if inspector.has_table('notification'):
+        try:
+            notif_cols = {c['name'] for c in inspector.get_columns('notification')}
+        except NoSuchTableError:  # pragma: no cover
+            notif_cols = set()
+        if 'read_at' not in notif_cols:
+            statements.append("ALTER TABLE notification ADD COLUMN read_at DATETIME")
+
     if inspector.has_table('quotation'):
         try:
             quote_cols = {c['name'] for c in inspector.get_columns('quotation')}
@@ -1269,6 +1277,8 @@ def load_company():
 @app.context_processor
 def inject_company():
     notif_count = 0
+    unread_notifications = []
+    archived_notifications = []
     active_announcement = None
     try:
         cid = current_company_id()
@@ -1293,6 +1303,20 @@ def inject_company():
                 session['low_stock_scan_at'] = now_ts
 
             notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
+            unread_notifications = (
+                Notification.query
+                .filter_by(company_id=cid, is_read=False)
+                .order_by(Notification.created_at.desc())
+                .limit(30)
+                .all()
+            )
+            archived_notifications = (
+                Notification.query
+                .filter_by(company_id=cid, is_read=True)
+                .order_by(Notification.read_at.desc().nullslast(), Notification.created_at.desc())
+                .limit(50)
+                .all()
+            )
         active_announcement = (
             SystemAnnouncement.query
             .filter_by(is_active=True)
@@ -1304,6 +1328,8 @@ def inject_company():
     return {
         'company': getattr(g, 'company', None),
         'notification_count': notif_count,
+        'unread_notifications': unread_notifications,
+        'archived_notifications': archived_notifications,
         'current_dom_time': dom_now().strftime('%d/%m/%Y %I:%M %p'),
         'active_announcement': active_announcement,
         'app_version': APP_VERSION,
@@ -3836,16 +3862,20 @@ def pay_invoice(invoice_id):
 
 @app.route('/notificaciones')
 def notifications_view():
-    notifs = company_query(Notification).order_by(Notification.created_at.desc()).all()
-    return render_template('notifications.html', notifications=notifs)
+    unread = company_query(Notification).filter_by(is_read=False).order_by(Notification.created_at.desc()).all()
+    archived = company_query(Notification).filter_by(is_read=True).order_by(Notification.read_at.desc().nullslast(), Notification.created_at.desc()).all()
+    return render_template('notifications.html', notifications=unread + archived, unread_notifications=unread, archived_notifications=archived)
 
 
 @app.post('/notificaciones/<int:nid>/leer')
 def notifications_read(nid):
     notif = company_get(Notification, nid)
     notif.is_read = True
+    notif.read_at = dom_now()
     db.session.commit()
-    return redirect(url_for('notifications_view'))
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.accept_mimetypes.best == 'application/json':
+        return jsonify({'ok': True, 'id': notif.id, 'read_at': notif.read_at.strftime('%d/%m/%Y %I:%M %p') if notif.read_at else ''})
+    return redirect(request.referrer or url_for('notifications_view'))
 
 @app.route('/facturas/<int:invoice_id>/pdf')
 def invoice_pdf(invoice_id):
