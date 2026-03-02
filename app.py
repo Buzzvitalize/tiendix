@@ -4433,19 +4433,27 @@ def account_statement_detail(client_id):
             client.id,
             pdf_data,
             company_name=company.get('name'),
-            company_id=current_company_id(),
+            company_id=client.company_id,
         )
-        archived_url = _archived_download_url(
-            'estado_cuenta',
-            client.id,
-            company_name=company.get('name'),
-            company_id=current_company_id(),
-            full_path=archived_path,
-        )
+        archived_url = None
+        if archived_path and Path(archived_path).exists():
+            archived_url = _archived_download_url(
+                'estado_cuenta',
+                client.id,
+                company_name=company.get('name'),
+                company_id=client.company_id,
+                full_path=archived_path,
+            )
         if request.args.get('link_only') == '1':
             if archived_url:
                 return jsonify({'ok': True, 'url': archived_url})
-            return jsonify({'ok': False, 'error': 'No se pudo generar el enlace del PDF'}), 500
+            fallback_url = url_for('account_statement_detail', client_id=client.id, pdf=1)
+            return jsonify({
+                'ok': True,
+                'url': fallback_url,
+                'archived': False,
+                'warning': 'No se pudo archivar en generated_docs; se abrira el PDF directo.',
+            })
         if archived_url:
             return redirect(archived_url)
         return _archive_and_send_pdf(

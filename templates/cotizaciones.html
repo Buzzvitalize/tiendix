@@ -58,21 +58,23 @@
         <td class="p-2">{{ q.date.strftime('%d/%m/%Y %I:%M %p') }}</td>
         <td class="p-2">{{ q.total | money }}</td>
         <td class="p-2">{{ q.status }}</td>
-        <td class="p-2 space-x-2">
-          <button type="button" class="text-blue-500 inline-flex items-center gap-1 pdf-action" data-pdf-url="{{ archived_urls.get(q.id) or url_for('quotation_pdf', quotation_id=q.id) }}" data-filename="cotizacion_{{ q.id }}.pdf" data-archived-url="{{ archived_urls.get(q.id) or '' }}">
+        <td class="p-2">
+          <div class="action-bar flex flex-wrap gap-2">
+          <button type="button" class="action-btn is-primary pdf-action px-3 py-1 rounded-md text-white font-semibold" style="background-color:#2563eb" data-pdf-url="{{ archived_urls.get(q.id) or url_for('quotation_pdf', quotation_id=q.id) }}" data-filename="cotizacion_{{ q.id }}.pdf" data-archived-url="{{ archived_urls.get(q.id) or '' }}">
             <span class="pdf-label">Generar PDF</span>
           </button>
           <form method="post" action="{{ url_for('send_quotation_email', quotation_id=q.id) }}" class="inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="text-indigo-500"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 inline" viewBox="0 0 24 24" fill="currentColor"><path d="M2 4l20 8-20 8 4-8-4-8zm6.5 8L4.8 7.5 16 12 4.8 16.5 8.5 12z"/></svg> Enviar</button>
+            <button class="action-btn is-info px-3 py-1 rounded-md text-white font-semibold" style="background-color:#6366f1"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 inline" viewBox="0 0 24 24" fill="currentColor"><path d="M2 4l20 8-20 8 4-8-4-8zm6.5 8L4.8 7.5 16 12 4.8 16.5 8.5 12z"/></svg> Enviar</button>
           </form>
-          <a class="text-yellow-500" href="{{ url_for('edit_quotation', quotation_id=q.id) }}">Editar</a>
+          <a class="action-btn is-warning px-3 py-1 rounded-md text-white font-semibold" style="background-color:#d97706" href="{{ url_for('edit_quotation', quotation_id=q.id) }}">Editar</a>
           {% set expired = q.valid_until < now %}
           {% if expired %}
-            <span class="text-gray-400">Crear Pedido</span>
+            <span class="action-btn is-disabled px-3 py-1 rounded-md text-white font-semibold" style="background-color:#9ca3af">Crear Pedido</span>
           {% else %}
-            <a class="text-green-500" href="{{ url_for('quotation_to_order', quotation_id=q.id) }}">Crear Pedido</a>
+            <a class="action-btn is-success px-3 py-1 rounded-md text-white font-semibold" style="background-color:#16a34a" href="{{ url_for('quotation_to_order', quotation_id=q.id) }}">Crear Pedido</a>
           {% endif %}
+          </div>
         </td>
       </tr>
     {% endfor %}
@@ -123,23 +125,26 @@ document.querySelectorAll('.pdf-action').forEach((btn) => {
   if (downloadUrl) {
     ready = true;
     setLabel('PDF', true);
-    btn.classList.remove('text-blue-500');
-    btn.classList.add('text-green-600');
+    btn.classList.remove('is-primary');
+    btn.classList.add('is-success');
+    btn.style.backgroundColor = '#16a34a';
   }
 
   btn.addEventListener('click', () => {
     const targetUrl = downloadUrl || btn.dataset.pdfUrl;
     if (!targetUrl) {
       setLabel('Error PDF');
-      btn.classList.remove('text-blue-500');
-      btn.classList.add('text-red-600');
+      btn.classList.remove('is-primary');
+      btn.classList.add('is-warning');
+      btn.style.backgroundColor = '#d97706';
       return;
     }
     window.open(targetUrl, '_blank', 'noopener');
     ready = true;
     setLabel('PDF', true);
-    btn.classList.remove('text-blue-500');
-    btn.classList.add('text-green-600');
+    btn.classList.remove('is-primary');
+    btn.classList.add('is-success');
+    btn.style.backgroundColor = '#16a34a';
   });
 });
 </script>
