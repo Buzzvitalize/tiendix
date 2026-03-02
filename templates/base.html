@@ -192,10 +192,15 @@
       document.getElementById('notifications-modal').classList.add('hidden');
     }
     async function markNotificationRead(id){
+      const csrfToken = '{{ csrf_token() }}';
       try{
         const resp = await fetch(`/notificaciones/${id}/leer`, {
           method:'POST',
-          headers:{'X-Requested-With':'XMLHttpRequest','Accept':'application/json'}
+          headers:{
+            'X-Requested-With':'XMLHttpRequest',
+            'Accept':'application/json',
+            'X-CSRFToken': csrfToken
+          }
         });
         const data = await resp.json();
         if(!data.ok) return;
