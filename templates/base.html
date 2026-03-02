@@ -124,7 +124,7 @@
             <div class="border rounded p-2" data-notif-id="{{ n.id }}">
               <p class="text-sm">{{ n.message }}</p>
               <p class="text-xs text-gray-500">{{ n.created_at.strftime('%d/%m/%Y %I:%M %p') if n.created_at else '' }}</p>
-              <button type="button" class="mt-1 text-xs text-blue-600 hover:underline" onclick="markNotificationRead({{ n.id }})">Marcar como leído</button>
+              <button type="button" class="mt-1 text-xs text-blue-600 hover:underline" onclick="markNotificationRead({{ n.id }}, this)">Marcar como leído</button>
             </div>
             {% else %}
             <p class="text-sm text-gray-500">Sin notificaciones pendientes.</p>
@@ -191,8 +191,12 @@
     function closeNotificationsModal(){
       document.getElementById('notifications-modal').classList.add('hidden');
     }
-    async function markNotificationRead(id){
+    async function markNotificationRead(id, triggerBtn=null){
       const csrfToken = '{{ csrf_token() }}';
+      if (triggerBtn){
+        triggerBtn.disabled = true;
+        triggerBtn.textContent = 'Procesando...';
+      }
       try{
         const payload = new URLSearchParams();
         payload.set('csrf_token', csrfToken);
@@ -226,7 +230,12 @@
             if(n-1<=0){ node.remove(); }
           }
         });
-      }catch(_e){}
+      }catch(_e){
+        if (triggerBtn){
+          triggerBtn.disabled = false;
+          triggerBtn.textContent = 'Marcar como leído';
+        }
+      }
     }
 
     function openVersionModal(){
