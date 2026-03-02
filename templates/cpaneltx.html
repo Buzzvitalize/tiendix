@@ -20,9 +20,26 @@
     </form>
   </section>
 
+
+  <section class="bg-white rounded shadow p-4">
+    <h2 class="text-lg font-semibold mb-2">Redes sociales en login</h2>
+    <p class="text-sm text-gray-600 mb-3">Configura los links de los iconos que aparecen en la barra inferior del login.</p>
+    <form method="post" action="{{ url_for('cpanel_login_social_links') }}" class="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label class="text-sm">Facebook<input class="input mt-1" name="social_facebook" value="{{ social_links.facebook if social_links else '' }}" placeholder="https://facebook.com/..."/></label>
+      <label class="text-sm">Instagram<input class="input mt-1" name="social_instagram" value="{{ social_links.instagram if social_links else '' }}" placeholder="https://instagram.com/..."/></label>
+      <label class="text-sm">WhatsApp<input class="input mt-1" name="social_whatsapp" value="{{ social_links.whatsapp if social_links else '' }}" placeholder="https://wa.me/..."/></label>
+      <label class="text-sm">Telegram<input class="input mt-1" name="social_telegram" value="{{ social_links.telegram if social_links else '' }}" placeholder="https://t.me/..."/></label>
+      <label class="text-sm">YouTube<input class="input mt-1" name="social_youtube" value="{{ social_links.youtube if social_links else '' }}" placeholder="https://youtube.com/..."/></label>
+      <label class="text-sm">LinkedIn<input class="input mt-1" name="social_linkedin" value="{{ social_links.linkedin if social_links else '' }}" placeholder="https://linkedin.com/..."/></label>
+      <div class="md:col-span-2 lg:col-span-3"><button class="btn-primary">Guardar redes</button></div>
+    </form>
+  </section>
+
   <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
     <a href="{{ url_for('cpanel_companies') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Empresas</a>
     <a href="{{ url_for('cpanel_users') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Usuarios</a>
+    <a href="{{ url_for('cpanel_quotations') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Cotizaciones</a>
     <a href="{{ url_for('cpanel_orders') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Pedidos</a>
     <a href="{{ url_for('cpanel_invoices') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Facturas</a>
     <a href="{{ url_for('cpanel_auditoria') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Auditoría</a>
