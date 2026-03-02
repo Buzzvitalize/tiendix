@@ -124,7 +124,7 @@
             <div class="border rounded p-2" data-notif-id="{{ n.id }}">
               <p class="text-sm">{{ n.message }}</p>
               <p class="text-xs text-gray-500">{{ n.created_at.strftime('%d/%m/%Y %I:%M %p') if n.created_at else '' }}</p>
-              <button type="button" class="mt-1 text-xs text-blue-600 hover:underline" onclick="markNotificationRead({{ n.id }})">Marcar como leído</button>
+              <button type="button" class="mt-1 text-xs text-blue-600 hover:underline" onclick="markNotificationRead({{ n.id }}, this)">Marcar como leído</button>
             </div>
             {% else %}
             <p class="text-sm text-gray-500">Sin notificaciones pendientes.</p>
@@ -191,14 +191,39 @@
     function closeNotificationsModal(){
       document.getElementById('notifications-modal').classList.add('hidden');
     }
-    async function markNotificationRead(id){
+    async function markNotificationRead(id, triggerBtn=null){
+      const csrfToken = '{{ csrf_token() }}';
+      let completed = false;
+      if (triggerBtn){
+        triggerBtn.disabled = true;
+        triggerBtn.textContent = 'Procesando...';
+      }
       try{
+        const payload = new URLSearchParams();
+        payload.set('csrf_token', csrfToken);
         const resp = await fetch(`/notificaciones/${id}/leer`, {
           method:'POST',
-          headers:{'X-Requested-With':'XMLHttpRequest','Accept':'application/json'}
+          credentials:'same-origin',
+          headers:{
+            'X-Requested-With':'XMLHttpRequest',
+            'Accept':'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-CSRFToken': csrfToken,
+            'X-CSRF-Token': csrfToken
+          },
+          body: payload.toString()
         });
+        if (!resp.ok) {
+          throw new Error('Error HTTP al archivar notificación');
+        }
+        const contentType = resp.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          throw new Error('Respuesta inválida del servidor');
+        }
         const data = await resp.json();
-        if(!data.ok) return;
+        if(!data.ok) {
+          throw new Error(data.error || 'No se pudo archivar');
+        }
         const card = document.querySelector(`[data-notif-id="${id}"]`);
         if(card){
           card.querySelector('button')?.remove();
@@ -215,7 +240,14 @@
             if(n-1<=0){ node.remove(); }
           }
         });
-      }catch(_e){}
+        completed = true;
+      }catch(_e){
+      } finally {
+        if (triggerBtn && !completed){
+          triggerBtn.disabled = false;
+          triggerBtn.textContent = 'Marcar como leído';
+        }
+      }
     }
 
     function openVersionModal(){
