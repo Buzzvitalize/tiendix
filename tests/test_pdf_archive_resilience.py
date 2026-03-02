@@ -101,7 +101,7 @@ def test_signup_company_dirs_created_and_personal_name_fallback(tmp_path):
         assert (root / 'pedido').exists()
         assert (root / 'factura').exists()
         assert (root / 'estado_cuenta').exists()
-        assert (root / 'reporte').exists()
+        assert (root / 'reportes').exists()
 
 
 def test_new_quotation_calls_pdf_builder_and_archives_file(tmp_path, monkeypatch):

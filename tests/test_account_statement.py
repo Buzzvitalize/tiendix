@@ -34,3 +34,4 @@ def test_account_statement_detail_displays_full_name_and_link(tmp_path):
     assert resp.status_code == 200
     assert 'Juan Perez' in body
     assert '/generated_docs/' in body
+    assert 'target="_blank"' in body

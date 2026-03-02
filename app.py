@@ -1544,7 +1544,7 @@ def _ensure_company_archive_dirs(company_id: int | None, company_name: str | Non
         short = _company_short_slug(company_name)
         token = _company_private_token(company_id, company_name)
         base = _archive_root_dir() / short / token
-        for doc_type in ('cotizacion', 'pedido', 'factura', 'estado_cuenta', 'reporte'):
+        for doc_type in ('cotizacion', 'pedido', 'factura', 'estado_cuenta', 'reporte', 'reportes'):
             (base / doc_type).mkdir(parents=True, exist_ok=True)
     except Exception as exc:
         app.logger.warning('Could not create company PDF directories (%s): %s', company_id, exc)
@@ -4590,10 +4590,10 @@ def export_reportes():
             note=note,
         )
         report_doc_number = datetime.now().strftime('%Y%m%d%H%M%S')
-        archived_path = _archive_pdf_copy('reporte', report_doc_number, pdf_data, company_name=company.get('name'))
+        archived_path = _archive_pdf_copy('reportes', report_doc_number, pdf_data, company_name=company.get('name'))
         log_export(user, formato, tipo, filtros, 'success', file_path=archived_path or 'memory:reportes.pdf')
         return _archive_and_send_pdf(
-            doc_type='reporte',
+            doc_type='reportes',
             doc_number=report_doc_number,
             pdf_data=pdf_data,
             download_name='reportes.pdf',
