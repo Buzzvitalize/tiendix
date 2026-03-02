@@ -15,7 +15,14 @@ branch_labels = None
 depends_on = None
 
 
+def _has_table(table_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    return inspector.has_table(table_name)
+
+
 def upgrade():
+    if _has_table('product_price_log'):
+        return
     op.create_table(
         'product_price_log',
         sa.Column('id', sa.Integer(), primary_key=True),
@@ -31,4 +38,5 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_table('product_price_log')
+    if _has_table('product_price_log'):
+        op.drop_table('product_price_log')

@@ -4,8 +4,9 @@ import pytest
 from io import BytesIO
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+import app as app_module
 from app import app, db
-from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement, AppSetting, RNCRegistry
+from models import User, CompanyInfo, AccountRequest, AuditLog, SystemAnnouncement, AppSetting, RNCRegistry, Client, Quotation
 from werkzeug.security import generate_password_hash
 
 @pytest.fixture
@@ -275,3 +276,46 @@ def test_rnc_lookup_reads_registry_table(client):
     resp = client.get('/api/rnc/303-03030-3')
     assert resp.status_code == 200
     assert resp.get_json().get('name') == 'Empresa Registry'
+
+
+def test_admin_can_delete_quotation_from_cpanel(client):
+    with app.app_context():
+        company = CompanyInfo.query.first()
+        cli = Client(name='CliQ', company_id=company.id)
+        db.session.add(cli)
+        db.session.flush()
+        q = Quotation(client_id=cli.id, subtotal=10, itbis=1.8, total=11.8, company_id=company.id, valid_until=app_module.dom_now())
+        db.session.add(q)
+        db.session.commit()
+        qid = q.id
+
+    login(client, 'admin', '363636')
+    resp = client.get('/cpaneltx/quotations')
+    assert resp.status_code == 200
+    del_resp = client.post(f'/cpaneltx/quotations/{qid}/delete', follow_redirects=True)
+    assert del_resp.status_code == 200
+
+    with app.app_context():
+        assert db.session.get(Quotation, qid) is None
+
+
+def test_cpanel_can_update_login_social_links_and_login_renders_them(client):
+    login(client, 'admin', '363636')
+    resp = client.post('/cpaneltx/login-social-links', data={
+        'social_facebook': 'https://facebook.com/tiendix',
+        'social_instagram': 'https://instagram.com/tiendix',
+        'social_whatsapp': 'https://wa.me/18095551212',
+        'social_telegram': 'https://t.me/tiendix',
+        'social_youtube': 'https://youtube.com/@tiendix',
+        'social_linkedin': 'https://linkedin.com/company/tiendix',
+    }, follow_redirects=True)
+    assert resp.status_code == 200
+
+    with app.app_context():
+        assert db.session.get(AppSetting, 'login_social_facebook').value == 'https://facebook.com/tiendix'
+        assert db.session.get(AppSetting, 'login_social_linkedin').value == 'https://linkedin.com/company/tiendix'
+
+    login_page = client.get('/login')
+    html = login_page.get_data(as_text=True)
+    assert 'https://facebook.com/tiendix' in html
+    assert 'aria-label="LinkedIn"' in html

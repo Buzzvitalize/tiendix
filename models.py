@@ -296,6 +296,7 @@ class Notification(db.Model):
     message = db.Column(db.String(200), nullable=False)
     is_read = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=dom_now)
+    read_at = db.Column(db.DateTime)
 
 
 class ErrorReport(db.Model):

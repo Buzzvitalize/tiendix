@@ -60,6 +60,96 @@ def test_send_email_retries_and_metrics(monkeypatch):
     assert app_module.EMAIL_METRICS['failed'] == 0
 
 
+def test_deliver_email_uses_smtp_ssl_without_starttls(monkeypatch):
+    calls = {'smtp': 0, 'smtp_ssl': 0, 'starttls': 0, 'login': 0, 'sendmail': 0}
+
+    class FakeSMTPSSL:
+        def __init__(self, *args, **kwargs):
+            calls['smtp_ssl'] += 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def starttls(self):
+            calls['starttls'] += 1
+
+        def login(self, *_):
+            calls['login'] += 1
+
+        def sendmail(self, *_):
+            calls['sendmail'] += 1
+
+    class FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            calls['smtp'] += 1
+
+    monkeypatch.setattr(app_module, 'MAIL_SERVER', 'smtp.example.com')
+    monkeypatch.setattr(app_module, 'MAIL_PORT', 465)
+    monkeypatch.setattr(app_module, 'MAIL_DEFAULT_SENDER', 'no-reply@example.com')
+    monkeypatch.setattr(app_module, 'MAIL_USERNAME', 'user@example.com')
+    monkeypatch.setattr(app_module, 'MAIL_PASSWORD', 'secret')
+    monkeypatch.setattr(app_module, 'MAIL_USE_SSL', True)
+    monkeypatch.setattr(app_module, 'MAIL_USE_TLS', False)
+    monkeypatch.setattr(app_module.smtplib, 'SMTP_SSL', FakeSMTPSSL)
+    monkeypatch.setattr(app_module.smtplib, 'SMTP', FakeSMTP)
+
+    app_module._deliver_email('to@example.com', 'subject', '<b>ok</b>')
+
+    assert calls['smtp_ssl'] == 1
+    assert calls['smtp'] == 0
+    assert calls['starttls'] == 0
+    assert calls['login'] == 1
+    assert calls['sendmail'] == 1
+
+
+def test_deliver_email_uses_starttls_when_enabled(monkeypatch):
+    calls = {'smtp': 0, 'smtp_ssl': 0, 'starttls': 0, 'login': 0, 'sendmail': 0}
+
+    class FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            calls['smtp'] += 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def starttls(self):
+            calls['starttls'] += 1
+
+        def login(self, *_):
+            calls['login'] += 1
+
+        def sendmail(self, *_):
+            calls['sendmail'] += 1
+
+    class FakeSMTPSSL:
+        def __init__(self, *args, **kwargs):
+            calls['smtp_ssl'] += 1
+
+    monkeypatch.setattr(app_module, 'MAIL_SERVER', 'smtp.example.com')
+    monkeypatch.setattr(app_module, 'MAIL_PORT', 587)
+    monkeypatch.setattr(app_module, 'MAIL_DEFAULT_SENDER', 'no-reply@example.com')
+    monkeypatch.setattr(app_module, 'MAIL_USERNAME', 'user@example.com')
+    monkeypatch.setattr(app_module, 'MAIL_PASSWORD', 'secret')
+    monkeypatch.setattr(app_module, 'MAIL_USE_SSL', False)
+    monkeypatch.setattr(app_module, 'MAIL_USE_TLS', True)
+    monkeypatch.setattr(app_module.smtplib, 'SMTP_SSL', FakeSMTPSSL)
+    monkeypatch.setattr(app_module.smtplib, 'SMTP', FakeSMTP)
+
+    app_module._deliver_email('to@example.com', 'subject', '<b>ok</b>')
+
+    assert calls['smtp'] == 1
+    assert calls['smtp_ssl'] == 0
+    assert calls['starttls'] == 1
+    assert calls['login'] == 1
+    assert calls['sendmail'] == 1
+
+
 def test_normalized_database_url_for_mysql_scheme():
     assert app_module._normalized_database_url('mysql://u:p@localhost/db') == 'mysql+pymysql://u:p@localhost/db'
     assert app_module._normalized_database_url('mysql+pymysql://u:p@localhost/db') == 'mysql+pymysql://u:p@localhost/db'
@@ -123,6 +213,33 @@ def test_apply_database_uri_override_keeps_existing_when_none():
     app_module._apply_database_uri_override(cfg, None)
     assert cfg['SQLALCHEMY_DATABASE_URI'] == 'sqlite:///database.sqlite'
 
+
+
+
+def test_configure_sqlalchemy_engine_options_for_mysql(monkeypatch):
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'mysql+pymysql://u:p@localhost/db'}
+    monkeypatch.setenv('DB_POOL_RECYCLE_SECONDS', '300')
+    monkeypatch.setenv('DB_POOL_SIZE', '8')
+    monkeypatch.setenv('DB_MAX_OVERFLOW', '12')
+    monkeypatch.setenv('DB_POOL_TIMEOUT_SECONDS', '20')
+
+    app_module._configure_sqlalchemy_engine_options(cfg)
+
+    options = cfg.get('SQLALCHEMY_ENGINE_OPTIONS')
+    assert options['pool_pre_ping'] is True
+    assert options['pool_recycle'] == 300
+    assert options['pool_size'] == 8
+    assert options['max_overflow'] == 12
+    assert options['pool_timeout'] == 20
+    assert options['pool_use_lifo'] is True
+
+
+def test_configure_sqlalchemy_engine_options_ignores_non_mysql():
+    cfg = {'SQLALCHEMY_DATABASE_URI': 'sqlite:///database.sqlite'}
+
+    app_module._configure_sqlalchemy_engine_options(cfg)
+
+    assert 'SQLALCHEMY_ENGINE_OPTIONS' not in cfg
 
 def test_ensure_mysql_driver_available_switches_to_mysqldb(monkeypatch):
     cfg = {'SQLALCHEMY_DATABASE_URI': 'mysql+pymysql://u:p@localhost/db'}
@@ -198,6 +315,18 @@ def test_maybe_fix_cpanel_access_denied_keeps_uri_when_not_1044(monkeypatch):
     assert cfg['SQLALCHEMY_DATABASE_URI'] == original
 
 
+
+
+
+def test_is_auto_run_migrations_enabled(monkeypatch):
+    monkeypatch.delenv('AUTO_RUN_MIGRATIONS', raising=False)
+    assert app_module._is_auto_run_migrations_enabled() is True
+
+    monkeypatch.setenv('AUTO_RUN_MIGRATIONS', '0')
+    assert app_module._is_auto_run_migrations_enabled() is False
+
+    monkeypatch.setenv('AUTO_RUN_MIGRATIONS', 'true')
+    assert app_module._is_auto_run_migrations_enabled() is True
 
 def test_password_columns_are_wide_enough_for_werkzeug_hashes():
     from models import User, AccountRequest

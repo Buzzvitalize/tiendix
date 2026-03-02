@@ -24,9 +24,9 @@
         <label for="new-client-name" class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
         <input id="new-client-name" name="new_client_name" class="input" placeholder="Nombre" required>
       </div>
-      <div>
+      <div id="new-client-last-wrapper" class="hidden">
         <label for="new-client-last" class="block text-sm font-medium text-gray-700 mb-1">Apellido</label>
-        <input id="new-client-last" name="new_client_last" class="input hidden" placeholder="Apellido">
+        <input id="new-client-last" name="new_client_last" class="input" placeholder="Apellido">
       </div>
       <div>
         <label for="new-client-id" class="block text-sm font-medium text-gray-700 mb-1">Documento</label>
@@ -161,6 +161,7 @@ window.addEventListener('load', () => {
   const cancelClient=document.getElementById('cancel-client');
   const idField=document.getElementById('new-client-id');
   const lastField=document.getElementById('new-client-last');
+  const lastFieldWrapper=document.getElementById('new-client-last-wrapper');
   const phoneField=document.getElementById('new-client-phone');
   const nameField=document.getElementById('new-client-name');
   const rncStatus=document.getElementById('new-client-rnc-status');
@@ -208,14 +209,15 @@ window.addEventListener('load', () => {
   const typeRadios=document.querySelectorAll('input[name="new_client_type"]');
   function toggleType(){
     if(document.querySelector('input[name="new_client_type"]:checked').value==='final'){
-      lastField.classList.remove('hidden');
+      lastFieldWrapper.classList.remove('hidden');
       idField.placeholder='Cédula';
       idField.dataset.docType='cedula';
       idField.required=false;
       rncStatus.textContent='';
       rncStatus.className='text-xs mt-1 text-gray-500 hidden';
     }else{
-      lastField.classList.add('hidden');
+      lastFieldWrapper.classList.add('hidden');
+      lastField.value='';
       idField.placeholder='RNC *';
       idField.dataset.docType='rnc';
       idField.required=true;

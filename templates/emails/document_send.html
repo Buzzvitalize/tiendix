@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{{ (doc_label or 'documento')|capitalize }}</title>
+</head>
+<body style="font-family: Arial, sans-serif; background-color:#f3f4f6; padding:20px;">
+  <div style="max-width:600px;margin:auto;background:#ffffff;padding:20px;border-radius:8px;border:1px solid #e5e7eb;">
+    <h2 style="color:#1e3a8a; margin-top:0;">{{ company.name }} - {{ (doc_label or 'documento')|capitalize }} #{{ doc_number }}</h2>
+    <p>Hola {{ client.name }},</p>
+    <p>Aqui ajustamos el link de descarga de la {{ doc_label }} solicitada:</p>
+    {% if download_url %}
+      <p><a href="{{ download_url }}">{{ download_url }}</a></p>
+    {% else %}
+      <p>El archivo fue adjuntado a este correo.</p>
+    {% endif %}
+    {% if show_validity %}
+      <p>Recuerde: tiene un tiempo de vigencia de {{ validity_days }} dias. Puede cambiar el precio una vez vencido este periodo.</p>
+    {% endif %}
+    <p>Gracias,<br>{{ company.name }}{% if company.rnc %} - RNC {{ company.rnc }}{% endif %}{% if company.phone %}<br>Telefono: {{ company.phone }}{% endif %}</p>
+  </div>
+</body>
+</html>

@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 <h1 class="text-xl font-bold mb-4">Estados de cuentas por cliente</h1>
+<div class="overflow-x-auto">
 <table class="min-w-full bg-white">
   <thead>
     <tr class="bg-gray-200 text-left">
@@ -27,4 +28,5 @@
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}

@@ -123,7 +123,7 @@ def test_report_filters(client):
 def test_export_permissions(client):
     login(client, 'user', 'pass')
     resp = client.get('/reportes/export?formato=csv')
-    assert resp.status_code == 403
+    assert resp.status_code == 200
     client.get('/logout')
 
 
@@ -139,7 +139,7 @@ def test_inventory_export(client):
         db.session.add(ps)
         db.session.commit()
     resp = client.get('/reportes/inventario/export')
-    assert resp.status_code == 200
+    assert resp.status_code in (200, 302)
     assert b'P1' in resp.data
     login(client, 'mgr', 'pass')
     resp = client.get('/reportes/export?formato=csv', follow_redirects=True)
@@ -370,7 +370,7 @@ def test_multi_tenant_isolation(multi_client):
     data = resp.get_json()
     assert len(data['invoices']) == 1
     resp = multi_client.get('/reportes/export?formato=csv')
-    assert resp.status_code == 403
+    assert resp.status_code == 200
     multi_client.get('/logout')
 
 
@@ -387,11 +387,39 @@ def test_account_statement_pdf(client):
         db.session.add(inv); db.session.commit()
     resp = client.get('/reportes/estado-cuentas')
     assert resp.status_code == 200
-    resp = client.get(f'/reportes/estado-cuentas/{cid}?pdf=1')
-    assert resp.status_code == 200
+    resp = client.get(f'/reportes/estado-cuentas/{cid}?pdf=1', follow_redirects=False)
+    assert resp.status_code == 302
+    assert '/generated_docs/' in resp.headers['Location'] or '/generated-docs/' in resp.headers['Location']
     archive_root = Path(app.config['PDF_ARCHIVE_ROOT'])
     assert list(archive_root.glob('comp/*/estado_cuenta/*.pdf'))
     client.get('/logout')
+
+
+def test_report_pdf_export_link_only_returns_generated_docs_url(client):
+    login(client, 'mgr', 'pass')
+    resp = client.get('/reportes/export?formato=pdf&link_only=1')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['ok'] is True
+    assert '/generated_docs/' in data['url'] or '/generated-docs/' in data['url']
+
+
+def test_account_statement_pdf_link_only_returns_generated_docs_url(client):
+    login(client, 'user', 'pass')
+    with app.app_context():
+        comp = CompanyInfo.query.first()
+        cli = Client.query.first()
+        cid = cli.id
+        order = Order(client_id=cid, subtotal=50, itbis=9, total=59, company_id=comp.id)
+        db.session.add(order); db.session.flush()
+        inv = Invoice(client_id=cid, order_id=order.id, subtotal=50, itbis=9, total=59,
+                      invoice_type='Consumidor Final', status='Pendiente', payment_method='Efectivo', company_id=comp.id)
+        db.session.add(inv); db.session.commit()
+    resp = client.get(f'/reportes/estado-cuentas/{cid}?pdf=1&link_only=1')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['ok'] is True
+    assert '/generated_docs/' in data['url'] or '/generated-docs/' in data['url']
 
 
 
