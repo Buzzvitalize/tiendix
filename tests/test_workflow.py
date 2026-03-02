@@ -116,6 +116,16 @@ def test_convert_quotation_page_shows_guidance_text(client):
     assert b'Orden de compra (opcional)' in resp.data
     assert b'puedes dejarlo vac' in resp.data
     assert b'Almac\xc3\xa9n de salida' in resp.data
+
+
+def test_new_quotation_client_company_hides_last_name_wrapper(client):
+    login(client, 'user1', 'pass')
+    resp = client.get('/cotizaciones/nueva')
+
+    assert resp.status_code == 200
+    assert b'new-client-last-wrapper' in resp.data
+    assert b"lastFieldWrapper.classList.add('hidden')" in resp.data
+
 def test_conversion_and_pdf(client):
     login(client, 'user1', 'pass')
     quote_pdf = client.get('/cotizaciones/1/pdf')
