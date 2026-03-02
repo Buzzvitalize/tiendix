@@ -334,6 +334,8 @@ MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
 MAIL_CONNECT_TIMEOUT_SEC = float(os.getenv('MAIL_CONNECT_TIMEOUT_SEC', 8))
 LOW_STOCK_SCAN_INTERVAL_SEC = int(os.getenv('LOW_STOCK_SCAN_INTERVAL_SEC', 1800))
 LOW_STOCK_SCAN_MAX_ITEMS = int(os.getenv('LOW_STOCK_SCAN_MAX_ITEMS', 200))
+NOTIFICATION_REFRESH_INTERVAL_SEC = int(os.getenv('NOTIFICATION_REFRESH_INTERVAL_SEC', 30))
+ENABLE_LOW_STOCK_SCAN = str(os.getenv('ENABLE_LOW_STOCK_SCAN', '0')).strip().lower() in {'1','true','yes','on'}
 
 
 def _strip_accents(value: str | None) -> str:
@@ -1394,49 +1396,60 @@ def inject_company():
     try:
         cid = current_company_id()
         if 'user_id' in session and cid:
-            # Avoid expensive inventory scans on every request.
-            # Refresh low-stock notifications at most once per configured interval.
             now_ts = int(time.time())
-            last_scan = session.get('low_stock_scan_at', 0)
-            if now_ts - last_scan >= LOW_STOCK_SCAN_INTERVAL_SEC:
-                low_stock = (
-                    company_query(ProductStock)
-                    .join(Product, Product.id == ProductStock.product_id)
-                    .options(load_only(ProductStock.id, ProductStock.product_id), joinedload(ProductStock.product).load_only(Product.name))
-                    .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
-                    .limit(LOW_STOCK_SCAN_MAX_ITEMS)
+
+            # Optional background-like scan for low stock; disabled by default to protect worker capacity.
+            if ENABLE_LOW_STOCK_SCAN:
+                last_scan = session.get('low_stock_scan_at', 0)
+                if now_ts - last_scan >= LOW_STOCK_SCAN_INTERVAL_SEC:
+                    low_stock = (
+                        company_query(ProductStock)
+                        .join(Product, Product.id == ProductStock.product_id)
+                        .options(load_only(ProductStock.id, ProductStock.product_id), joinedload(ProductStock.product).load_only(Product.name))
+                        .filter(ProductStock.stock <= ProductStock.min_stock, ProductStock.min_stock > 0)
+                        .limit(LOW_STOCK_SCAN_MAX_ITEMS)
+                        .all()
+                    )
+                    if low_stock:
+                        messages = [f"Stock bajo: {ps.product.name}" for ps in low_stock if ps.product and ps.product.name]
+                        existing_messages = {
+                            row[0]
+                            for row in db.session.query(Notification.message)
+                            .filter(Notification.company_id == cid, Notification.message.in_(messages))
+                            .all()
+                        } if messages else set()
+                        for msg in messages:
+                            if msg not in existing_messages:
+                                db.session.add(Notification(company_id=cid, message=msg))
+                        if len(messages) != len(existing_messages):
+                            db.session.commit()
+                    session['low_stock_scan_at'] = now_ts
+
+            # Throttle notification queries to reduce DB pressure under concurrent load.
+            last_notif_refresh = session.get('notif_refresh_at', 0)
+            if now_ts - last_notif_refresh >= NOTIFICATION_REFRESH_INTERVAL_SEC:
+                notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
+                session['notif_refresh_at'] = now_ts
+                session['notif_count_cache'] = int(notif_count)
+            else:
+                notif_count = int(session.get('notif_count_cache', 0) or 0)
+
+            # Load notification lists only on the notifications page.
+            if request.path.startswith('/notificaciones'):
+                unread_notifications = (
+                    Notification.query
+                    .filter_by(company_id=cid, is_read=False)
+                    .order_by(Notification.created_at.desc())
+                    .limit(30)
                     .all()
                 )
-                if low_stock:
-                    messages = [f"Stock bajo: {ps.product.name}" for ps in low_stock if ps.product and ps.product.name]
-                    existing_messages = {
-                        row[0]
-                        for row in db.session.query(Notification.message)
-                        .filter(Notification.company_id == cid, Notification.message.in_(messages))
-                        .all()
-                    } if messages else set()
-                    for msg in messages:
-                        if msg not in existing_messages:
-                            db.session.add(Notification(company_id=cid, message=msg))
-                    if len(messages) != len(existing_messages):
-                        db.session.commit()
-                session['low_stock_scan_at'] = now_ts
-
-            notif_count = Notification.query.filter_by(company_id=cid, is_read=False).count()
-            unread_notifications = (
-                Notification.query
-                .filter_by(company_id=cid, is_read=False)
-                .order_by(Notification.created_at.desc())
-                .limit(30)
-                .all()
-            )
-            archived_notifications = (
-                Notification.query
-                .filter_by(company_id=cid, is_read=True)
-                .order_by(*_archived_notification_ordering())
-                .limit(50)
-                .all()
-            )
+                archived_notifications = (
+                    Notification.query
+                    .filter_by(company_id=cid, is_read=True)
+                    .order_by(*_archived_notification_ordering())
+                    .limit(50)
+                    .all()
+                )
         active_announcement = (
             SystemAnnouncement.query
             .filter_by(is_active=True)
