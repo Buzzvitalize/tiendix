@@ -395,6 +395,33 @@ def test_account_statement_pdf(client):
     client.get('/logout')
 
 
+def test_report_pdf_export_link_only_returns_generated_docs_url(client):
+    login(client, 'mgr', 'pass')
+    resp = client.get('/reportes/export?formato=pdf&link_only=1')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['ok'] is True
+    assert '/generated_docs/' in data['url'] or '/generated-docs/' in data['url']
+
+
+def test_account_statement_pdf_link_only_returns_generated_docs_url(client):
+    login(client, 'user', 'pass')
+    with app.app_context():
+        comp = CompanyInfo.query.first()
+        cli = Client.query.first()
+        cid = cli.id
+        order = Order(client_id=cid, subtotal=50, itbis=9, total=59, company_id=comp.id)
+        db.session.add(order); db.session.flush()
+        inv = Invoice(client_id=cid, order_id=order.id, subtotal=50, itbis=9, total=59,
+                      invoice_type='Consumidor Final', status='Pendiente', payment_method='Efectivo', company_id=comp.id)
+        db.session.add(inv); db.session.commit()
+    resp = client.get(f'/reportes/estado-cuentas/{cid}?pdf=1&link_only=1')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['ok'] is True
+    assert '/generated_docs/' in data['url'] or '/generated-docs/' in data['url']
+
+
 
 def test_get_company_info_logo_path_normalized(client):
     from app import get_company_info

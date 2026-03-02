@@ -107,8 +107,9 @@ def test_export_summary_and_pdf(client):
     app.config['MAX_EXPORT_ROWS'] = 100000
     resp = client.get('/reportes/export?formato=csv&tipo=resumen')
     assert b'Alimentos y Bebidas' in resp.data
-    resp = client.get('/reportes/export?formato=pdf')
-    assert resp.mimetype == 'application/pdf'
+    resp = client.get('/reportes/export?formato=pdf', follow_redirects=False)
+    assert resp.status_code == 302
+    assert '/generated_docs/' in resp.headers['Location'] or '/generated-docs/' in resp.headers['Location']
     client.get('/logout')
 
 
@@ -136,6 +137,7 @@ def test_export_history_filter(client):
 
 def test_reportes_export_pdf_allows_company_role(client):
     login(client, 'u1', 'pass')
-    resp = client.get('/reportes/export?formato=pdf')
-    assert resp.status_code == 200
+    resp = client.get('/reportes/export?formato=pdf', follow_redirects=False)
+    assert resp.status_code == 302
+    assert '/generated_docs/' in resp.headers['Location'] or '/generated-docs/' in resp.headers['Location']
 

@@ -61,7 +61,7 @@ except ModuleNotFoundError:  # pragma: no cover
     Workbook = None
 from datetime import datetime, timedelta
 from pathlib import Path
-from sqlalchemy import and_, extract, func, inspect, or_
+from sqlalchemy import and_, extract, func, inspect, or_, case
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import load_only, joinedload
 from sqlalchemy.engine import make_url
@@ -97,6 +97,7 @@ import threading
 from queue import Queue as ThreadQueue, Empty
 import time
 import random
+import unicodedata
 
 load_dotenv()
 
@@ -330,6 +331,22 @@ MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')
 MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', MAIL_USERNAME)
 MAIL_MAX_RETRIES = int(os.getenv('MAIL_MAX_RETRIES', 3))
 MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
+
+
+def _strip_accents(value: str | None) -> str:
+    text = '' if value is None else str(value)
+    return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+
+
+
+
+def _archived_notification_ordering():
+    # Cross-database NULLS LAST ordering (MariaDB/MySQL do not support "NULLS LAST").
+    return (
+        case((Notification.read_at.is_(None), 1), else_=0),
+        Notification.read_at.desc(),
+        Notification.created_at.desc(),
+    )
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -1347,7 +1364,7 @@ def inject_company():
             archived_notifications = (
                 Notification.query
                 .filter_by(company_id=cid, is_read=True)
-                .order_by(Notification.read_at.desc().nullslast(), Notification.created_at.desc())
+                .order_by(*_archived_notification_ordering())
                 .limit(50)
                 .all()
             )
@@ -3912,7 +3929,7 @@ def pay_invoice(invoice_id):
 @app.route('/notificaciones')
 def notifications_view():
     unread = company_query(Notification).filter_by(is_read=False).order_by(Notification.created_at.desc()).all()
-    archived = company_query(Notification).filter_by(is_read=True).order_by(Notification.read_at.desc().nullslast(), Notification.created_at.desc()).all()
+    archived = company_query(Notification).filter_by(is_read=True).order_by(*_archived_notification_ordering()).all()
     return render_template('notifications.html', notifications=unread + archived, unread_notifications=unread, archived_notifications=archived)
 
 
@@ -4425,6 +4442,10 @@ def account_statement_detail(client_id):
             company_id=current_company_id(),
             full_path=archived_path,
         )
+        if request.args.get('link_only') == '1':
+            if archived_url:
+                return jsonify({'ok': True, 'url': archived_url})
+            return jsonify({'ok': False, 'error': 'No se pudo generar el enlace del PDF'}), 500
         if archived_url:
             return redirect(archived_url)
         return _archive_and_send_pdf(
@@ -4658,9 +4679,9 @@ def export_reportes():
         items = [
             {
                 'code': inv.id,
-                'reference': inv.client.name if inv.client else '',
+                'reference': _strip_accents(inv.client.name if inv.client else ''),
                 'product_name': inv.date.strftime('%d/%m/%Y'),
-                'unit': inv.status or '',
+                'unit': _strip_accents(inv.status or ''),
                 'unit_price': inv.total,
                 'quantity': 1,
                 'discount': 0,
@@ -4670,9 +4691,9 @@ def export_reportes():
         subtotal = sum(inv.total for inv in invoices)
         note = (
             f"Rango: {(fecha_inicio or 'Todas')} - {(fecha_fin or 'Todas')} | "
-            f"Estado: {(estado or 'Todos')} | "
-            f"Categoría: {(categoria or 'Todas')} | "
-            f"Usuario: {user} | Facturas: {len(invoices)}"
+            f"Estado: {_strip_accents(estado or 'Todos')} | "
+            f"Categoria: {_strip_accents(categoria or 'Todas')} | "
+            f"Usuario: {_strip_accents(user)} | Facturas: {len(invoices)}"
         )
         pdf_data = generate_pdf_bytes(
             'Reporte de Facturas',
@@ -4686,7 +4707,20 @@ def export_reportes():
         )
         report_doc_number = datetime.now().strftime('%Y%m%d%H%M%S')
         archived_path = _archive_pdf_copy('reportes', report_doc_number, pdf_data, company_name=company.get('name'))
+        archived_url = _archived_download_url(
+            'reportes',
+            report_doc_number,
+            company_name=company.get('name'),
+            company_id=current_company_id(),
+            full_path=archived_path,
+        )
         log_export(user, formato, tipo, filtros, 'success', file_path=archived_path or 'memory:reportes.pdf')
+        if request.args.get('link_only') == '1':
+            if archived_url:
+                return jsonify({'ok': True, 'url': archived_url})
+            return jsonify({'ok': False, 'error': 'No se pudo generar el enlace del reporte'}), 500
+        if archived_url:
+            return redirect(archived_url)
         return _archive_and_send_pdf(
             doc_type='reportes',
             doc_number=report_doc_number,

@@ -35,3 +35,18 @@ def test_account_statement_detail_displays_full_name_and_link(tmp_path):
     assert 'Juan Perez' in body
     assert '/generated_docs/' in body
     assert 'target="_blank"' in body
+
+
+def test_account_statement_pdf_bytes_legacy_cell_signature(monkeypatch):
+    import account_pdf
+
+    monkeypatch.setattr(account_pdf, '_CELL_SUPPORTS_NEW_X', False)
+    data = account_pdf.generate_account_statement_pdf_bytes(
+        {'name': 'Compania', 'street': '', 'phone': '', 'rnc': '', 'logo': None},
+        {'name': 'Cliente Test', 'identifier': '', 'street': '', 'sector': '', 'province': '', 'phone': '', 'email': ''},
+        [{'document': 'Factura 1', 'order': 1, 'date': '01/03/2026', 'due': '15/03/2026', 'info': 'Pendiente', 'amount': 100, 'balance': 100}],
+        100,
+        {'0-30': 100, '31-60': 0, '61-90': 0, '91-120': 0, '121+': 0},
+        100.0,
+    )
+    assert data.startswith(b'%PDF')

@@ -5,6 +5,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app import app, db, notify
 from models import CompanyInfo, User, Notification
+from sqlalchemy.dialects import mysql
 
 
 def test_notifications_modal_and_archive_flow(tmp_path):
@@ -44,3 +45,16 @@ def test_notifications_modal_and_archive_flow(tmp_path):
             n = db.session.get(Notification, nid)
             assert n.is_read is True
             assert n.read_at is not None
+
+
+def test_archived_notifications_order_is_mysql_safe():
+    from app import _archived_notification_ordering
+    with app.app_context():
+        stmt = (
+            Notification.query
+            .filter_by(company_id=1, is_read=True)
+            .order_by(*_archived_notification_ordering())
+            .statement
+        )
+        compiled = str(stmt.compile(dialect=mysql.dialect()))
+    assert 'NULLS LAST' not in compiled.upper()

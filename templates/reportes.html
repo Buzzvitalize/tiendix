@@ -403,6 +403,9 @@ exportMenu.querySelectorAll('a').forEach(a => {
     e.preventDefault();
     spinner.classList.remove('hidden');
     const params = new URLSearchParams(new FormData(document.getElementById('filters')));
+    if (a.dataset.format === 'pdf') {
+      params.set('link_only', '1');
+    }
     const base = `{{ url_for('export_reportes') }}?formato=${a.dataset.format}&tipo=${exportTipo.value}&`;
     let resp = await fetch(base + params.toString());
     if (resp.status === 400) {
@@ -416,6 +419,8 @@ exportMenu.querySelectorAll('a').forEach(a => {
       const data = await resp.json();
       if (data.job) {
         alert('Reporte en proceso, revise el historial de exportaciones.');
+      } else if (data.url) {
+        window.open(data.url, '_blank', 'noopener');
       } else if (data.error) {
         alert(data.error);
       }

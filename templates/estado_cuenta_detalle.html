@@ -37,6 +37,30 @@
 </div>
 <p class="text-right font-semibold">Total: {{ total | money }}</p>
 <p class="text-right text-sm">% vencido: {{ overdue_pct|round(2) }}%</p>
-<a href="{{ url_for('account_statement_detail', client_id=client.id, pdf=1) }}" target="_blank" rel="noopener" class="btn-primary mt-2 inline-block">Exportar PDF</a>
+<button id="exportStatementPdf" type="button" class="btn-primary mt-2 inline-flex items-center gap-2">Exportar PDF</button><span id="exportStatementStatus" class="ml-2 text-sm text-gray-600"></span>
 {% if statement_url %}<p class="mt-2 text-sm">Link: <a class="text-blue-600 underline break-all" href="{{ statement_url }}" target="_blank">{{ statement_url }}</a></p>{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const exportBtn = document.getElementById('exportStatementPdf');
+const exportStatus = document.getElementById('exportStatementStatus');
+if (exportBtn) {
+  exportBtn.addEventListener('click', async () => {
+    exportBtn.disabled = true;
+    exportStatus.textContent = 'Generando link...';
+    try {
+      const resp = await fetch(`{{ url_for('account_statement_detail', client_id=client.id) }}?pdf=1&link_only=1`, { credentials: 'same-origin' });
+      const data = await resp.json();
+      if (!resp.ok || !data.url) throw new Error(data.error || 'No se pudo generar el link');
+      exportStatus.textContent = 'Link generado';
+      window.open(data.url, '_blank', 'noopener');
+    } catch (err) {
+      exportStatus.textContent = 'Error generando PDF';
+    } finally {
+      exportBtn.disabled = false;
+    }
+  });
+}
+</script>
 {% endblock %}
