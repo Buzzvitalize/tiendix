@@ -1456,6 +1456,21 @@ def _archived_download_url(doc_type: str, doc_number: int | str, *, company_name
     return url_for('download_generated_doc', filename=rel)
 
 
+def _set_archived_headers(response, *, doc_type: str, doc_number: int | str, company_name: str | None = None, full_path: str | None = None):
+    download_url = _archived_download_url(
+        doc_type,
+        doc_number,
+        company_name=company_name,
+        company_id=current_company_id(),
+        full_path=full_path,
+    )
+    if download_url:
+        response.headers['X-Archived-Url'] = download_url
+        if download_url.startswith('http://') or download_url.startswith('https://'):
+            response.headers['X-Archived-Public-Url'] = download_url
+    return response
+
+
 def _archive_and_send_pdf(*, doc_type: str, doc_number: int | str, pdf_data: bytes, download_name: str, company_name: str | None = None, archive: bool = True):
     """Archive PDF copy (best-effort) and return download response.
 
@@ -2917,9 +2932,28 @@ def list_quotations():
     quotations = query.order_by(Quotation.date.desc()).paginate(
         page=page, per_page=20, error_out=False
     )
+    archived_urls = {}
+    for q in quotations.items:
+        archived = _archived_pdf_path(
+            'cotizacion',
+            q.id,
+            company_name=(getattr(g, 'company', None).name if getattr(g, 'company', None) else None),
+            company_id=current_company_id(),
+        )
+        if archived.exists():
+            url = _archived_download_url(
+                'cotizacion',
+                q.id,
+                company_name=(getattr(g, 'company', None).name if getattr(g, 'company', None) else None),
+                company_id=current_company_id(),
+                full_path=str(archived),
+            )
+            if url:
+                archived_urls[q.id] = url
     return render_template(
         'cotizaciones.html',
         quotations=quotations,
+        archived_urls=archived_urls,
         client=client_q,
         date_from=date_from,
         date_to=date_to,
@@ -2983,7 +3017,18 @@ def new_quotation():
         except Exception as exc:
             app.logger.exception('Quotation archive generation failed id=%s: %s', quotation.id, exc)
 
-        if not archived_path:
+        archived_url = None
+        if archived_path:
+            archived_url = _archived_download_url(
+                'cotizacion',
+                quotation.id,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+                full_path=archived_path,
+            )
+            if archived_url:
+                flash(f'PDF generado: {archived_url}')
+        else:
             flash('La cotización fue creada, pero el PDF no se pudo generar en este momento.')
 
         is_first_quotation = company_query(Quotation).count() == 1
@@ -3258,6 +3303,27 @@ def quotation_pdf(quotation_id):
     company = get_company_info()
     filename = f'cotizacion_{quotation_id}.pdf'
     app.logger.info("Generating quotation PDF %s", quotation_id)
+
+    archived = _archived_pdf_path(
+        'cotizacion',
+        quotation.id,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+    )
+    if archived.exists():
+        _log_pdf_event('cotizacion', quotation.id, 'ok', 'servido desde generated_docs')
+        try:
+            response = send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
+        except TypeError:
+            response = send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
+        return _set_archived_headers(
+            response,
+            doc_type='cotizacion',
+            doc_number=quotation.id,
+            company_name=company.get('name'),
+            full_path=str(archived),
+        )
+
     try:
         pdf_data = _build_quotation_pdf_bytes(quotation, company)
         response = _archive_and_send_pdf(
@@ -3271,12 +3337,6 @@ def quotation_pdf(quotation_id):
         return response
     except Exception as exc:
         app.logger.exception('Quotation PDF generation failed id=%s: %s', quotation_id, exc)
-        archived = _archived_pdf_path(
-            'cotizacion',
-            quotation.id,
-            company_name=company.get('name'),
-            company_id=current_company_id(),
-        )
         if archived.exists():
             _log_pdf_event('cotizacion', quotation.id, 'fallback_ok', f'generacion fallo: {exc}; servido desde archivo')
             try:
@@ -3284,7 +3344,7 @@ def quotation_pdf(quotation_id):
             except TypeError:
                 return send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
         _log_pdf_event('cotizacion', quotation.id, 'error', f'generacion fallo y no existe archivo: {exc}')
-        raise
+        return ('No se pudo generar el PDF', 500)
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -3410,7 +3470,15 @@ def list_orders():
     if q:
         query = query.filter((Client.name.contains(q)) | (Client.identifier.contains(q)))
     orders = query.order_by(Order.date.desc()).all()
-    return render_template('pedido.html', orders=orders, q=q)
+    archived_order_urls = {}
+    company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    for o in orders:
+        archived = _archived_pdf_path('pedido', o.id, company_name=company_name, company_id=current_company_id())
+        if archived.exists():
+            url = _archived_download_url('pedido', o.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
+            if url:
+                archived_order_urls[o.id] = url
+    return render_template('pedido.html', orders=orders, q=q, archived_order_urls=archived_order_urls)
 
 @app.route('/pedidos/<int:order_id>/facturar')
 def order_to_invoice(order_id):
@@ -3503,7 +3571,15 @@ def list_invoices():
     if q:
         query = query.filter((Client.name.contains(q)) | (Client.identifier.contains(q)))
     invoices = query.order_by(Invoice.date.desc()).all()
-    return render_template('factura.html', invoices=invoices, q=q)
+    archived_invoice_urls = {}
+    company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    for f in invoices:
+        archived = _archived_pdf_path('factura', f.id, company_name=company_name, company_id=current_company_id())
+        if archived.exists():
+            url = _archived_download_url('factura', f.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
+            if url:
+                archived_invoice_urls[f.id] = url
+    return render_template('factura.html', invoices=invoices, q=q, archived_invoice_urls=archived_invoice_urls)
 
 
 @app.route('/facturas/<int:invoice_id>/pagar', methods=['POST'])

@@ -66,6 +66,7 @@ def _safe_text(value) -> str:
 
 
 
+
 def _clean_optional(value) -> str:
     if value is None:
         return ''
