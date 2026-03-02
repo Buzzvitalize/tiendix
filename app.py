@@ -3652,7 +3652,7 @@ def send_quotation_email(quotation_id):
         show_validity=True,
         validity_days=validity_days,
     )
-    send_email(client.email, subject, html)
+    send_email(client.email, subject, html, asynchronous=False)
     flash(f'Cotización enviada con éxito a {client.email}')
     return redirect(url_for('list_quotations'))
 
@@ -3803,7 +3803,7 @@ def send_order_email(order_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html)
+    send_email(client.email, subject, html, asynchronous=False)
     flash(f'Pedido enviado con exito a {client.email}')
     return redirect(url_for('list_orders'))
 
@@ -3946,7 +3946,7 @@ def send_invoice_email(invoice_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html)
+    send_email(client.email, subject, html, asynchronous=False)
     flash(f'Factura enviada con exito a {client.email}')
     return redirect(url_for('list_invoices'))
 

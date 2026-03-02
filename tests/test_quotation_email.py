@@ -51,10 +51,11 @@ def test_send_quotation_email(client, monkeypatch):
     cli, qid, email = client
     login(cli)
     sent = {}
-    def fake_send(to, subject, html, attachments=None):
+    def fake_send(to, subject, html, attachments=None, asynchronous=True):
         sent['to'] = to
         sent['attachments'] = attachments
         sent['html'] = html
+        sent['asynchronous'] = asynchronous
     monkeypatch.setattr('app.send_email', fake_send)
     resp = cli.post(f'/cotizaciones/{qid}/enviar', follow_redirects=True)
     assert resp.status_code == 200
@@ -62,3 +63,4 @@ def test_send_quotation_email(client, monkeypatch):
     assert sent['to'] == email
     assert sent['attachments'] is None
     assert '/generated_docs/' in sent['html'] or '/cotizaciones/' in sent['html']
+    assert sent['asynchronous'] is False
