@@ -132,12 +132,12 @@ app = Flask(__name__)
 APP_ENV = os.getenv('APP_ENV', 'development').strip().lower()
 
 
-APP_VERSION = os.getenv('APP_VERSION', '2.0.5').strip() or '2.0.5'
+APP_VERSION = os.getenv('APP_VERSION', '2.0.8').strip() or '2.0.8'
 APP_VERSION_HIGHLIGHTS = [
-    'Conexión MySQL/cPanel simplificada con soporte DB_* y DATABASE_URL.',
-    'Reportar Problema, anuncios del sistema y panel administrativo ampliado.',
-    'Renderizado PDF con fpdf2 para descargas más estables en hosting compartido.',
-    'Refuerzo de seguridad: validación runtime, bloqueo de rutas sensibles y mejoras de auditoría.',
+    '2026-03-02 · Ajustes de UX en Convertir Cotización: notas de Orden de Compra y guía de almacén.',
+    '2026-03-02 · Corrección de envío de correos SMTP para SSL/TLS (cPanel puerto 465).',
+    '2026-03-01 · Renderizado PDF con fpdf2 para descargas más estables en hosting compartido.',
+    '2026-03-01 · Refuerzo de seguridad: validación runtime, bloqueo de rutas sensibles y mejoras de auditoría.',
 ]
 
 def _normalized_database_url(url: str | None) -> str | None:

@@ -106,6 +106,16 @@ def test_multi_tenant_isolation(client):
     assert b'Alice' not in resp.data
 
 
+
+
+def test_convert_quotation_page_shows_guidance_text(client):
+    login(client, 'user1', 'pass')
+    resp = client.get('/cotizaciones/1/convertir')
+
+    assert resp.status_code == 200
+    assert b'Orden de compra (opcional)' in resp.data
+    assert b'puedes dejarlo vac' in resp.data
+    assert b'Almac\xc3\xa9n de salida' in resp.data
 def test_conversion_and_pdf(client):
     login(client, 'user1', 'pass')
     quote_pdf = client.get('/cotizaciones/1/pdf')
