@@ -3623,17 +3623,24 @@ def send_quotation_email(quotation_id):
         flash('El cliente no tiene correo registrado')
         return redirect(url_for('list_quotations'))
     company = get_company_info()
-    filename = f'cotizacion_{quotation_id}.pdf'
     validity_days = max((quotation.valid_until.date() - quotation.date.date()).days, 1) if quotation.valid_until and quotation.date else 30
-    pdf_data = generate_pdf_bytes('Cotizacion', company, client, quotation.items,
-                                  quotation.subtotal, quotation.itbis, quotation.total,
-                                  seller=quotation.seller, payment_method=quotation.payment_method,
-                                  bank=quotation.bank, doc_number=quotation.id, note=quotation.note,
-                                  date=quotation.date, valid_until=quotation.valid_until,
-                                  footer=(f"Condiciones: Esta cotizacion es valida por {validity_days} dias a partir de la fecha de emision. "
-                                          "Los precios estan sujetos a cambios sin previo aviso. "
-                                          "El ITBIS ha sido calculado conforme a la ley vigente."))
-    download_url = _document_download_url('cotizacion', quotation.id, company_name=company.get('name'))
+    pdf_data = _build_quotation_pdf_bytes(quotation, company)
+    archived_path = _archive_pdf_copy(
+        'cotizacion',
+        quotation.id,
+        pdf_data,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+    )
+    download_url = _archived_download_url(
+        'cotizacion',
+        quotation.id,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+        full_path=archived_path,
+    ) if archived_path else None
+    if not download_url:
+        download_url = url_for('quotation_pdf', quotation_id=quotation.id, _external=True)
     subject = _document_email_subject(company.get('name', 'Empresa'), 'cotizacion', quotation.id, validity_days=validity_days)
     html = render_template(
         'emails/document_send.html',
@@ -3645,7 +3652,7 @@ def send_quotation_email(quotation_id):
         show_validity=True,
         validity_days=validity_days,
     )
-    send_email(client.email, subject, html, attachments=[(filename, pdf_data)])
+    send_email(client.email, subject, html)
     flash(f'Cotización enviada con éxito a {client.email}')
     return redirect(url_for('list_quotations'))
 
@@ -3768,9 +3775,23 @@ def send_order_email(order_id):
         flash('Alerta: este cliente no tiene correo')
         return redirect(url_for('list_orders'))
     company = get_company_info()
-    filename = f'pedido_{order_id}.pdf'
     pdf_data = _build_order_pdf_bytes(order, company)
-    download_url = _document_download_url('pedido', order.id, company_name=company.get('name'))
+    archived_path = _archive_pdf_copy(
+        'pedido',
+        order.id,
+        pdf_data,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+    )
+    download_url = _archived_download_url(
+        'pedido',
+        order.id,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+        full_path=archived_path,
+    ) if archived_path else None
+    if not download_url:
+        download_url = url_for('order_pdf', order_id=order.id, _external=True)
     subject = _document_email_subject(company.get('name', 'Empresa'), 'pedido', order.id)
     html = render_template(
         'emails/document_send.html',
@@ -3782,7 +3803,7 @@ def send_order_email(order_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, attachments=[(filename, pdf_data)])
+    send_email(client.email, subject, html)
     flash(f'Pedido enviado con exito a {client.email}')
     return redirect(url_for('list_orders'))
 
@@ -3897,9 +3918,23 @@ def send_invoice_email(invoice_id):
         flash('Alerta: este cliente no tiene correo')
         return redirect(url_for('list_invoices'))
     company = get_company_info()
-    filename = f'factura_{invoice_id}.pdf'
     pdf_data = _build_invoice_pdf_bytes(invoice, company)
-    download_url = _document_download_url('factura', invoice.id, company_name=company.get('name'))
+    archived_path = _archive_pdf_copy(
+        'factura',
+        invoice.id,
+        pdf_data,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+    )
+    download_url = _archived_download_url(
+        'factura',
+        invoice.id,
+        company_name=company.get('name'),
+        company_id=current_company_id(),
+        full_path=archived_path,
+    ) if archived_path else None
+    if not download_url:
+        download_url = url_for('invoice_pdf', invoice_id=invoice.id, _external=True)
     subject = _document_email_subject(company.get('name', 'Empresa'), 'factura', invoice.id)
     html = render_template(
         'emails/document_send.html',
@@ -3911,7 +3946,7 @@ def send_invoice_email(invoice_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, attachments=[(filename, pdf_data)])
+    send_email(client.email, subject, html)
     flash(f'Factura enviada con exito a {client.email}')
     return redirect(url_for('list_invoices'))
 
