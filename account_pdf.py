@@ -48,6 +48,24 @@ def _plain_text(value: str) -> str:
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
     return text
 
+
+
+def _pdf_output_to_bytes(pdf: FPDF) -> bytes:
+    """Return PDF bytes across pyfpdf/fpdf2 variants.
+
+    - fpdf2 usually returns ``bytearray`` for ``output()``.
+    - pyfpdf often returns ``str`` unless ``dest='S'`` is used.
+    """
+    try:
+        raw = pdf.output(dest='S')
+    except TypeError:
+        raw = pdf.output()
+
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw)
+    if isinstance(raw, str):
+        return raw.encode('latin-1', errors='ignore')
+    return bytes(raw)
 def generate_account_statement_pdf_bytes(company: dict, client: dict, rows: list, total: float,
                                          aging: dict, overdue_pct: float) -> bytes:
     pdf = FPDF()
@@ -123,7 +141,7 @@ def generate_account_statement_pdf_bytes(company: dict, client: dict, rows: list
     pdf.ln(8)
     pdf.set_font('Helvetica','',8)
     pdf.multi_cell(0,4,'Pagos a cuentas: ______\nLas facturas no pagadas luego de la fecha de vencimiento generan un cargo mensual de un 3% de mora.')
-    return bytes(pdf.output())
+    return _pdf_output_to_bytes(pdf)
 
 
 def generate_account_statement_pdf(company: dict, client: dict, rows: list, total: float,
