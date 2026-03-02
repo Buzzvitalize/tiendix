@@ -946,6 +946,38 @@ else:
 SIGNUP_AUTO_APPROVE_KEY = 'signup_auto_approve'
 
 
+
+LOGIN_SOCIAL_LINK_KEYS = {
+    'facebook': 'login_social_facebook',
+    'instagram': 'login_social_instagram',
+    'whatsapp': 'login_social_whatsapp',
+    'telegram': 'login_social_telegram',
+    'youtube': 'login_social_youtube',
+    'linkedin': 'login_social_linkedin',
+}
+
+
+def get_login_social_links() -> dict[str, str]:
+    links: dict[str, str] = {}
+    for network, key in LOGIN_SOCIAL_LINK_KEYS.items():
+        setting = db.session.get(AppSetting, key)
+        links[network] = (setting.value.strip() if setting and setting.value else '')
+    return links
+
+
+def _set_login_social_links_from_form(form_data) -> dict[str, str]:
+    links = {}
+    for network, key in LOGIN_SOCIAL_LINK_KEYS.items():
+        value = (form_data.get(f'social_{network}') or '').strip()
+        links[network] = value
+        setting = db.session.get(AppSetting, key)
+        if not setting:
+            setting = AppSetting(key=key, value=value)
+            db.session.add(setting)
+        else:
+            setting.value = value
+    return links
+
 def _is_signup_auto_approve_enabled() -> bool:
     setting = db.session.get(AppSetting, SIGNUP_AUTO_APPROVE_KEY)
     if not setting:
@@ -2074,7 +2106,11 @@ def report_error():
 @app.route('/cpaneltx')
 @admin_only
 def cpanel_home():
-    return render_template('cpaneltx.html', signup_auto_approve=_is_signup_auto_approve_enabled())
+    return render_template(
+        'cpaneltx.html',
+        signup_auto_approve=_is_signup_auto_approve_enabled(),
+        social_links=get_login_social_links(),
+    )
 
 
 @app.post('/cpaneltx/signup-mode')
@@ -2088,6 +2124,17 @@ def cpanel_signup_mode():
         flash('Aprobación automática activada: nuevas cuentas se crearán directamente con rol Manager.')
     else:
         flash('Aprobación automática desactivada: las solicitudes requerirán aprobación de administrador.')
+    return redirect(url_for('cpanel_home'))
+
+
+
+@app.post('/cpaneltx/login-social-links')
+@admin_only
+def cpanel_login_social_links():
+    links = _set_login_social_links_from_form(request.form)
+    db.session.commit()
+    log_audit('cpanel_login_social_links', 'app_setting', details=links)
+    flash('Redes sociales del login actualizadas')
     return redirect(url_for('cpanel_home'))
 
 

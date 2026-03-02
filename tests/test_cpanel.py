@@ -297,3 +297,25 @@ def test_admin_can_delete_quotation_from_cpanel(client):
 
     with app.app_context():
         assert db.session.get(Quotation, qid) is None
+
+
+def test_cpanel_can_update_login_social_links_and_login_renders_them(client):
+    login(client, 'admin', '363636')
+    resp = client.post('/cpaneltx/login-social-links', data={
+        'social_facebook': 'https://facebook.com/tiendix',
+        'social_instagram': 'https://instagram.com/tiendix',
+        'social_whatsapp': 'https://wa.me/18095551212',
+        'social_telegram': 'https://t.me/tiendix',
+        'social_youtube': 'https://youtube.com/@tiendix',
+        'social_linkedin': 'https://linkedin.com/company/tiendix',
+    }, follow_redirects=True)
+    assert resp.status_code == 200
+
+    with app.app_context():
+        assert db.session.get(AppSetting, 'login_social_facebook').value == 'https://facebook.com/tiendix'
+        assert db.session.get(AppSetting, 'login_social_linkedin').value == 'https://linkedin.com/company/tiendix'
+
+    login_page = client.get('/login')
+    html = login_page.get_data(as_text=True)
+    assert 'https://facebook.com/tiendix' in html
+    assert 'aria-label="LinkedIn"' in html
