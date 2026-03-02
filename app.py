@@ -334,8 +334,12 @@ MAIL_RETRY_DELAY_SEC = float(os.getenv('MAIL_RETRY_DELAY_SEC', 1))
 MAIL_CONNECT_TIMEOUT_SEC = float(os.getenv('MAIL_CONNECT_TIMEOUT_SEC', 8))
 LOW_STOCK_SCAN_INTERVAL_SEC = int(os.getenv('LOW_STOCK_SCAN_INTERVAL_SEC', 1800))
 LOW_STOCK_SCAN_MAX_ITEMS = int(os.getenv('LOW_STOCK_SCAN_MAX_ITEMS', 200))
-NOTIFICATION_REFRESH_INTERVAL_SEC = int(os.getenv('NOTIFICATION_REFRESH_INTERVAL_SEC', 30))
+NOTIFICATION_REFRESH_INTERVAL_SEC = int(os.getenv('NOTIFICATION_REFRESH_INTERVAL_SEC', 120))
 ENABLE_LOW_STOCK_SCAN = str(os.getenv('ENABLE_LOW_STOCK_SCAN', '0')).strip().lower() in {'1','true','yes','on'}
+ENABLE_NOTIFICATIONS_CONTEXT = str(os.getenv('ENABLE_NOTIFICATIONS_CONTEXT', '1')).strip().lower() in {'1','true','yes','on'}
+ANNOUNCEMENT_REFRESH_INTERVAL_SEC = int(os.getenv('ANNOUNCEMENT_REFRESH_INTERVAL_SEC', 120))
+
+_active_announcement_cache = {'ts': 0, 'obj': None}
 
 
 def _strip_accents(value: str | None) -> str:
@@ -1395,7 +1399,7 @@ def inject_company():
     active_announcement = None
     try:
         cid = current_company_id()
-        if 'user_id' in session and cid:
+        if 'user_id' in session and cid and ENABLE_NOTIFICATIONS_CONTEXT:
             now_ts = int(time.time())
 
             # Optional background-like scan for low stock; disabled by default to protect worker capacity.
@@ -1450,12 +1454,16 @@ def inject_company():
                     .limit(50)
                     .all()
                 )
-        active_announcement = (
-            SystemAnnouncement.query
-            .filter_by(is_active=True)
-            .order_by(SystemAnnouncement.updated_at.desc())
-            .first()
-        )
+        ann_now = int(time.time())
+        if ann_now - int(_active_announcement_cache.get('ts', 0) or 0) >= ANNOUNCEMENT_REFRESH_INTERVAL_SEC:
+            _active_announcement_cache['obj'] = (
+                SystemAnnouncement.query
+                .filter_by(is_active=True)
+                .order_by(SystemAnnouncement.updated_at.desc())
+                .first()
+            )
+            _active_announcement_cache['ts'] = ann_now
+        active_announcement = _active_announcement_cache.get('obj')
     except Exception as exc:
         app.logger.exception('Failed to compute notifications: %s', exc)
     return {
@@ -3334,7 +3342,6 @@ def list_quotations():
 @app.route('/cotizaciones/nueva', methods=['GET', 'POST'])
 def new_quotation():
     if request.method == 'POST':
-        print('Form data:', dict(request.form))
         client_id = request.form.get('client_id')
         if not client_id:
             flash('Debe seleccionar un cliente registrado')
