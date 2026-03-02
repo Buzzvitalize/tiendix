@@ -194,13 +194,19 @@
     async function markNotificationRead(id){
       const csrfToken = '{{ csrf_token() }}';
       try{
+        const payload = new URLSearchParams();
+        payload.set('csrf_token', csrfToken);
         const resp = await fetch(`/notificaciones/${id}/leer`, {
           method:'POST',
+          credentials:'same-origin',
           headers:{
             'X-Requested-With':'XMLHttpRequest',
             'Accept':'application/json',
-            'X-CSRFToken': csrfToken
-          }
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-CSRFToken': csrfToken,
+            'X-CSRF-Token': csrfToken
+          },
+          body: payload.toString()
         });
         const data = await resp.json();
         if(!data.ok) return;
