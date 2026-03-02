@@ -65,3 +65,31 @@ def test_reset_request_page_accessible(client):
     body = resp.get_data(as_text=True)
     assert 'Recuperar contraseña' in body
     assert 'Regresar al login' in body
+
+
+def test_reset_request_sends_recovery_email_sync(client, monkeypatch):
+    sent = {}
+
+    def fake_send_email(to, subject, html, attachments=None, asynchronous=True):
+        sent['to'] = to
+        sent['subject'] = subject
+        sent['html'] = html
+        sent['async'] = asynchronous
+
+    monkeypatch.setattr('app.send_email', fake_send_email)
+
+    resp = client.post('/reset', data={'email': 'u@example.com'})
+    assert resp.status_code == 302
+    assert sent['to'] == 'u@example.com'
+    assert sent['subject'] == '[Tiendix] - recuperacion de contraseña'
+    assert '/recovery/' in sent['html']
+    assert sent['async'] is False
+
+
+def test_recovery_alias_route_is_accessible(client):
+    with app.app_context():
+        user = User.query.filter_by(email='u@example.com').first()
+        from auth import generate_reset_token
+        token = generate_reset_token(user)
+    resp = client.get(f'/recovery/{token}')
+    assert resp.status_code == 200

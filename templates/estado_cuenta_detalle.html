@@ -2,7 +2,7 @@
 {% block content %}
 <h1 class="text-xl font-bold mb-4">Estado de cuenta</h1>
 <div class="mb-4">
-  <p class="font-semibold">{{ client.name }}</p>
+  <p class="font-semibold">{{ client_display_name or client.name }}</p>
   {% if client.identifier %}<p>RNC: {{ client.identifier }}</p>{% endif %}
   <p>{{ client.street }} {{ client.sector }} {{ client.province }}</p>
   <p>{{ client.phone }} {{ client.email }}</p>
@@ -36,4 +36,5 @@
 <p class="text-right font-semibold">Total: {{ total | money }}</p>
 <p class="text-right text-sm">% vencido: {{ overdue_pct|round(2) }}%</p>
 <a href="{{ url_for('account_statement_detail', client_id=client.id, pdf=1) }}" class="btn-primary mt-2 inline-block">Exportar PDF</a>
+{% if statement_url %}<p class="mt-2 text-sm">Link: <a class="text-blue-600 underline break-all" href="{{ statement_url }}" target="_blank">{{ statement_url }}</a></p>{% endif %}
 {% endblock %}

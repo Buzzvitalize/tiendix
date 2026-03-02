@@ -28,7 +28,7 @@
         <td class="p-2">{{ f.client.name }}</td>
         <td class="p-2">{{ f.date.strftime('%d/%m/%Y %I:%M %p') }}</td>
         <td class="p-2">{{ f.total | money }}</td>
-        <td class="p-2">{{ f.status }}</td>
+        <td class="p-2">{% if f.status == 'Pagada' %}<span class="px-2 py-1 rounded bg-green-100 text-green-700">Pagada</span>{% else %}<span class="px-2 py-1 rounded bg-red-100 text-red-700 font-semibold">{{ f.status }}</span>{% endif %}</td>
         <td class="p-2 space-x-2">
           {% if f.status != 'Pagada' %}
           <form method="post" action="{{ url_for('pay_invoice', invoice_id=f.id) }}" class="inline">
@@ -36,7 +36,11 @@
             <button class="text-green-600 text-sm" onclick="return confirm('¿Marcar como pagada?')">Pagada</button>
           </form>
           {% endif %}
-          <a class="text-blue-500 text-sm" href="{{ url_for('invoice_pdf', invoice_id=f.id) }}">PDF</a>
+          <a class="text-blue-500 text-sm inline-flex items-center gap-1" href="{{ archived_invoice_urls.get(f.id) or '#' }}" target="_blank" rel="noopener"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M6 2h9l5 5v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 1.5V8h4.5L14 3.5zM8 13h8v1.5H8V13zm0 3h8v1.5H8V16zm0-6h5v1.5H8V10z"/></svg>PDF</a>
+        <form method="post" action="{{ url_for('send_invoice_email', invoice_id=f.id) }}" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="text-indigo-500 text-sm inline-flex items-center gap-1"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M2 4l20 8-20 8 4-8-4-8zm6.5 8L4.8 7.5 16 12 4.8 16.5 8.5 12z"/></svg>Enviar</button>
+          </form>
         </td>
       </tr>
     {% endfor %}

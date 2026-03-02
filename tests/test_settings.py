@@ -1,6 +1,7 @@
 import os
 import sys
 import pytest
+from io import BytesIO
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db
@@ -13,6 +14,9 @@ def client(tmp_path):
     app.config.from_object('config.TestingConfig')
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
     with app.app_context():
+        db.session.remove()
+        db.engine.dispose()
+        db.drop_all()
         db.create_all()
         company = CompanyInfo(name='Comp', street='s', sector='s', province='p', phone='1', rnc='1')
         db.session.add(company)
@@ -94,3 +98,34 @@ def test_settings_show_owner_email_readonly_and_unsaved_warning(client):
     assert b'owner@comp.test' in resp.data
     assert b'readonly' in resp.data
     assert 'Aún no has guardado los cambios' in resp.data.decode('utf-8')
+
+
+
+
+def test_logo_upload_accepts_real_png_and_rejects_fake_image(client):
+    import base64
+
+    fake_payload = BytesIO(b'#!/bin/bash\necho hacked')
+    resp = client.post('/ajustes/empresa', data={
+        'ncf_final': '1',
+        'ncf_fiscal': '1',
+        'logo': (fake_payload, 'evil.png'),
+    }, content_type='multipart/form-data', follow_redirects=True)
+    body = resp.data.decode('utf-8', errors='ignore')
+    assert 'Contenido de logo invalido' in body or 'Contenido de logo inválido' in body
+
+    png_b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQImWNgYAAAAAQAAQvnAp0AAAAASUVORK5CYII='
+    png_bytes = BytesIO(base64.b64decode(png_b64))
+    resp2 = client.post('/ajustes/empresa', data={
+        'ncf_final': '1',
+        'ncf_fiscal': '1',
+        'logo': (png_bytes, 'logo.png'),
+    }, content_type='multipart/form-data')
+    assert resp2.status_code == 302
+
+    with app.app_context():
+        company = CompanyInfo.query.filter_by(name='Comp').first()
+        assert company is not None
+        assert company.logo is not None
+        assert company.logo.startswith('uploads/logo_')
+        assert company.logo.endswith('.png')
