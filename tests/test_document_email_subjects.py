@@ -46,7 +46,7 @@ def test_document_email_subjects_and_body(tmp_path, monkeypatch):
     sent = []
 
     def fake_send(to, subject, html, attachments=None, asynchronous=True):
-        sent.append((to, subject, html, attachments))
+        sent.append((to, subject, html, attachments, asynchronous))
 
     monkeypatch.setattr('app.send_email', fake_send)
 
@@ -60,5 +60,14 @@ def test_document_email_subjects_and_body(tmp_path, monkeypatch):
     assert 'CompX - Le acaba de enviar una cotizacion #1' in sent[0][1]
     assert 'vigencia de 15 dias' in sent[0][1]
     assert 'Aqui ajustamos el link de descarga de la cotizacion solicitada' in sent[0][2]
+    assert ('/generated_docs/' in sent[0][2]) or ('/cotizaciones/1/pdf' in sent[0][2])
+    assert sent[0][3] is None
+    assert sent[0][4] is False
     assert 'CompX - Le acaba de enviar una pedido #1' in sent[1][1]
+    assert ('/generated_docs/' in sent[1][2]) or ('/pedidos/1/pdf' in sent[1][2])
+    assert sent[1][3] is None
+    assert sent[1][4] is False
     assert 'CompX - Le acaba de enviar una factura #1' in sent[2][1]
+    assert ('/generated_docs/' in sent[2][2]) or ('/facturas/1/pdf' in sent[2][2])
+    assert sent[2][3] is None
+    assert sent[2][4] is False
