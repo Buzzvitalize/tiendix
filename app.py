@@ -940,7 +940,9 @@ AUTO_RUN_MIGRATIONS = _is_auto_run_migrations_enabled()
 if AUTO_RUN_MIGRATIONS:
     run_auto_migrations()
 else:
-    app.logger.info('AUTO_RUN_MIGRATIONS disabled: skipping startup Alembic upgrade; schema changes must be applied manually.')
+    app.logger.info('AUTO_RUN_MIGRATIONS disabled: skipping startup Alembic upgrade; applying lightweight legacy schema sync only.')
+    with app.app_context():
+        _migrate_legacy_schema()
 
 
 SIGNUP_AUTO_APPROVE_KEY = 'signup_auto_approve'
