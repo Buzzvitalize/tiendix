@@ -63,4 +63,4 @@ def test_send_quotation_email(client, monkeypatch):
     assert sent['to'] == email
     assert sent['attachments'] is None
     assert '/generated_docs/' in sent['html'] or '/cotizaciones/' in sent['html']
-    assert sent['asynchronous'] is False
+    assert sent['asynchronous'] is True

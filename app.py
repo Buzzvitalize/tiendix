@@ -452,10 +452,27 @@ def _document_download_url(doc_type: str, doc_number: int, company_name: str | N
     )
 
 
-def _document_email_subject(company_name: str, doc_label: str, doc_number: int, validity_days: int | None = None) -> str:
+def _document_email_subject(company_name: str, doc_label: str, doc_number: int | str, validity_days: int | None = None) -> str:
     if validity_days is not None:
         return f"{company_name} - Le acaba de enviar una {doc_label} #{doc_number}, con tiempo de vigencia de {validity_days} dias"
     return f"{company_name} - Le acaba de enviar una {doc_label} #{doc_number}"
+
+
+def _document_email_reference(download_url: str | None, doc_type: str, doc_number: int, company_name: str | None = None) -> str:
+    """Return human-friendly document reference for email subject/body.
+
+    Prefer the archived filename stem (e.g. ``darcyn0206-2-3-2026``) when
+    available in the generated_docs URL; fallback to deterministic local stem.
+    """
+    if download_url:
+        try:
+            parsed = urlparse(download_url)
+            stem = Path(parsed.path).stem
+            if stem:
+                return stem
+        except Exception:
+            pass
+    return _doc_file_stem(doc_type, doc_number, company_name=company_name, company_id=current_company_id())
 
 def _module_available(module_name: str) -> bool:
     try:
@@ -3624,35 +3641,22 @@ def send_quotation_email(quotation_id):
         return redirect(url_for('list_quotations'))
     company = get_company_info()
     validity_days = max((quotation.valid_until.date() - quotation.date.date()).days, 1) if quotation.valid_until and quotation.date else 30
-    pdf_data = _build_quotation_pdf_bytes(quotation, company)
-    archived_path = _archive_pdf_copy(
-        'cotizacion',
-        quotation.id,
-        pdf_data,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-    )
-    download_url = _archived_download_url(
-        'cotizacion',
-        quotation.id,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-        full_path=archived_path,
-    ) if archived_path else None
+    download_url = _document_download_url('cotizacion', quotation.id, company_name=company.get('name'))
     if not download_url:
         download_url = url_for('quotation_pdf', quotation_id=quotation.id, _external=True)
-    subject = _document_email_subject(company.get('name', 'Empresa'), 'cotizacion', quotation.id, validity_days=validity_days)
+    email_ref = _document_email_reference(download_url, 'cotizacion', quotation.id, company_name=company.get('name'))
+    subject = _document_email_subject(company.get('name', 'Empresa'), 'cotizacion', email_ref, validity_days=validity_days)
     html = render_template(
         'emails/document_send.html',
         company=company,
         client=client,
         doc_label='cotizacion',
-        doc_number=quotation.id,
+        doc_number=email_ref,
         download_url=download_url,
         show_validity=True,
         validity_days=validity_days,
     )
-    send_email(client.email, subject, html, asynchronous=False)
+    send_email(client.email, subject, html)
     flash(f'Cotización enviada con éxito a {client.email}')
     return redirect(url_for('list_quotations'))
 
@@ -3775,35 +3779,22 @@ def send_order_email(order_id):
         flash('Alerta: este cliente no tiene correo')
         return redirect(url_for('list_orders'))
     company = get_company_info()
-    pdf_data = _build_order_pdf_bytes(order, company)
-    archived_path = _archive_pdf_copy(
-        'pedido',
-        order.id,
-        pdf_data,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-    )
-    download_url = _archived_download_url(
-        'pedido',
-        order.id,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-        full_path=archived_path,
-    ) if archived_path else None
+    download_url = _document_download_url('pedido', order.id, company_name=company.get('name'))
     if not download_url:
         download_url = url_for('order_pdf', order_id=order.id, _external=True)
-    subject = _document_email_subject(company.get('name', 'Empresa'), 'pedido', order.id)
+    email_ref = _document_email_reference(download_url, 'pedido', order.id, company_name=company.get('name'))
+    subject = _document_email_subject(company.get('name', 'Empresa'), 'pedido', email_ref)
     html = render_template(
         'emails/document_send.html',
         company=company,
         client=client,
         doc_label='pedido',
-        doc_number=order.id,
+        doc_number=email_ref,
         download_url=download_url,
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, asynchronous=False)
+    send_email(client.email, subject, html)
     flash(f'Pedido enviado con exito a {client.email}')
     return redirect(url_for('list_orders'))
 
@@ -3918,35 +3909,22 @@ def send_invoice_email(invoice_id):
         flash('Alerta: este cliente no tiene correo')
         return redirect(url_for('list_invoices'))
     company = get_company_info()
-    pdf_data = _build_invoice_pdf_bytes(invoice, company)
-    archived_path = _archive_pdf_copy(
-        'factura',
-        invoice.id,
-        pdf_data,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-    )
-    download_url = _archived_download_url(
-        'factura',
-        invoice.id,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-        full_path=archived_path,
-    ) if archived_path else None
+    download_url = _document_download_url('factura', invoice.id, company_name=company.get('name'))
     if not download_url:
         download_url = url_for('invoice_pdf', invoice_id=invoice.id, _external=True)
-    subject = _document_email_subject(company.get('name', 'Empresa'), 'factura', invoice.id)
+    email_ref = _document_email_reference(download_url, 'factura', invoice.id, company_name=company.get('name'))
+    subject = _document_email_subject(company.get('name', 'Empresa'), 'factura', email_ref)
     html = render_template(
         'emails/document_send.html',
         company=company,
         client=client,
         doc_label='factura',
-        doc_number=invoice.id,
+        doc_number=email_ref,
         download_url=download_url,
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, asynchronous=False)
+    send_email(client.email, subject, html)
     flash(f'Factura enviada con exito a {client.email}')
     return redirect(url_for('list_invoices'))
 
@@ -3970,17 +3948,28 @@ def notifications_view():
 
 @app.post('/notificaciones/<int:nid>/leer')
 def notifications_read(nid):
-    notif = company_get(Notification, nid)
-    if notif.is_read:
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.accept_mimetypes.best == 'application/json':
+    wants_json = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.accept_mimetypes.best == 'application/json'
+    try:
+        notif = company_get(Notification, nid)
+        if notif.is_read:
+            if wants_json:
+                return jsonify({'ok': True, 'id': notif.id, 'read_at': notif.read_at.strftime('%d/%m/%Y %I:%M %p') if notif.read_at else ''})
+            return redirect(request.referrer or url_for('notifications_view'))
+
+        notif.is_read = True
+        notif.read_at = dom_now()
+        db.session.commit()
+
+        if wants_json:
             return jsonify({'ok': True, 'id': notif.id, 'read_at': notif.read_at.strftime('%d/%m/%Y %I:%M %p') if notif.read_at else ''})
         return redirect(request.referrer or url_for('notifications_view'))
-    notif.is_read = True
-    notif.read_at = dom_now()
-    db.session.commit()
-    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.accept_mimetypes.best == 'application/json':
-        return jsonify({'ok': True, 'id': notif.id, 'read_at': notif.read_at.strftime('%d/%m/%Y %I:%M %p') if notif.read_at else ''})
-    return redirect(request.referrer or url_for('notifications_view'))
+    except Exception as exc:  # pragma: no cover - defensive in prod
+        db.session.rollback()
+        app.logger.exception('Error archivando notificacion id=%s: %s', nid, exc)
+        if wants_json:
+            return jsonify({'ok': False, 'error': 'No se pudo archivar la notificación'}), 500
+        flash('No se pudo archivar la notificación. Intente nuevamente.')
+        return redirect(request.referrer or url_for('notifications_view'))
 
 @app.route('/facturas/<int:invoice_id>/pdf')
 def invoice_pdf(invoice_id):
