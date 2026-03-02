@@ -298,3 +298,5 @@ Haz esto:
 Notas:
 - La descarga del PDF se sirve en memoria (no depende de escritura en disco para responder al navegador).
 - Si falla el guardado en carpeta, la descarga puede seguir funcionando, y el warning queda en `logs/app.log`.
+
+- AUTO_RUN_MIGRATIONS=0  # Opcional: desactiva upgrade Alembic automático al iniciar si manejarás cambios de BD manualmente (phpMyAdmin).

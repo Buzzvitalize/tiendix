@@ -921,7 +921,18 @@ def ensure_admin():
 
 # Run migrations when the module is imported so that new fields are available
 # even if ``flask db upgrade`` wasn't executed manually.
-run_auto_migrations()
+def _is_auto_run_migrations_enabled() -> bool:
+    value = os.getenv('AUTO_RUN_MIGRATIONS')
+    if value is None:
+        return True
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+AUTO_RUN_MIGRATIONS = _is_auto_run_migrations_enabled()
+if AUTO_RUN_MIGRATIONS:
+    run_auto_migrations()
+else:
+    app.logger.info('AUTO_RUN_MIGRATIONS disabled: skipping startup Alembic upgrade; schema changes must be applied manually.')
 
 
 SIGNUP_AUTO_APPROVE_KEY = 'signup_auto_approve'
