@@ -15,7 +15,7 @@
       </tr>
     </thead>
     <tbody>
-      {% for q in quotations %}
+      {% for q in quotations.items %}
       <tr class="border-t">
         <td class="p-2">{{ q.id }}</td>
         <td class="p-2">{{ q.client.name if q.client else '-' }}</td>
@@ -32,5 +32,14 @@
       {% endfor %}
     </tbody>
   </table>
+</div>
+<div class="mt-4 flex items-center gap-2">
+  {% if quotations.has_prev %}
+  <a href="{{ url_for('cpanel_quotations', page=quotations.prev_num) }}" class="px-2 py-1 bg-gray-200 rounded">Anterior</a>
+  {% endif %}
+  <span>Página {{ quotations.page }} de {{ quotations.pages }}</span>
+  {% if quotations.has_next %}
+  <a href="{{ url_for('cpanel_quotations', page=quotations.next_num) }}" class="px-2 py-1 bg-gray-200 rounded">Siguiente</a>
+  {% endif %}
 </div>
 {% endblock %}

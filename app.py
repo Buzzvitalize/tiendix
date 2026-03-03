@@ -2656,7 +2656,12 @@ def cpanel_company_delete(cid):
 @app.route('/cpaneltx/quotations')
 @admin_only
 def cpanel_quotations():
-    quotations = Quotation.query.options(joinedload(Quotation.client)).all()
+    page = request.args.get('page', 1, type=int)
+    quotations = (
+        Quotation.query.options(joinedload(Quotation.client))
+        .order_by(Quotation.date.desc())
+        .paginate(page=page, per_page=30, error_out=False)
+    )
     return render_template('cpanel_quotations.html', quotations=quotations)
 
 
@@ -2673,7 +2678,12 @@ def cpanel_quotation_delete(qid):
 @app.route('/cpaneltx/orders')
 @admin_only
 def cpanel_orders():
-    orders = Order.query.options(joinedload(Order.client)).all()
+    page = request.args.get('page', 1, type=int)
+    orders = (
+        Order.query.options(joinedload(Order.client))
+        .order_by(Order.date.desc())
+        .paginate(page=page, per_page=30, error_out=False)
+    )
     return render_template('cpanel_orders.html', orders=orders)
 
 
@@ -2691,7 +2701,12 @@ def cpanel_order_delete(oid):
 @app.route('/cpaneltx/invoices')
 @admin_only
 def cpanel_invoices():
-    invoices = Invoice.query.options(joinedload(Invoice.client)).all()
+    page = request.args.get('page', 1, type=int)
+    invoices = (
+        Invoice.query.options(joinedload(Invoice.client))
+        .order_by(Invoice.date.desc())
+        .paginate(page=page, per_page=30, error_out=False)
+    )
     return render_template('cpanel_invoices.html', invoices=invoices)
 
 
