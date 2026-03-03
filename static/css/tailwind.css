@@ -15,15 +15,17 @@
 .input{border:1px solid #d1d5db;border-radius:.375rem;padding:.5rem .75rem;width:100%;transition:border-color .2s,box-shadow .2s}
 .input:focus{outline:none;box-shadow:0 0 0 2px #2563eb;border-color:#2563eb}
 .action-bar{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center}
-.action-btn{display:inline-flex;align-items:center;gap:.35rem;padding:.35rem .75rem;border-radius:.5rem;color:#fff!important;font-size:.875rem;font-weight:600;line-height:1.1;transition:transform .2s,filter .2s,box-shadow .2s;text-decoration:none!important}
-.action-btn:hover{transform:translateY(-1px);filter:brightness(1.05)}
-.action-btn:focus{outline:none;box-shadow:0 0 0 2px rgba(37,99,235,.25)}
+.action-btn{display:inline-flex!important;align-items:center;justify-content:center;gap:.35rem;padding:.45rem .85rem;border-radius:.55rem;border:1px solid rgba(255,255,255,.08);color:#fff!important;font-size:.875rem;font-weight:700;line-height:1.1;transition:transform .2s,filter .2s,box-shadow .2s,background-color .2s;text-decoration:none!important;cursor:pointer;white-space:nowrap;box-shadow:0 1px 2px rgba(0,0,0,.18)}
+.action-btn:hover{transform:translateY(-1px);filter:brightness(1.08)}
+.action-btn:focus{outline:none;box-shadow:0 0 0 2px rgba(37,99,235,.25),0 0 0 4px rgba(255,255,255,.55)}
 .action-btn.is-disabled{background-color:#9ca3af;color:#f3f4f6;cursor:not-allowed;pointer-events:none}
-.action-btn.is-primary{background-color:#2563eb}
-.action-btn.is-success{background-color:#16a34a}
-.action-btn.is-warning{background-color:#d97706}
-.action-btn.is-info{background-color:#6366f1}
-.action-btn.is-danger{background-color:#dc2626}
+.action-btn.is-primary{background-color:#2563eb!important}
+.action-btn.is-success{background-color:#16a34a!important}
+.action-btn.is-warning{background-color:#d97706!important}
+.action-btn.is-info{background-color:#6366f1!important}
+.action-btn.is-danger{background-color:#dc2626!important}
+.action-btn.is-warning:hover{background-color:#b45309!important}
+.action-btn.is-danger:hover{background-color:#b91c1c!important}
 
 
 /* Responsive polish for phones/tablets */

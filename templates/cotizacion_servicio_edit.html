@@ -95,14 +95,14 @@
           <td class="p-2"><input class="input" type="number" min="0" step="0.01" name="service_rate[]" value="{{ '%.2f'|format(item.unit_price) }}" required></td>
           <td class="p-2"><select class="input" name="service_itbis[]"><option value="0" {% if not item.has_itbis %}selected{% endif %}>No</option><option value="1" {% if item.has_itbis %}selected{% endif %}>Sí</option></select></td>
           <td class="p-2 row-amount">RD$0.00</td>
-          <td class="p-2"><button type="button" class="action-btn is-danger service-remove-btn">Quitar</button></td>
+          <td class="p-2"><button type="button" class="action-btn is-danger btn-danger service-remove-btn">Quitar</button></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   <div class="action-bar">
-    <button type="button" class="action-btn is-info" id="add-service-row">Agregar artículo</button>
+    <button type="button" class="action-btn is-info btn-info" id="add-service-row">Agregar artículo</button>
     <span class="text-sm font-semibold">Total: <span id="service-total">RD$0.00</span></span>
   </div>
   <button class="btn-primary">Guardar cambios</button>
@@ -153,7 +153,7 @@
       <td class="p-2"><input class="input" type="number" min="0" step="0.01" name="service_rate[]" value="0" required></td>
       <td class="p-2"><select class="input" name="service_itbis[]"><option value="0">No</option><option value="1">Sí</option></select></td>
       <td class="p-2 row-amount">RD$0.00</td>
-      <td class="p-2"><button type="button" class="action-btn is-danger service-remove-btn">Quitar</button></td>
+      <td class="p-2"><button type="button" class="action-btn is-danger btn-danger service-remove-btn">Quitar</button></td>
     `;
     body.appendChild(tr);
     bindRow(tr);

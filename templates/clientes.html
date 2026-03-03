@@ -75,7 +75,7 @@
             <a class="action-btn is-warning" href="{{ url_for('edit_client', client_id=c.id) }}">Editar</a>
             <form method="post" action="{{ url_for('delete_client', client_id=c.id) }}" class="inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="action-btn" style="background-color:#dc2626" onclick="return confirm('¿Eliminar este cliente?')">Eliminar</button>
+              <button class="action-btn is-danger" onclick="return confirm('¿Eliminar este cliente?')">Eliminar</button>
             </form>
           </div>
         </td>
