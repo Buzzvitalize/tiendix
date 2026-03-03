@@ -77,6 +77,7 @@ class Quotation(db.Model):
     payment_method = db.Column(db.String(20))
     bank = db.Column(db.String(50))
     note = db.Column(db.Text)
+    footer_text = db.Column(db.Text)
     status = db.Column(db.String(20), default='vigente')
     company_id = db.Column(db.Integer, db.ForeignKey('company_info.id'), nullable=False)
     warehouse_id = db.Column(db.Integer, db.ForeignKey('warehouse.id'))
@@ -153,6 +154,7 @@ class Invoice(db.Model):
     invoice_type = db.Column(db.String(20))
     status = db.Column(db.String(20), default='Pendiente')
     note = db.Column(db.Text)
+    footer_text = db.Column(db.Text)
     warehouse_id = db.Column(db.Integer, db.ForeignKey('warehouse.id'))
     company_id = db.Column(db.Integer, db.ForeignKey('company_info.id'), nullable=False)
 

@@ -1299,18 +1299,21 @@ def calculate_totals(items):
     return subtotal, itbis, subtotal + itbis
 
 
-def build_service_items(service_names, service_descriptions, quantities, rates, itbis_flags):
+def build_service_items(service_names, service_descriptions, quantities, rates, discounts, itbis_flags):
     items = []
     if not itbis_flags:
         itbis_flags = ['0'] * len(service_names)
-    for idx, (name, description, qty_raw, rate_raw, itbis_raw) in enumerate(
-        zip(service_names, service_descriptions, quantities, rates, itbis_flags),
+    if not discounts:
+        discounts = ['0'] * len(service_names)
+    for idx, (name, description, qty_raw, rate_raw, discount_raw, itbis_raw) in enumerate(
+        zip(service_names, service_descriptions, quantities, rates, discounts, itbis_flags),
         start=1,
     ):
         service_name = (name or '').strip()
         service_desc = (description or '').strip()
         qty = max(_to_int(qty_raw), 1)
         rate = max(_to_float(rate_raw), 0.0)
+        discount = max(_to_float(discount_raw), 0.0)
         if not service_name and not service_desc:
             continue
         label = service_name or f"Servicio {idx}"
@@ -1322,7 +1325,7 @@ def build_service_items(service_names, service_descriptions, quantities, rates, 
             'unit': 'Servicio',
             'unit_price': rate,
             'quantity': qty,
-            'discount': 0.0,
+            'discount': discount,
             'category': 'Servicios',
             'has_itbis': str(itbis_raw).lower() in {'1', 'true', 'on', 'yes'},
             'company_id': current_company_id(),
@@ -1651,6 +1654,32 @@ def _archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: st
     return _archive_root_dir() / short / token / safe_type / f"{stem}.pdf"
 
 
+def _default_quotation_footer(validity_days: int) -> str:
+    return (
+        f"Condiciones: Esta cotizacion es valida por {validity_days} dias a partir de la fecha de emision. "
+        "Los precios estan sujetos a cambios sin previo aviso. "
+        "El ITBIS ha sido calculado conforme a la ley vigente."
+    )
+
+
+def _default_service_footer(validity_days: int) -> str:
+    return f"Condiciones: Este servicio es valido por {validity_days} dias a partir de la fecha de emision."
+
+
+def _default_invoice_footer() -> str:
+    return (
+        "Factura generada electronicamente. Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emision. "
+        "Gracias por su preferencia."
+    )
+
+
+def _resolve_footer_text(use_default_flag: str | None, custom_footer: str | None) -> str | None:
+    custom = (custom_footer or '').strip()
+    if use_default_flag == '1':
+        return None
+    return custom or None
+
+
 def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
     validity_days = 30
     if quotation.valid_until and quotation.date:
@@ -1673,11 +1702,7 @@ def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | No
         note=quotation.note,
         date=quotation.date,
         valid_until=quotation.valid_until,
-        footer=(
-            f"Condiciones: Esta cotizacion es valida por {validity_days} dias a partir de la fecha de emision. "
-            "Los precios estan sujetos a cambios sin previo aviso. "
-            "El ITBIS ha sido calculado conforme a la ley vigente."
-        ),
+        footer=quotation.footer_text or _default_quotation_footer(validity_days),
     )
 
 
@@ -1693,7 +1718,9 @@ def _build_service_quotation_pdf_bytes(quotation: Quotation, company: dict[str, 
         company,
         quotation.client,
         quotation.items,
-        quotation.total,
+        subtotal=quotation.subtotal,
+        itbis=quotation.itbis,
+        total=quotation.total,
         seller=quotation.seller,
         payment_method=quotation.payment_method,
         bank=quotation.bank,
@@ -1701,9 +1728,7 @@ def _build_service_quotation_pdf_bytes(quotation: Quotation, company: dict[str, 
         note=quotation.note,
         date=quotation.date,
         valid_until=quotation.valid_until,
-        footer=(
-            f"Condiciones: Este servicio es valido por {validity_days} dias a partir de la fecha de emision."
-        ),
+        footer=quotation.footer_text or _default_service_footer(validity_days),
     )
 
 
@@ -1744,23 +1769,27 @@ def _invoice_doc_type(invoice: Invoice) -> str:
 
 def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -> bytes:
     if _invoice_doc_type(invoice) == 'serviciofact':
+        valid_until = None
+        if getattr(invoice, 'order', None) is not None and getattr(invoice.order, 'quotation_id', None):
+            quotation = company_query(Quotation).filter_by(id=invoice.order.quotation_id).first()
+            valid_until = quotation.valid_until if quotation else None
         return generate_service_pdf_bytes(
-            'Factura de Servicio',
+            'Factura',
             company,
             invoice.client,
             invoice.items,
-            invoice.total,
+            subtotal=invoice.subtotal,
+            itbis=invoice.itbis,
+            total=invoice.total,
+            ncf=invoice.ncf,
             seller=invoice.seller,
             payment_method=invoice.payment_method,
             bank=invoice.bank,
             doc_number=invoice.id,
             note=invoice.note,
             date=invoice.date,
-            footer=(
-                "Factura de servicio generada electronicamente, valida sin firma ni sello. "
-                "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emision. "
-                "Gracias por su preferencia."
-            ),
+            valid_until=valid_until,
+            footer=invoice.footer_text or _default_invoice_footer(),
         )
     return generate_pdf_bytes(
         'Factura',
@@ -1779,11 +1808,7 @@ def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -
         invoice_type=invoice.invoice_type,
         note=invoice.note,
         date=invoice.date,
-        footer=(
-            "Factura generada electronicamente, valida sin firma ni sello. "
-            "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emision. "
-            "Gracias por su preferencia."
-        ),
+        footer=invoice.footer_text or _default_invoice_footer(),
     )
 
 
@@ -3374,6 +3399,18 @@ def list_quotations():
     quotations = query.order_by(Quotation.date.desc()).paginate(
         page=page, per_page=20, error_out=False
     )
+    service_invoice_ids = {}
+    service_quote_ids = [q.id for q in quotations.items if _quotation_doc_type(q) == 'servicios']
+    if service_quote_ids:
+        rows = (
+            company_query(Order)
+            .join(Invoice, Invoice.order_id == Order.id)
+            .with_entities(Order.quotation_id, Invoice.id)
+            .filter(Order.quotation_id.in_(service_quote_ids))
+            .all()
+        )
+        service_invoice_ids = {qid: iid for qid, iid in rows if qid and iid}
+
     archived_urls = {}
     for q in quotations.items:
         doc_type = _quotation_doc_type(q)
@@ -3402,6 +3439,7 @@ def list_quotations():
         date_to=date_to,
         status=status,
         now=now,
+        service_invoice_ids=service_invoice_ids,
     )
 
 @app.route('/cotizaciones/nueva', methods=['GET', 'POST'])
@@ -3429,9 +3467,10 @@ def new_quotation():
         date = dom_now()
         validity_days = _quotation_validity_days(request.form.get('validity_period'))
         valid_until = date + timedelta(days=validity_days)
+        footer_text = _resolve_footer_text(request.form.get('use_default_footer'), request.form.get('custom_footer'))
         quotation = Quotation(client_id=client.id, subtotal=subtotal, itbis=itbis, total=total,
                                seller=request.form.get('seller'), payment_method=payment_method,
-                               bank=bank, note=request.form.get('note'),
+                               bank=bank, note=request.form.get('note'), footer_text=footer_text,
                                warehouse_id=int(wid),
                                company_id=current_company_id(),
                                date=date, valid_until=valid_until)
@@ -3448,18 +3487,17 @@ def new_quotation():
         company = get_company_info()
         archived_path = None
         try:
-            quotation_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
+            quote_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
             archived_path = _archive_pdf_copy(
                 'cotizacion',
                 quotation.id,
-                quotation_pdf_bytes,
+                quote_pdf_bytes,
                 company_name=company.get('name'),
                 company_id=current_company_id(),
             )
         except Exception as exc:
-            app.logger.exception('Quotation archive generation failed id=%s: %s', quotation.id, exc)
+            app.logger.exception('Quote archive generation failed id=%s: %s', quotation.id, exc)
 
-        archived_url = None
         if archived_path:
             archived_url = _archived_download_url(
                 'cotizacion',
@@ -3528,11 +3566,17 @@ def new_service_quotation():
             flash('Debe seleccionar un cliente registrado o crear uno nuevo')
             return redirect(url_for('new_service_quotation'))
 
+        seller = (request.form.get('seller') or '').strip()
+        if not seller:
+            flash('Debe seleccionar un vendedor')
+            return redirect(url_for('new_service_quotation'))
+
         items = build_service_items(
             request.form.getlist('service_name[]'),
             request.form.getlist('service_description[]'),
             request.form.getlist('service_quantity[]'),
             request.form.getlist('service_rate[]'),
+            request.form.getlist('service_discount[]'),
             request.form.getlist('service_itbis[]'),
         )
         if not items:
@@ -3548,15 +3592,18 @@ def new_service_quotation():
 
         doc_mode = request.form.get('document_mode', 'cotizacion')
 
+        footer_text = _resolve_footer_text(request.form.get('use_default_footer'), request.form.get('custom_footer'))
+
         quotation = Quotation(
             client_id=client.id,
             subtotal=subtotal,
             itbis=itbis,
             total=total,
-            seller=request.form.get('seller'),
+            seller=seller,
             payment_method=payment_method,
             bank=bank,
             note=request.form.get('note'),
+            footer_text=footer_text,
             warehouse_id=None,
             company_id=current_company_id(),
             date=date,
@@ -3575,7 +3622,7 @@ def new_service_quotation():
                 subtotal=subtotal,
                 itbis=itbis,
                 total=total,
-                seller=request.form.get('seller'),
+                seller=seller,
                 payment_method=payment_method,
                 bank=bank,
                 note=request.form.get('note'),
@@ -3610,10 +3657,11 @@ def new_service_quotation():
                 itbis=itbis,
                 total=total,
                 ncf=ncf,
-                seller=request.form.get('seller'),
+                seller=seller,
                 payment_method=payment_method,
                 bank=bank,
                 note=request.form.get('note'),
+                footer_text=footer_text,
                 invoice_type=invoice_type,
                 status='Pendiente',
                 warehouse_id=None,
@@ -3689,6 +3737,11 @@ def edit_service_quotation(quotation_id):
             flash('El identificador es obligatorio para comprobante fiscal')
             return redirect(url_for('edit_service_quotation', quotation_id=quotation.id))
 
+        seller = (request.form.get('seller') or '').strip()
+        if not seller:
+            flash('Debe seleccionar un vendedor')
+            return redirect(url_for('edit_service_quotation', quotation_id=quotation.id))
+
         client.name = request.form.get('client_name') or client.name
         client.last_name = (request.form.get('client_last_name') or '').strip() or None
         client.identifier = identifier
@@ -3701,6 +3754,7 @@ def edit_service_quotation(quotation_id):
             request.form.getlist('service_description[]'),
             request.form.getlist('service_quantity[]'),
             request.form.getlist('service_rate[]'),
+            request.form.getlist('service_discount[]'),
             request.form.getlist('service_itbis[]'),
         )
         if not items:
@@ -3711,10 +3765,11 @@ def edit_service_quotation(quotation_id):
         quotation.subtotal = subtotal
         quotation.itbis = itbis
         quotation.total = total
-        quotation.seller = request.form.get('seller')
+        quotation.seller = seller
         quotation.payment_method = request.form.get('payment_method')
         quotation.bank = request.form.get('bank') if quotation.payment_method == 'Transferencia' else None
         quotation.note = request.form.get('note')
+        quotation.footer_text = _resolve_footer_text(request.form.get('use_default_footer'), request.form.get('custom_footer'))
         validity_days = _quotation_validity_days(request.form.get('validity_period'))
         quotation.valid_until = (quotation.date or dom_now()) + timedelta(days=validity_days)
 
@@ -3780,6 +3835,7 @@ def edit_quotation(quotation_id):
         quotation.payment_method = payment_method
         quotation.bank = bank
         quotation.note = request.form.get('note')
+        quotation.footer_text = _resolve_footer_text(request.form.get('use_default_footer'), request.form.get('custom_footer'))
         validity_days = _quotation_validity_days(request.form.get('validity_period'))
         quotation.valid_until = (quotation.date or dom_now()) + timedelta(days=validity_days)
         for it in items:
@@ -4068,6 +4124,123 @@ def send_quotation_email(quotation_id):
     send_email(client.email, subject, html, asynchronous=False, max_retries=1)
     flash(f'Cotización enviada con éxito a {client.email}')
     return redirect(url_for('list_quotations'))
+
+@app.post('/cotizaciones/<int:quotation_id>/generar-factura-servicio')
+def generate_service_invoice_from_quotation(quotation_id):
+    quotation = company_get(Quotation, quotation_id)
+    if _quotation_doc_type(quotation) != 'servicios':
+        flash('Solo aplica para cotizaciones de servicio')
+        return redirect(url_for('list_quotations'))
+
+    existing = (
+        company_query(Invoice)
+        .join(Order, Invoice.order_id == Order.id)
+        .filter(Order.quotation_id == quotation.id)
+        .order_by(Invoice.id.desc())
+        .first()
+    )
+    if existing:
+        return redirect(url_for('invoice_pdf', invoice_id=existing.id))
+
+    client = quotation.client
+    service_order = Order(
+        client_id=client.id,
+        quotation_id=quotation.id,
+        subtotal=quotation.subtotal,
+        itbis=quotation.itbis,
+        total=quotation.total,
+        seller=quotation.seller,
+        payment_method=quotation.payment_method,
+        bank=quotation.bank,
+        note=quotation.note,
+        status='Entregado',
+        warehouse_id=None,
+        company_id=current_company_id(),
+    )
+    db.session.add(service_order)
+    db.session.flush()
+    for it in quotation.items:
+        db.session.add(OrderItem(
+            order_id=service_order.id,
+            code=it.code,
+            reference=it.reference,
+            product_name=it.product_name,
+            unit=it.unit,
+            unit_price=it.unit_price,
+            quantity=it.quantity,
+            discount=it.discount,
+            category=it.category,
+            has_itbis=it.has_itbis,
+            company_id=current_company_id(),
+        ))
+
+    company_obj = db.session.get(CompanyInfo, current_company_id())
+    if client.is_final_consumer:
+        prefix, counter = 'B02', 'ncf_final'
+        invoice_type = 'Consumidor Final'
+    else:
+        prefix, counter = 'B01', 'ncf_fiscal'
+        invoice_type = 'Crédito Fiscal'
+    while True:
+        seq = getattr(company_obj, counter)
+        ncf = f"{prefix}{seq:08d}"
+        if not Invoice.query.filter_by(ncf=ncf).first():
+            setattr(company_obj, counter, seq + 1)
+            break
+        setattr(company_obj, counter, seq + 1)
+
+    invoice = Invoice(
+        client_id=client.id,
+        order_id=service_order.id,
+        subtotal=quotation.subtotal,
+        itbis=quotation.itbis,
+        total=quotation.total,
+        ncf=ncf,
+        seller=quotation.seller,
+        payment_method=quotation.payment_method,
+        bank=quotation.bank,
+        note=quotation.note,
+        footer_text=quotation.footer_text,
+        invoice_type=invoice_type,
+        status='Pendiente',
+        warehouse_id=None,
+        company_id=current_company_id(),
+    )
+    db.session.add(invoice)
+    db.session.flush()
+    for it in quotation.items:
+        db.session.add(InvoiceItem(
+            invoice_id=invoice.id,
+            code=it.code,
+            reference=it.reference,
+            product_name=it.product_name,
+            unit=it.unit,
+            unit_price=it.unit_price,
+            quantity=it.quantity,
+            discount=it.discount,
+            category=it.category,
+            has_itbis=it.has_itbis,
+            company_id=current_company_id(),
+        ))
+
+    quotation.status = 'convertida'
+    db.session.commit()
+
+    company = get_company_info()
+    try:
+        invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company)
+        _archive_pdf_copy(
+            _invoice_doc_type(invoice),
+            invoice.id,
+            invoice_pdf_bytes,
+            company_name=company.get('name'),
+            company_id=current_company_id(),
+        )
+    except Exception as exc:
+        app.logger.exception('Service invoice archive generation failed id=%s: %s', invoice.id, exc)
+
+    return redirect(url_for('invoice_pdf', invoice_id=invoice.id))
+
 
 @app.route('/cotizaciones/<int:quotation_id>/convertir', methods=['GET', 'POST'])
 def quotation_to_order(quotation_id):

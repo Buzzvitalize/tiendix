@@ -243,6 +243,57 @@ def test_service_rows_use_service_edit_link(tmp_path):
     assert '/cotizaciones/editar-servicio/1' in html
 
 
+
+
+def test_service_rows_show_generate_factura_button(tmp_path):
+    _seed_base(tmp_path)
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        c.post('/cotizaciones/nuevo-servicio', data={
+            'client_id': '1',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'service_name[]': ['Servicio X'],
+            'service_description[]': ['Desc'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1000'],
+            'service_discount[]': ['100'],
+            'service_itbis[]': ['1'],
+        }, follow_redirects=False)
+        html = c.get('/cotizaciones').get_data(as_text=True)
+    assert 'Generar Factura' in html
+
+
+def test_generate_service_invoice_from_existing_service_quote(tmp_path):
+    _seed_base(tmp_path)
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        c.post('/cotizaciones/nuevo-servicio', data={
+            'client_id': '1',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'service_name[]': ['Servicio X'],
+            'service_description[]': ['Desc'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1000'],
+            'service_discount[]': ['100'],
+            'service_itbis[]': ['1'],
+        }, follow_redirects=False)
+        resp = c.post('/cotizaciones/1/generar-factura-servicio', data={}, follow_redirects=False)
+
+    assert resp.status_code == 302
+    assert '/facturas/1/pdf' in resp.headers['Location']
+
+    with app.app_context():
+        from models import Invoice
+        inv = Invoice.query.get(1)
+        assert inv is not None
+        assert inv.subtotal == 900
+        assert round(inv.itbis, 2) == 162
+        assert round(inv.total, 2) == 1062
+
 def test_generate_service_pdf_bytes_uses_only_user_created_rows(monkeypatch):
     original_cell = weasy_pdf._cell
     captured_texts: list[str] = []
@@ -284,6 +335,8 @@ def test_generate_service_pdf_bytes_uses_only_user_created_rows(monkeypatch):
         company,
         client,
         items,
+        subtotal=300,
+        itbis=63,
         total=363,
     )
 
