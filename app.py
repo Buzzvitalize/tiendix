@@ -61,7 +61,7 @@ except ModuleNotFoundError:  # pragma: no cover
     Workbook = None
 from datetime import datetime, timedelta
 from pathlib import Path
-from sqlalchemy import and_, extract, func, inspect, or_, case
+from sqlalchemy import and_, extract, func, inspect, or_, case, event, text
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import load_only, joinedload
 from sqlalchemy.engine import make_url
@@ -145,6 +145,17 @@ APP_VERSION_HIGHLIGHTS = [
     '2026-03-01 · Renderizado PDF con fpdf2 para descargas más estables en hosting compartido.',
     '2026-03-01 · Refuerzo de seguridad: validación runtime, bloqueo de rutas sensibles y mejoras de auditoría.',
 ]
+
+REQUEST_SLOW_WARN_MS = max(int(os.getenv('SLOW_REQUEST_WARN_MS', '2000')), 100)
+REQUEST_SLOW_ERROR_MS = max(int(os.getenv('SLOW_REQUEST_ERROR_MS', '10000')), REQUEST_SLOW_WARN_MS)
+SLOW_QUERY_WARN_MS = max(int(os.getenv('SLOW_QUERY_WARN_MS', '500')), 50)
+ENABLE_ROUTE_PROFILING = str(os.getenv('ENABLE_ROUTE_PROFILING', '0')).strip().lower() in {'1','true','yes','on'}
+_SQL_TIMING_INSTALLED = False
+
+
+def _json_log(event_name: str, **fields):
+    payload = {'event': event_name, **fields}
+    app.logger.info(json.dumps(payload, ensure_ascii=False, default=str))
 
 def _normalized_database_url(url: str | None) -> str | None:
     """Normalize DB URL so cPanel/MySQL strings work with SQLAlchemy.
@@ -280,15 +291,17 @@ def block_sensitive_paths():
 
 @app.before_request
 def attach_request_context_log():
-    g.request_id = uuid.uuid4().hex[:12]
+    incoming_rid = (request.headers.get('X-Request-ID') or '').strip()
+    g.request_id = incoming_rid[:64] if incoming_rid else uuid.uuid4().hex[:12]
     g.request_started_at = time.time()
-    app.logger.info(
-        'REQ_START id=%s method=%s path=%s ip=%s ua=%s',
-        g.request_id,
-        request.method,
-        request.full_path,
-        request.remote_addr,
-        request.user_agent.string[:200] if request.user_agent else '',
+    _json_log(
+        'request_start',
+        request_id=g.request_id,
+        method=request.method,
+        path=request.path,
+        query=request.query_string.decode('utf-8', errors='ignore')[:500],
+        ip=request.remote_addr,
+        user_agent=(request.user_agent.string[:200] if request.user_agent else ''),
     )
 
 
@@ -297,12 +310,28 @@ def log_response_result(response):
     rid = getattr(g, 'request_id', '-')
     started = getattr(g, 'request_started_at', None)
     duration_ms = int((time.time() - started) * 1000) if started else -1
-    app.logger.info(
-        'REQ_END id=%s status=%s duration_ms=%s',
-        rid,
-        response.status_code,
-        duration_ms,
-    )
+    response.headers['X-Request-ID'] = rid
+    level = 'info'
+    if duration_ms >= REQUEST_SLOW_ERROR_MS:
+        level = 'error'
+    elif duration_ms >= REQUEST_SLOW_WARN_MS:
+        level = 'warning'
+
+    payload = {
+        'event': 'request_end',
+        'request_id': rid,
+        'status': response.status_code,
+        'duration_ms': duration_ms,
+        'method': request.method,
+        'path': request.path,
+    }
+    message = json.dumps(payload, ensure_ascii=False, default=str)
+    if level == 'error':
+        app.logger.error(message)
+    elif level == 'warning':
+        app.logger.warning(message)
+    else:
+        app.logger.info(message)
     return response
 
 
@@ -311,7 +340,7 @@ def handle_unexpected_error(exc):
     if isinstance(exc, HTTPException):
         return exc
     rid = getattr(g, 'request_id', '-')
-    app.logger.exception('REQ_FAIL id=%s method=%s path=%s err=%s', rid, request.method, request.path, exc)
+    app.logger.exception(json.dumps({'event':'request_fail','request_id':rid,'method':request.method,'path':request.path,'error':str(exc)}, ensure_ascii=False, default=str))
     return render_template('error.html', request_id=rid), 500
 
 
@@ -328,6 +357,37 @@ if database_url:
     app.logger.info('Database URI override applied from resolved environment variables')
 else:
     app.logger.info('Database configuration loaded from default config')
+
+
+def _install_sql_timing_hooks():
+    global _SQL_TIMING_INSTALLED
+    if _SQL_TIMING_INSTALLED:
+        return
+    engine = db.engine
+
+    @event.listens_for(engine, 'before_cursor_execute')
+    def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):  # pragma: no cover
+        stack = conn.info.setdefault('query_start_time', [])
+        stack.append(time.time())
+
+    @event.listens_for(engine, 'after_cursor_execute')
+    def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):  # pragma: no cover
+        stack = conn.info.get('query_start_time') or []
+        started = stack.pop() if stack else None
+        if started is None:
+            return
+        duration_ms = int((time.time() - started) * 1000)
+        if duration_ms >= SLOW_QUERY_WARN_MS:
+            rid = getattr(g, 'request_id', '-') if has_request_context() else '-'
+            stmt = ' '.join((statement or '').split())[:500]
+            app.logger.warning(json.dumps({
+                'event': 'slow_query',
+                'request_id': rid,
+                'duration_ms': duration_ms,
+                'statement': stmt,
+            }, ensure_ascii=False, default=str))
+
+    _SQL_TIMING_INSTALLED = True
 
 MAIL_SERVER = os.getenv('MAIL_SERVER')
 MAIL_PORT = int(os.getenv('MAIL_PORT', 587))
@@ -582,6 +642,8 @@ _ensure_mysql_driver_available(app.config)
 _maybe_fix_cpanel_access_denied(app.config)
 db.init_app(app)
 migrate.init_app(app, db)
+with app.app_context():
+    _install_sql_timing_hooks()
 csrf = CSRFProtect(app)
 app.register_blueprint(auth_bp)
 app.register_blueprint(ecf_api_bp)
@@ -2810,6 +2872,69 @@ def cpanel_auditoria():
         user=user_q,
         suspicious_ips=suspicious_ips,
     )
+
+
+
+@app.get('/__health')
+def healthcheck():
+    return jsonify({'ok': True, 'status': 'healthy', 'app_env': app.config.get('APP_ENV')}), 200
+
+
+@app.get('/__ready')
+def readiness_check():
+    started = time.time()
+    try:
+        db.session.execute(text('SELECT 1'))
+        db_ok = True
+        db_error = None
+    except Exception as exc:
+        db_ok = False
+        db_error = str(exc)
+    duration_ms = int((time.time() - started) * 1000)
+    status = 200 if db_ok else 503
+    return jsonify({
+        'ok': db_ok,
+        'status': 'ready' if db_ok else 'not_ready',
+        'db_ok': db_ok,
+        'db_error': db_error,
+        'duration_ms': duration_ms,
+    }), status
+
+
+@app.get('/__admin/profile/reportes')
+@admin_only
+def profile_reportes():
+    if not ENABLE_ROUTE_PROFILING:
+        return ('Not Found', 404)
+    import cProfile
+    import io as _io
+    import pstats
+
+    fecha_inicio, fecha_fin, estado, categoria, _, _ = _parse_report_params(
+        request.args.get('fecha_inicio'),
+        request.args.get('fecha_fin'),
+        request.args.get('estado'),
+        request.args.get('categoria'),
+        default_days=90,
+    )
+
+    profiler = cProfile.Profile()
+    t0 = time.time()
+    profiler.enable()
+    rows = _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria).limit(300).all()
+    profiler.disable()
+    elapsed_ms = int((time.time() - t0) * 1000)
+
+    stream = _io.StringIO()
+    stats = pstats.Stats(profiler, stream=stream).sort_stats('cumtime')
+    stats.print_stats(40)
+
+    return jsonify({
+        'ok': True,
+        'rows_sampled': len(rows),
+        'elapsed_ms': elapsed_ms,
+        'profile': stream.getvalue(),
+    })
 
 
 # Clients CRUD
