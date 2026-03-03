@@ -1,11 +1,30 @@
-"""Paquete e-CF (FASE 3: capa de datos solamente)."""
+"""Paquete e-CF."""
 
+from ecf.blueprints.ecf_admin import ecf_admin_bp
+from ecf.blueprints.ecf_api import ecf_api_bp
+from ecf.blueprints.pse_gateway_stub import pse_gateway_bp
 from ecf.models import EcfCompanyConfig, EcfDocument, EcfEvent
 
 
 def init_app(app):
-    """Stub de inicialización para no registrar blueprints/CLI en FASE 3."""
+    """Registra blueprints e-CF (FASE 5, sin CLI)."""
+    app.register_blueprint(ecf_api_bp)
+    app.register_blueprint(ecf_admin_bp)
+    app.register_blueprint(pse_gateway_bp)
     return app
 
 
-__all__ = ["EcfCompanyConfig", "EcfDocument", "EcfEvent", "init_app"]
+def register_blueprints(app):
+    return init_app(app)
+
+
+__all__ = [
+    "EcfCompanyConfig",
+    "EcfDocument",
+    "EcfEvent",
+    "init_app",
+    "register_blueprints",
+    "ecf_api_bp",
+    "ecf_admin_bp",
+    "pse_gateway_bp",
+]
