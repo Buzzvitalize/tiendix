@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h1>Guía de Facturación Electrónica (e-CF)</h1>
+  <p>Este módulo permite activar e-CF por compañía sin afectar el flujo NCF tradicional.</p>
+  <ol>
+    <li>Activar FE por compañía y elegir modo.</li>
+    <li>Emitir e-CF vía API <code>/api/fe/emit</code>.</li>
+    <li>Programar cron cPanel: <code>flask ecf_process_pending --limit 50</code>.</li>
+    <li>Monitorear estado con <code>/api/fe/status/&lt;doc_id&gt;</code>.</li>
+  </ol>
+  <p>Modos disponibles: <strong>DIRECT_DGII</strong>, <strong>PSE_EXTERNAL</strong>, <strong>PSE_ECOSEA (stub)</strong>.</p>
+</div>
+{% endblock %}
