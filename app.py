@@ -3152,7 +3152,21 @@ def update_min_stock(stock_id):
 
 @app.route('/inventario/ajustar', methods=['GET', 'POST'])
 def inventory_adjust():
-    products = company_query(Product).order_by(Product.name).all()
+    product_q = (request.args.get('product_q') or '').strip()
+    product_limit = 250
+    products_query = company_query(Product)
+    if product_q:
+        like = f'%{product_q}%'
+        products_query = products_query.filter(
+            or_(
+                Product.name.ilike(like),
+                Product.code.ilike(like),
+                Product.reference.ilike(like),
+            )
+        )
+    products = products_query.order_by(Product.name).limit(product_limit).all()
+    product_count = products_query.order_by(None).count()
+    products_truncated = product_count > len(products)
     warehouses = company_query(Warehouse).order_by(Warehouse.name).all()
     if request.method == 'POST':
         pid = int(request.form['product_id'])
@@ -3196,7 +3210,15 @@ def inventory_adjust():
         db.session.commit()
         flash('Inventario actualizado')
         return redirect(url_for('inventory_report', warehouse_id=wid))
-    return render_template('inventario_ajuste.html', products=products, warehouses=warehouses)
+    return render_template(
+        'inventario_ajuste.html',
+        products=products,
+        warehouses=warehouses,
+        product_q=product_q,
+        product_count=product_count,
+        products_truncated=products_truncated,
+        product_limit=product_limit,
+    )
 
 
 @app.route('/inventario/importar', methods=['GET', 'POST'])
@@ -3284,7 +3306,21 @@ def inventory_import():
 
 @app.route('/inventario/transferir', methods=['GET', 'POST'])
 def inventory_transfer():
-    products = company_query(Product).order_by(Product.name).all()
+    product_q = (request.args.get('product_q') or '').strip()
+    product_limit = 250
+    products_query = company_query(Product)
+    if product_q:
+        like = f'%{product_q}%'
+        products_query = products_query.filter(
+            or_(
+                Product.name.ilike(like),
+                Product.code.ilike(like),
+                Product.reference.ilike(like),
+            )
+        )
+    products = products_query.order_by(Product.name).limit(product_limit).all()
+    product_count = products_query.order_by(None).count()
+    products_truncated = product_count > len(products)
     warehouses = company_query(Warehouse).order_by(Warehouse.name).all()
     if request.method == 'POST':
         pid = int(request.form['product_id'])
@@ -3336,7 +3372,15 @@ def inventory_transfer():
         db.session.commit()
         flash('Transferencia realizada')
         return redirect(url_for('inventory_report', warehouse_id=dest))
-    return render_template('inventario_transferir.html', products=products, warehouses=warehouses)
+    return render_template(
+        'inventario_transferir.html',
+        products=products,
+        warehouses=warehouses,
+        product_q=product_q,
+        product_count=product_count,
+        products_truncated=products_truncated,
+        product_limit=product_limit,
+    )
 
 
 @app.route('/almacenes', methods=['GET', 'POST'])
