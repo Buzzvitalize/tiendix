@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
@@ -40,3 +41,29 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
     assert '/facturas/1/pdf' in invoices_html
     assert 'target="_blank"' in orders_html
     assert 'target="_blank"' in invoices_html
+
+
+def test_generated_docs_directory_path_returns_404(tmp_path):
+    db_path = tmp_path / 'test.sqlite'
+    app.config.from_object('config.TestingConfig')
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+
+    with app.app_context():
+        db.drop_all()
+        db.create_all()
+        company = CompanyInfo(name='Eco Sea SRL', street='', sector='', province='', phone='', rnc='')
+        db.session.add(company)
+        db.session.flush()
+        user = User(username='u_dir', first_name='U', last_name='Dir', role='company', company_id=company.id)
+        user.set_password('pass')
+        db.session.add(user)
+        db.session.commit()
+
+        root = Path(app.root_path) / 'generated_docs' / 'ecosea-srl' / '802227' / 'cotizacion'
+        root.mkdir(parents=True, exist_ok=True)
+
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'u_dir', 'password': 'pass'})
+        resp = c.get('/generated_docs/ecosea-srl/802227/cotizacion/')
+
+    assert resp.status_code == 404
