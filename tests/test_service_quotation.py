@@ -5,6 +5,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app import app, db
 from models import CompanyInfo, User, Client
+import weasy_pdf
 
 
 def _seed_base(tmp_path):
@@ -240,3 +241,54 @@ def test_service_rows_use_service_edit_link(tmp_path):
         }, follow_redirects=False)
         html = c.get('/cotizaciones').get_data(as_text=True)
     assert '/cotizaciones/editar-servicio/1' in html
+
+
+def test_generate_service_pdf_bytes_uses_only_user_created_rows(monkeypatch):
+    original_cell = weasy_pdf._cell
+    captured_texts: list[str] = []
+
+    def tracked_cell(pdf, w, h=0, txt='', *args, **kwargs):
+        captured_texts.append(str(txt))
+        return original_cell(pdf, w, h, txt, *args, **kwargs)
+
+    monkeypatch.setattr(weasy_pdf, '_cell', tracked_cell)
+
+    company = {'name': 'Carlos SRL', 'street': '', 'phone': '', 'rnc': '', 'logo': None}
+    client = {'name': 'Cliente Servicio', 'identifier': '', 'address': '', 'phone': '', 'email': ''}
+    items = [
+        {
+            'product_name': 'Servicio A: Desc A',
+            'quantity': 1,
+            'unit_price': 100,
+            'discount': 0,
+            'has_itbis': False,
+        },
+        {
+            'product_name': 'Servicio B: Desc B',
+            'quantity': 2,
+            'unit_price': 50,
+            'discount': 0,
+            'has_itbis': False,
+        },
+        {
+            'product_name': 'Servicio C: Desc C',
+            'quantity': 3,
+            'unit_price': 25,
+            'discount': 0,
+            'has_itbis': True,
+        },
+    ]
+
+    payload = weasy_pdf.generate_service_pdf_bytes(
+        'Servicio',
+        company,
+        client,
+        items,
+        total=363,
+    )
+
+    assert payload.startswith(b'%PDF')
+    assert sum('Servicio A: Desc A' in t for t in captured_texts) == 1
+    assert sum('Servicio B: Desc B' in t for t in captured_texts) == 1
+    assert sum('Servicio C: Desc C' in t for t in captured_texts) == 1
+    assert sum('Servicio D: Desc D' in t for t in captured_texts) == 0
