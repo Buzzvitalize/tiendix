@@ -1,51 +1,281 @@
-{% extends 'base.html' %}
+{% extends "base.html" %}
+
+{% block title %}Panel e-CF | Tiendix{% endblock %}
+
 {% block content %}
-<div class="p-4 space-y-4">
-  <section class="bg-white rounded shadow p-4">
-    <h2 class="text-lg font-semibold mb-2">Modo de registro de cuentas</h2>
-    <p class="text-sm text-gray-600 mb-3">
-      {% if signup_auto_approve %}
-      Actualmente está <strong>activado</strong>: los usuarios nuevos se crean de inmediato con rol <strong>Manager</strong>.
-      {% else %}
-      Actualmente está <strong>desactivado</strong>: los usuarios nuevos quedan en solicitud pendiente para aprobación de administrador.
-      {% endif %}
-    </p>
-    <form method="post" action="{{ url_for('cpanel_signup_mode') }}" class="flex items-center gap-3">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label class="inline-flex items-center gap-2">
-        <input type="checkbox" name="signup_auto_approve" value="1" {% if signup_auto_approve %}checked{% endif %}>
-        <span>Activar creación directa de cuentas (sin aprobación)</span>
-      </label>
-      <button class="btn-primary">Guardar</button>
-    </form>
-  </section>
-
-
-  <section class="bg-white rounded shadow p-4">
-    <h2 class="text-lg font-semibold mb-2">Redes sociales en login</h2>
-    <p class="text-sm text-gray-600 mb-3">Configura los links de los iconos que aparecen en la barra inferior del login.</p>
-    <form method="post" action="{{ url_for('cpanel_login_social_links') }}" class="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label class="text-sm">Facebook<input class="input mt-1" name="social_facebook" value="{{ social_links.facebook if social_links else '' }}" placeholder="https://facebook.com/..."/></label>
-      <label class="text-sm">Instagram<input class="input mt-1" name="social_instagram" value="{{ social_links.instagram if social_links else '' }}" placeholder="https://instagram.com/..."/></label>
-      <label class="text-sm">WhatsApp<input class="input mt-1" name="social_whatsapp" value="{{ social_links.whatsapp if social_links else '' }}" placeholder="https://wa.me/..."/></label>
-      <label class="text-sm">Telegram<input class="input mt-1" name="social_telegram" value="{{ social_links.telegram if social_links else '' }}" placeholder="https://t.me/..."/></label>
-      <label class="text-sm">YouTube<input class="input mt-1" name="social_youtube" value="{{ social_links.youtube if social_links else '' }}" placeholder="https://youtube.com/..."/></label>
-      <label class="text-sm">LinkedIn<input class="input mt-1" name="social_linkedin" value="{{ social_links.linkedin if social_links else '' }}" placeholder="https://linkedin.com/..."/></label>
-      <div class="md:col-span-2 lg:col-span-3"><button class="btn-primary">Guardar redes</button></div>
-    </form>
-  </section>
-
-  <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-    <a href="{{ url_for('cpanel_companies') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Empresas</a>
-    <a href="{{ url_for('cpanel_users') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Usuarios</a>
-    <a href="{{ url_for('cpanel_quotations') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Cotizaciones</a>
-    <a href="{{ url_for('cpanel_orders') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Pedidos</a>
-    <a href="{{ url_for('cpanel_invoices') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Facturas</a>
-    <a href="{{ url_for('cpanel_auditoria') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Auditoría</a>
-    <a href="{{ url_for('cpanel_error_reports') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Reportes de errores</a>
-    <a href="{{ url_for('cpanel_announcements') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Avisos generales</a>
-    <a href="{{ url_for('cpanel_rnc_import') }}" class="bg-white p-4 rounded shadow hover:bg-gray-50">Importar RNC (.txt)</a>
+<div class="space-y-6">
+  <div class="bg-white border rounded-xl shadow-sm p-5">
+    <h1 class="text-2xl font-semibold">Panel e-CF</h1>
+    <p class="text-sm text-gray-600 mt-1">Compañía activa: <strong id="current-company-id">{{ company_id }}</strong></p>
+    <p class="text-xs text-gray-500 mt-1">Admin puede cambiar compañía usando <code>?company_id=ID</code> en la URL.</p>
   </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <section class="bg-white border rounded-xl shadow-sm p-5">
+      <h2 class="font-semibold mb-3">Estado actual</h2>
+      <div id="status-cards" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm"></div>
+      <pre id="status-json" class="mt-4 p-3 bg-gray-50 rounded border text-xs overflow-x-auto"></pre>
+    </section>
+
+    <section class="bg-white border rounded-xl shadow-sm p-5">
+      <h2 class="font-semibold mb-3">Acciones rápidas</h2>
+      <div class="flex flex-wrap gap-2">
+        <button id="btn-load-config" class="px-3 py-2 bg-gray-800 text-white rounded-lg text-sm">Cargar configuración</button>
+        <button id="btn-save-config" class="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm">Guardar configuración</button>
+        <button id="btn-self-test" class="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm">Self-Test</button>
+        <a href="/fe/guia" class="px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm">Abrir guía</a>
+      </div>
+      <div id="self-test-output" class="mt-3 text-sm"></div>
+      <pre id="result-panel" class="mt-4 p-3 bg-gray-50 rounded border text-xs overflow-x-auto min-h-[180px]"></pre>
+    </section>
+  </div>
+
+  <section class="bg-white border rounded-xl shadow-sm p-5">
+    <h2 class="font-semibold mb-4">Configuración e-CF</h2>
+    <form id="ecf-config-form" class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+      <label class="flex items-center gap-2"><input type="checkbox" id="enabled"> Habilitar FE</label>
+      <label class="flex items-center gap-2"><input type="checkbox" id="mock_sign"> Mock Sign</label>
+
+      <label class="block">Modo
+        <select id="mode" class="mt-1 w-full border rounded-lg p-2">
+          <option value="DIRECT_DGII">DIRECT_DGII</option>
+          <option value="PSE_EXTERNAL">PSE_EXTERNAL</option>
+          <option value="PSE_ECOSEA">PSE_ECOSEA</option>
+        </select>
+      </label>
+
+      <label class="block">DGII env
+        <select id="dgii_env" class="mt-1 w-full border rounded-lg p-2">
+          <option value="">--</option><option value="precert">precert</option><option value="cert">cert</option><option value="prod">prod</option>
+        </select>
+      </label>
+
+      <label class="block">RNC emisor<input id="rnc_emisor" class="mt-1 w-full border rounded-lg p-2" /></label>
+      <label class="block">Cert storage
+        <select id="cert_storage_mode" class="mt-1 w-full border rounded-lg p-2">
+          <option value="">--</option><option value="DB">DB</option><option value="PATH">PATH</option>
+        </select>
+      </label>
+
+      <label class="block">Ruta cert (PATH)<input id="cert_path" class="mt-1 w-full border rounded-lg p-2" /></label>
+      <label class="block">Password cert<input id="cert_password" type="password" class="mt-1 w-full border rounded-lg p-2" /></label>
+
+      <label class="block">Archivo cert (.p12/.pfx, DB)
+        <input id="cert_file" type="file" accept=".p12,.pfx" class="mt-1 w-full border rounded-lg p-2" />
+      </label>
+      <div class="text-xs text-gray-600">Máximo 5MB para carga DB.</div>
+
+      <label class="block">Seq consumidor<input id="seq_enfcf_consumidor_last" type="number" class="mt-1 w-full border rounded-lg p-2" /></label>
+      <label class="block">Seq crédito<input id="seq_enfcf_credito_last" type="number" class="mt-1 w-full border rounded-lg p-2" /></label>
+
+      <div id="pse-section" class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border rounded-lg p-3 bg-gray-50">
+        <label class="block">PSE base URL<input id="pse_base_url" class="mt-1 w-full border rounded-lg p-2" /></label>
+        <label class="block">PSE issue URL<input id="pse_issue_url" class="mt-1 w-full border rounded-lg p-2" /></label>
+        <label class="block">PSE status URL<input id="pse_status_url" class="mt-1 w-full border rounded-lg p-2" /></label>
+        <label class="block">PSE pdf URL<input id="pse_pdf_url" class="mt-1 w-full border rounded-lg p-2" /></label>
+        <label class="block">PSE api key<input id="pse_api_key" class="mt-1 w-full border rounded-lg p-2" /></label>
+        <label class="block">PSE env<input id="pse_env" class="mt-1 w-full border rounded-lg p-2" /></label>
+        <label class="block">PSE client id<input id="pse_client_id" class="mt-1 w-full border rounded-lg p-2" /></label>
+        <label class="block">PSE client secret<input id="pse_client_secret" class="mt-1 w-full border rounded-lg p-2" /></label>
+      </div>
+
+      <label class="md:col-span-2 block">settings_json (flags)
+        <textarea id="settings_json" rows="4" class="mt-1 w-full border rounded-lg p-2" placeholder='{"mock_pse": true}'></textarea>
+      </label>
+    </form>
+  </section>
+
+  <section class="bg-white border rounded-xl shadow-sm p-5">
+    <h2 class="font-semibold mb-4">Pruebas rápidas</h2>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+      <div>
+        <label>Invoice ID</label>
+        <input id="test-invoice-id" type="number" class="mt-1 w-full border rounded-lg p-2" />
+        <button id="btn-issue" class="mt-2 px-3 py-2 bg-blue-700 text-white rounded-lg">Emitir e-CF</button>
+      </div>
+      <div>
+        <label>Doc ID</label>
+        <input id="test-doc-id" type="number" class="mt-1 w-full border rounded-lg p-2" />
+        <button id="btn-check" class="mt-2 px-3 py-2 bg-amber-600 text-white rounded-lg">Check estado</button>
+      </div>
+      <div>
+        <label>PDF</label>
+        <button id="btn-pdf" class="mt-7 px-3 py-2 bg-emerald-700 text-white rounded-lg">Descargar PDF</button>
+      </div>
+    </div>
+  </section>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const initialConfig = {{ (config or {})|tojson }};
+let p12Base64 = null;
+
+const byId = (id) => document.getElementById(id);
+const resultPanel = byId('result-panel');
+const selfTestOutput = byId('self-test-output');
+
+function maskSecret(v){
+  if(!v) return '';
+  const s = String(v);
+  if(s.length <= 4) return '****';
+  return '****' + s.slice(-4);
+}
+
+function setResult(data){ resultPanel.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2); }
+
+function applyConfig(cfg){
+  byId('enabled').checked = !!cfg.enabled;
+  byId('mode').value = cfg.mode || 'DIRECT_DGII';
+  byId('dgii_env').value = cfg.dgii_env || '';
+  byId('mock_sign').checked = !!cfg.mock_sign;
+  byId('rnc_emisor').value = (cfg.rnc_emisor || (cfg.settings_json && cfg.settings_json.rnc_emisor) || '');
+  byId('cert_storage_mode').value = cfg.cert_storage_mode || '';
+  byId('cert_path').value = cfg.cert_path || '';
+  byId('seq_enfcf_consumidor_last').value = cfg.seq_enfcf_consumidor_last ?? '';
+  byId('seq_enfcf_credito_last').value = cfg.seq_enfcf_credito_last ?? '';
+  byId('pse_base_url').value = cfg.pse_base_url || '';
+  byId('pse_issue_url').value = cfg.pse_issue_url || '';
+  byId('pse_status_url').value = cfg.pse_status_url || '';
+  byId('pse_pdf_url').value = cfg.pse_pdf_url || '';
+  byId('pse_api_key').value = '';
+  byId('pse_client_id').value = cfg.pse_client_id || '';
+  byId('pse_client_secret').value = '';
+  byId('pse_env').value = cfg.pse_env || '';
+  byId('settings_json').value = JSON.stringify(cfg.settings_json || {}, null, 2);
+  refreshPseVisibility();
+  renderStatusCards(cfg);
+}
+
+function renderStatusCards(cfg){
+  const cards = [
+    ['enabled', String(!!cfg.enabled)],
+    ['mode', cfg.mode || ''],
+    ['dgii_env', cfg.dgii_env || ''],
+    ['mock_sign', String(!!cfg.mock_sign)],
+    ['rnc_emisor', cfg.rnc_emisor || (cfg.settings_json && cfg.settings_json.rnc_emisor) || ''],
+    ['cert_storage_mode', cfg.cert_storage_mode || ''],
+    ['cert_path', cfg.cert_path || ''],
+    ['seq_consumidor', cfg.seq_enfcf_consumidor_last ?? ''],
+    ['seq_credito', cfg.seq_enfcf_credito_last ?? ''],
+    ['pse_base_url', cfg.pse_base_url || ''],
+    ['pse_issue_url', cfg.pse_issue_url || ''],
+    ['pse_status_url', cfg.pse_status_url || ''],
+    ['pse_pdf_url', cfg.pse_pdf_url || ''],
+    ['pse_api_key', maskSecret(cfg.pse_api_key)],
+    ['pse_client_id', cfg.pse_client_id || ''],
+    ['pse_client_secret', maskSecret(cfg.pse_client_secret)],
+  ];
+  byId('status-cards').innerHTML = cards.map(([k,v]) => `<div class='border rounded p-2'><div class='text-gray-500'>${k}</div><div class='font-medium break-all'>${v ?? ''}</div></div>`).join('');
+  byId('status-json').textContent = JSON.stringify(cfg || {}, null, 2);
+}
+
+function getPayload(){
+  let settings = {};
+  try{ settings = byId('settings_json').value.trim() ? JSON.parse(byId('settings_json').value) : {}; }catch(e){ throw new Error('settings_json inválido'); }
+  return {
+    enabled: byId('enabled').checked,
+    mode: byId('mode').value,
+    dgii_env: byId('dgii_env').value || null,
+    mock_sign: byId('mock_sign').checked,
+    rnc_emisor: byId('rnc_emisor').value,
+    cert_storage_mode: byId('cert_storage_mode').value || null,
+    cert_path: byId('cert_path').value || null,
+    cert_password: byId('cert_password').value || null,
+    p12_base64: p12Base64,
+    seq_enfcf_consumidor_last: byId('seq_enfcf_consumidor_last').value ? Number(byId('seq_enfcf_consumidor_last').value) : null,
+    seq_enfcf_credito_last: byId('seq_enfcf_credito_last').value ? Number(byId('seq_enfcf_credito_last').value) : null,
+    pse_base_url: byId('pse_base_url').value || null,
+    pse_issue_url: byId('pse_issue_url').value || null,
+    pse_status_url: byId('pse_status_url').value || null,
+    pse_pdf_url: byId('pse_pdf_url').value || null,
+    pse_api_key: byId('pse_api_key').value || null,
+    pse_client_id: byId('pse_client_id').value || null,
+    pse_client_secret: byId('pse_client_secret').value || null,
+    pse_env: byId('pse_env').value || null,
+    settings_json: settings,
+  };
+}
+
+function refreshPseVisibility(){ byId('pse-section').style.display = byId('mode').value === 'PSE_EXTERNAL' ? 'grid' : 'none'; }
+
+function selfTest(){
+  const p = getPayload();
+  const fails = [];
+  if(p.enabled){
+    if(p.mode === 'DIRECT_DGII' && !String(p.rnc_emisor || '').trim()) fails.push('DIRECT_DGII requiere rnc_emisor');
+    if(p.cert_storage_mode === 'PATH' && !String(p.cert_path || '').trim()) fails.push('cert_path requerido cuando cert_storage_mode=PATH');
+    if(p.mode === 'PSE_EXTERNAL'){
+      if(!(p.pse_issue_url || p.pse_base_url)) fails.push('PSE_EXTERNAL requiere URL issue/base');
+      if(!(p.pse_status_url || p.pse_base_url)) fails.push('PSE_EXTERNAL requiere URL status/base');
+      if(!(p.pse_api_key || (p.pse_client_id && p.pse_client_secret))) fails.push('PSE_EXTERNAL requiere api_key o client_id+client_secret');
+    }
+  }
+  selfTestOutput.innerHTML = fails.length ? `<ul class='list-disc pl-5 text-red-700'>${fails.map(f=>`<li>${f}</li>`).join('')}</ul>` : `<div class='text-emerald-700 font-medium'>OK</div>`;
+  return fails.length === 0;
+}
+
+async function api(url, method='GET', body=null){
+  const resp = await fetch(url, {method, headers: {'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined});
+  const ct = resp.headers.get('content-type') || '';
+  if(ct.includes('application/json')) return {ok: resp.ok, status: resp.status, data: await resp.json()};
+  return {ok: resp.ok, status: resp.status, data: await resp.text()};
+}
+
+byId('btn-load-config').addEventListener('click', async () => {
+  const r = await api('/api/fe/config'); setResult(r.data); if(r.ok && r.data.config) applyConfig(r.data.config);
+});
+
+byId('btn-save-config').addEventListener('click', async () => {
+  try{
+    if(!selfTest()) return;
+    const r = await api('/api/fe/config','POST',getPayload());
+    setResult(r.data);
+    if(r.ok && r.data.config) applyConfig(r.data.config);
+  }catch(e){ setResult({ok:false,error:String(e.message||e)}); }
+});
+
+byId('btn-self-test').addEventListener('click', () => { try{ selfTest(); setResult({ok:true, message:'Self-Test ejecutado'});}catch(e){ setResult({ok:false,error:String(e)});} });
+
+byId('mode').addEventListener('change', refreshPseVisibility);
+
+byId('btn-issue').addEventListener('click', async () => {
+  const invoiceId = Number(byId('test-invoice-id').value || 0); if(!invoiceId) return setResult({ok:false,error:'invoice_id requerido'});
+  const r = await api('/api/fe/issue', 'POST', {invoice_id: invoiceId});
+  setResult(r.data);
+  if(r.ok && r.data.doc_id) byId('test-doc-id').value = r.data.doc_id;
+});
+
+byId('btn-check').addEventListener('click', async () => {
+  const docId = Number(byId('test-doc-id').value || 0); if(!docId) return setResult({ok:false,error:'doc_id requerido'});
+  const r = await api(`/api/fe/doc/${docId}/check`, 'POST', {}); setResult(r.data);
+});
+
+byId('btn-pdf').addEventListener('click', () => {
+  const docId = Number(byId('test-doc-id').value || 0); if(!docId) return setResult({ok:false,error:'doc_id requerido'});
+  window.open(`/api/fe/doc/${docId}/pdf`, '_blank');
+});
+
+byId('cert_file').addEventListener('change', async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  if(!file){ p12Base64 = null; return; }
+  if(file.size > 5 * 1024 * 1024){
+    p12Base64 = null;
+    ev.target.value = '';
+    setResult({ok:false, error:'El archivo supera 5MB'});
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = String(reader.result || '');
+    const parts = dataUrl.split(',');
+    p12Base64 = parts.length > 1 ? parts[1] : null;
+    setResult({ok:true, message:'Certificado cargado en memoria para envío', bytes:file.size});
+  };
+  reader.readAsDataURL(file);
+});
+
+applyConfig(initialConfig || {});
+</script>
 {% endblock %}

@@ -83,6 +83,7 @@ from auth import auth_bp, generate_reset_token
 from ecf.blueprints.ecf_api import ecf_api_bp
 from ecf.blueprints.ecf_admin import ecf_admin_bp
 from ecf.blueprints.pse_gateway_stub import pse_gateway_bp
+from ecf.blueprints.ecf_panel import ecf_panel_bp
 from ecf.cli import register_cli
 from forms import AccountRequestForm
 from config import DevelopmentConfig, TestingConfig, ProductionConfig, validate_runtime_config
@@ -586,6 +587,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(ecf_api_bp)
 app.register_blueprint(ecf_admin_bp)
 app.register_blueprint(pse_gateway_bp)
+app.register_blueprint(ecf_panel_bp)
 register_cli(app)
 
 # The database schema is managed via Flask-Migrate.  Tables should be
