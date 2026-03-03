@@ -52,4 +52,13 @@
   <p class="p-2">No se encontraron resultados.</p>
   {% endif %}
 </div>
+<div class="mt-4 flex items-center gap-2 justify-center">
+  {% if pagination and pagination.has_prev %}
+  <a href="{{ url_for(request.endpoint, page=pagination.prev_num, q=q) }}" class="px-2 py-1 bg-gray-200 rounded">Anterior</a>
+  {% endif %}
+  <span>Página {{ pagination.page if pagination else 1 }} de {{ pagination.pages if pagination else 1 }}</span>
+  {% if pagination and pagination.has_next %}
+  <a href="{{ url_for(request.endpoint, page=pagination.next_num, q=q) }}" class="px-2 py-1 bg-gray-200 rounded">Siguiente</a>
+  {% endif %}
+</div>
 {% endblock %}

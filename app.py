@@ -4375,10 +4375,12 @@ def quotation_to_order(quotation_id):
 @app.route('/pedidos')
 def list_orders():
     q = request.args.get('q')
+    page = request.args.get('page', 1, type=int)
     query = company_query(Order).join(Client)
     if q:
         query = query.filter((Client.name.contains(q)) | (Client.identifier.contains(q)))
-    orders = query.order_by(Order.date.desc()).all()
+    pagination = query.options(joinedload(Order.client)).order_by(Order.date.desc()).paginate(page=page, per_page=20, error_out=False)
+    orders = pagination.items
     archived_order_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for o in orders:
@@ -4387,7 +4389,7 @@ def list_orders():
             url = _archived_download_url('pedido', o.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:
                 archived_order_urls[o.id] = url
-    return render_template('pedido.html', orders=orders, q=q, archived_order_urls=archived_order_urls)
+    return render_template('pedido.html', orders=orders, q=q, archived_order_urls=archived_order_urls, pagination=pagination)
 
 @app.route('/pedidos/<int:order_id>/enviar', methods=['POST'])
 def send_order_email(order_id):
@@ -4504,10 +4506,12 @@ def order_pdf(order_id):
 @app.route('/facturas')
 def list_invoices():
     q = request.args.get('q')
+    page = request.args.get('page', 1, type=int)
     query = company_query(Invoice).join(Client)
     if q:
         query = query.filter((Client.name.contains(q)) | (Client.identifier.contains(q)))
-    invoices = query.order_by(Invoice.date.desc()).all()
+    pagination = query.options(joinedload(Invoice.client), joinedload(Invoice.items)).order_by(Invoice.date.desc()).paginate(page=page, per_page=20, error_out=False)
+    invoices = pagination.items
     archived_invoice_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for f in invoices:
@@ -4517,7 +4521,7 @@ def list_invoices():
             url = _archived_download_url(doc_type, f.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:
                 archived_invoice_urls[f.id] = url
-    return render_template('factura.html', invoices=invoices, q=q, archived_invoice_urls=archived_invoice_urls)
+    return render_template('factura.html', invoices=invoices, q=q, archived_invoice_urls=archived_invoice_urls, pagination=pagination)
 
 
 @app.route('/facturas/<int:invoice_id>/enviar', methods=['POST'])
