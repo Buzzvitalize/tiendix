@@ -4520,7 +4520,7 @@ def list_invoices():
     query = company_query(Invoice).join(Client)
     if q:
         query = query.filter((Client.name.contains(q)) | (Client.identifier.contains(q)))
-    pagination = query.options(joinedload(Invoice.client), joinedload(Invoice.items)).order_by(Invoice.date.desc()).paginate(page=page, per_page=20, error_out=False)
+    pagination = query.options(joinedload(Invoice.client)).order_by(Invoice.date.desc()).paginate(page=page, per_page=20, error_out=False)
     invoices = pagination.items
     archived_invoice_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
@@ -4674,7 +4674,6 @@ def reportes():
         q.options(
             joinedload(Invoice.client),
             joinedload(Invoice.order),
-            joinedload(Invoice.items),
             load_only(Invoice.client_id, Invoice.total, Invoice.date, Invoice.status),
         )
         .order_by(Invoice.date.desc())
@@ -5047,14 +5046,8 @@ def _invoice_balance(inv):
 
 
 def _invoice_origin_label(inv: Invoice) -> str:
-    categories = {
-        (getattr(item, 'category', '') or '').strip().lower()
-        for item in (getattr(inv, 'items', None) or [])
-        if item is not None
-    }
-    if categories and categories.issubset({'servicios'}):
-        return 'Servicio'
-    if getattr(inv, 'order', None) is not None and inv.order.warehouse_id is None:
+    # Fast-path: service invoices/orders are created without warehouse.
+    if getattr(inv, 'warehouse_id', None) is None:
         return 'Servicio'
     return 'Pedido'
 
@@ -5074,7 +5067,7 @@ def account_statement_detail(client_id):
     invoices = (
         company_query(Invoice)
         .filter_by(client_id=client.id)
-        .options(joinedload(Invoice.order), joinedload(Invoice.items), joinedload(Invoice.payments))
+        .options(joinedload(Invoice.order), joinedload(Invoice.payments))
         .all()
     )
     rows = []
