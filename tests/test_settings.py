@@ -62,16 +62,33 @@ def test_ncf_cannot_decrease(client):
     assert b'NCF Consumidor Final no puede ser menor' in resp.data
 
 
-def test_manager_cannot_change_other_fields(client):
+def test_manager_can_change_company_fields_except_owner_email(client):
     with app.app_context():
         company = CompanyInfo.query.first()
-        original_name = company.name
-        original_phone = company.phone
-    client.post('/ajustes/empresa', data={'name': 'Nuevo', 'phone': '999', 'ncf_final': '5', 'ncf_fiscal': '1'})
+        owner_email = User.query.filter_by(company_id=company.id, role='admin').first().email
+
+    client.post('/ajustes/empresa', data={
+        'name': 'Nuevo',
+        'phone': '999',
+        'street': 'Calle Nueva',
+        'sector': 'Sector Nuevo',
+        'province': 'Provincia Nueva',
+        'website': 'https://nuevo.test',
+        'owner_email': 'hack@correo.com',
+        'ncf_final': '5',
+        'ncf_fiscal': '1',
+    })
+
     with app.app_context():
         c = CompanyInfo.query.first()
-        assert c.name == original_name
-        assert c.phone == original_phone
+        assert c.name == 'Nuevo'
+        assert c.phone == '999'
+        assert c.street == 'Calle Nueva'
+        assert c.sector == 'Sector Nuevo'
+        assert c.province == 'Provincia Nueva'
+        assert c.website == 'https://nuevo.test'
+        owner = User.query.filter_by(company_id=c.id, role='admin').first()
+        assert owner.email == owner_email
 
 
 def test_manager_user_limit(client):

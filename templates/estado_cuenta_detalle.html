@@ -12,6 +12,7 @@
   <thead>
     <tr class="bg-gray-200 text-left">
       <th class="px-2 py-1">Documento</th>
+      <th class="px-2 py-1">Origen</th>
       <th class="px-2 py-1">Pedido</th>
       <th class="px-2 py-1">Fecha</th>
       <th class="px-2 py-1">Vence</th>
@@ -24,6 +25,7 @@
   {% for r in rows %}
     <tr class="border-b">
       <td class="px-2 py-1">{{ r.document }}</td>
+      <td class="px-2 py-1">{{ r.origin }}</td>
       <td class="px-2 py-1">{{ r.order }}</td>
       <td class="px-2 py-1">{{ r.date }}</td>
       <td class="px-2 py-1">{{ r.due }}</td>
@@ -49,14 +51,18 @@ if (exportBtn) {
   exportBtn.addEventListener('click', async () => {
     exportBtn.disabled = true;
     exportStatus.textContent = 'Generando link...';
+    const directUrl = `{{ url_for('account_statement_detail', client_id=client.id) }}?pdf=1`;
     try {
       const resp = await fetch(`{{ url_for('account_statement_detail', client_id=client.id) }}?pdf=1&link_only=1`, { credentials: 'same-origin' });
+      const isJson = (resp.headers.get('content-type') || '').includes('application/json');
+      if (!isJson) throw new Error('Respuesta invalida del servidor');
       const data = await resp.json();
       if (!resp.ok || !data.url) throw new Error(data.error || 'No se pudo generar el link');
-      exportStatus.textContent = 'Link generado';
+      exportStatus.textContent = data.archived === false ? 'PDF generado (modo directo)' : 'Link generado';
       window.open(data.url, '_blank', 'noopener');
     } catch (err) {
-      exportStatus.textContent = 'Error generando PDF';
+      exportStatus.textContent = 'Abriendo PDF directo...';
+      window.open(directUrl, '_blank', 'noopener');
     } finally {
       exportBtn.disabled = false;
     }
