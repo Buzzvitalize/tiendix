@@ -368,7 +368,7 @@ def generate_service_pdf_bytes(title: str, company: dict, client: dict, items: l
     _draw_client_block(pdf, client_dict)
     _draw_meta_block(pdf, seller, payment_method, bank, None)
 
-    headers = ['ID', 'Artículo + Descripción', 'Cant', 'Tarifa', 'Monto']
+    headers = ['ID', 'Articulo + Descripcion', 'Cant', 'Tarifa', 'Monto']
     widths = [14, 104, 16, 26, 30]
 
     pdf.ln(3)
@@ -382,7 +382,8 @@ def generate_service_pdf_bytes(title: str, company: dict, client: dict, items: l
     pdf.set_text_color(0, 0, 0)
     pdf.set_font('Helvetica', '', 8)
     for idx, i in enumerate(item_dicts, start=1):
-        line_total = float(i.get('unit_price', 0) or 0) * float(i.get('quantity', 0) or 0)
+        base_total = float(i.get('unit_price', 0) or 0) * float(i.get('quantity', 0) or 0)
+        line_total = base_total * (1 + 0.18) if i.get('has_itbis') else base_total
         row = [
             str(idx),
             str(i.get('product_name', '')),

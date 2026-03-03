@@ -1278,9 +1278,14 @@ def calculate_totals(items):
     return subtotal, itbis, subtotal + itbis
 
 
-def build_service_items(service_names, service_descriptions, quantities, rates):
+def build_service_items(service_names, service_descriptions, quantities, rates, itbis_flags):
     items = []
-    for idx, (name, description, qty_raw, rate_raw) in enumerate(zip(service_names, service_descriptions, quantities, rates), start=1):
+    if not itbis_flags:
+        itbis_flags = ['0'] * len(service_names)
+    for idx, (name, description, qty_raw, rate_raw, itbis_raw) in enumerate(
+        zip(service_names, service_descriptions, quantities, rates, itbis_flags),
+        start=1,
+    ):
         service_name = (name or '').strip()
         service_desc = (description or '').strip()
         qty = max(_to_int(qty_raw), 1)
@@ -1298,7 +1303,7 @@ def build_service_items(service_names, service_descriptions, quantities, rates):
             'quantity': qty,
             'discount': 0.0,
             'category': 'Servicios',
-            'has_itbis': False,
+            'has_itbis': str(itbis_raw).lower() in {'1', 'true', 'on', 'yes'},
             'company_id': current_company_id(),
         })
     return items
@@ -3440,15 +3445,41 @@ def new_quotation():
 def new_service_quotation():
     if request.method == 'POST':
         client_id = request.form.get('client_id')
-        if not client_id:
-            flash('Debe seleccionar un cliente registrado')
-            return redirect(url_for('list_quotations'))
-        client = company_get(Client, client_id)
+        client = company_get(Client, client_id) if client_id else None
+
+        if not client and request.form.get('create_client') == '1':
+            client_type = request.form.get('new_client_type', 'final')
+            is_final = client_type == 'final'
+            name = (request.form.get('new_client_name') or '').strip()
+            if not name:
+                flash('Debe escribir el nombre del cliente')
+                return redirect(url_for('new_service_quotation'))
+            identifier = (request.form.get('new_client_identifier') or '').strip() or None
+            if not is_final and not identifier:
+                flash('Para empresa debe indicar RNC')
+                return redirect(url_for('new_service_quotation'))
+            client = Client(
+                name=name,
+                last_name=(request.form.get('new_client_last_name') or '').strip() or None,
+                identifier=identifier,
+                phone=(request.form.get('new_client_phone') or '').strip() or None,
+                email=(request.form.get('new_client_email') or '').strip() or None,
+                is_final_consumer=is_final,
+                company_id=current_company_id(),
+            )
+            db.session.add(client)
+            db.session.flush()
+
+        if not client:
+            flash('Debe seleccionar un cliente registrado o crear uno nuevo')
+            return redirect(url_for('new_service_quotation'))
+
         items = build_service_items(
             request.form.getlist('service_name[]'),
             request.form.getlist('service_description[]'),
             request.form.getlist('service_quantity[]'),
             request.form.getlist('service_rate[]'),
+            request.form.getlist('service_itbis[]'),
         )
         if not items:
             flash('Debe agregar al menos un servicio')
@@ -3460,6 +3491,9 @@ def new_service_quotation():
         date = dom_now()
         validity_days = _quotation_validity_days(request.form.get('validity_period'))
         valid_until = date + timedelta(days=validity_days)
+
+        doc_mode = request.form.get('document_mode', 'cotizacion')
+
         quotation = Quotation(
             client_id=client.id,
             subtotal=subtotal,
@@ -3478,9 +3512,70 @@ def new_service_quotation():
         db.session.flush()
         for it in items:
             db.session.add(QuotationItem(quotation_id=quotation.id, **it))
+
+        invoice_created = False
+        if doc_mode == 'factura':
+            service_order = Order(
+                client_id=client.id,
+                quotation_id=quotation.id,
+                subtotal=subtotal,
+                itbis=itbis,
+                total=total,
+                seller=request.form.get('seller'),
+                payment_method=payment_method,
+                bank=bank,
+                note=request.form.get('note'),
+                status='Entregado',
+                warehouse_id=None,
+                company_id=current_company_id(),
+            )
+            db.session.add(service_order)
+            db.session.flush()
+            for it in items:
+                db.session.add(OrderItem(order_id=service_order.id, **it))
+
+            company_obj = db.session.get(CompanyInfo, current_company_id())
+            if client.is_final_consumer:
+                prefix, counter = 'B02', 'ncf_final'
+                invoice_type = 'Consumidor Final'
+            else:
+                prefix, counter = 'B01', 'ncf_fiscal'
+                invoice_type = 'Crédito Fiscal'
+            while True:
+                seq = getattr(company_obj, counter)
+                ncf = f"{prefix}{seq:08d}"
+                if not Invoice.query.filter_by(ncf=ncf).first():
+                    setattr(company_obj, counter, seq + 1)
+                    break
+                setattr(company_obj, counter, seq + 1)
+
+            invoice = Invoice(
+                client_id=client.id,
+                order_id=service_order.id,
+                subtotal=subtotal,
+                itbis=itbis,
+                total=total,
+                ncf=ncf,
+                seller=request.form.get('seller'),
+                payment_method=payment_method,
+                bank=bank,
+                note=request.form.get('note'),
+                invoice_type=invoice_type,
+                status='Pendiente',
+                warehouse_id=None,
+                company_id=current_company_id(),
+            )
+            db.session.add(invoice)
+            db.session.flush()
+            for it in items:
+                db.session.add(InvoiceItem(invoice_id=invoice.id, **it))
+            invoice_created = True
+
         db.session.commit()
 
         flash('Servicio guardado')
+        if invoice_created:
+            flash('Factura creada desde servicio')
         notify('Servicio guardado')
         log_audit('service_create', 'quotation', quotation.id, details=f'client={client.id};total={total:.2f}')
 
@@ -3497,6 +3592,8 @@ def new_service_quotation():
         except Exception as exc:
             app.logger.exception('Service quote archive generation failed id=%s: %s', quotation.id, exc)
 
+        if invoice_created:
+            return redirect(url_for('list_invoices'))
         return redirect(url_for('list_quotations'))
 
     clients = company_query(Client).options(load_only(Client.id, Client.name, Client.identifier)).all()
@@ -3507,6 +3604,77 @@ def new_service_quotation():
 @app.route('/cotizaciones/nueva-servicio', methods=['GET', 'POST'])
 def new_service_quotation_alias():
     return new_service_quotation()
+
+
+
+
+@app.route('/cotizaciones/editar-servicio/<int:quotation_id>', methods=['GET', 'POST'])
+def edit_service_quotation(quotation_id):
+    quotation = company_get(Quotation, quotation_id)
+    if _quotation_doc_type(quotation) != 'servicios':
+        return redirect(url_for('edit_quotation', quotation_id=quotation_id))
+
+    if request.method == 'POST':
+        client = quotation.client
+        is_final = request.form.get('client_type') == 'final'
+        identifier = (request.form.get('client_identifier') or '').strip() or None
+        if not is_final and not identifier:
+            flash('El identificador es obligatorio para comprobante fiscal')
+            return redirect(url_for('edit_service_quotation', quotation_id=quotation.id))
+
+        client.name = request.form.get('client_name') or client.name
+        client.last_name = (request.form.get('client_last_name') or '').strip() or None
+        client.identifier = identifier
+        client.phone = request.form.get('client_phone')
+        client.email = request.form.get('client_email')
+        client.is_final_consumer = is_final
+
+        items = build_service_items(
+            request.form.getlist('service_name[]'),
+            request.form.getlist('service_description[]'),
+            request.form.getlist('service_quantity[]'),
+            request.form.getlist('service_rate[]'),
+            request.form.getlist('service_itbis[]'),
+        )
+        if not items:
+            flash('Debe mantener al menos un servicio')
+            return redirect(url_for('edit_service_quotation', quotation_id=quotation.id))
+
+        subtotal, itbis, total = calculate_totals(items)
+        quotation.subtotal = subtotal
+        quotation.itbis = itbis
+        quotation.total = total
+        quotation.seller = request.form.get('seller')
+        quotation.payment_method = request.form.get('payment_method')
+        quotation.bank = request.form.get('bank') if quotation.payment_method == 'Transferencia' else None
+        quotation.note = request.form.get('note')
+        validity_days = _quotation_validity_days(request.form.get('validity_period'))
+        quotation.valid_until = (quotation.date or dom_now()) + timedelta(days=validity_days)
+
+        quotation.items.clear()
+        for it in items:
+            quotation.items.append(QuotationItem(**it))
+
+        db.session.commit()
+
+        company = get_company_info()
+        try:
+            service_pdf_bytes = _build_service_quotation_pdf_bytes(quotation, company)
+            _archive_pdf_copy(
+                'servicios',
+                quotation.id,
+                service_pdf_bytes,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+            )
+        except Exception as exc:
+            app.logger.exception('Service quote archive update failed id=%s: %s', quotation.id, exc)
+
+        flash('Servicio actualizado')
+        return redirect(url_for('list_quotations'))
+
+    sellers = company_query(User).options(load_only(User.id, User.first_name, User.last_name)).all()
+    return render_template('cotizacion_servicio_edit.html', quotation=quotation, sellers=sellers)
 
 
 @app.route('/cotizaciones/editar/<int:quotation_id>', methods=['GET', 'POST'])
@@ -4206,12 +4374,24 @@ def reportes():
     pagination = (
         q.options(
             joinedload(Invoice.client),
+            joinedload(Invoice.order),
+            joinedload(Invoice.items),
             load_only(Invoice.client_id, Invoice.total, Invoice.date, Invoice.status),
         )
         .order_by(Invoice.date.desc())
         .paginate(page=page, per_page=10, error_out=False)
     )
     invoices = pagination.items
+    invoice_rows = [
+        {
+            'client': inv.client.name if inv.client else '',
+            'date': inv.date.strftime('%Y-%m-%d'),
+            'estado': inv.status or '',
+            'source': _invoice_origin_label(inv),
+            'total': inv.total,
+        }
+        for inv in invoices
+    ]
 
     total_sales, unique_clients, invoice_count = (
         q.with_entities(
@@ -4518,15 +4698,7 @@ def reportes():
                 'year_prev': year_prev,
                 'top_categories_year': [{'category': c or 'Sin categoría', 'total': t or 0} for c, t in top_cats],
                 'trend_24': trend_24,
-                'invoices': [
-                    {
-                        'client': i.client.name if i.client else '',
-                        'date': i.date.strftime('%Y-%m-%d'),
-                        'estado': i.status or '',
-                        'total': i.total,
-                    }
-                    for i in invoices
-                ],
+                'invoices': invoice_rows,
                 'pagination': {'page': pagination.page, 'pages': pagination.pages},
                 'kpi_changes': kpi_changes,
             }
@@ -4535,6 +4707,7 @@ def reportes():
     return render_template(
         'reportes.html',
         invoices=invoices,
+        invoice_rows=invoice_rows,
         pagination=pagination,
         sales_by_category=sales_by_category,
         stats=stats,
@@ -4571,13 +4744,35 @@ def _invoice_balance(inv):
     return inv.total - sum(p.amount for p in inv.payments)
 
 
+def _invoice_origin_label(inv: Invoice) -> str:
+    categories = {
+        (getattr(item, 'category', '') or '').strip().lower()
+        for item in (getattr(inv, 'items', None) or [])
+        if item is not None
+    }
+    if categories and categories.issubset({'servicios'}):
+        return 'Servicio'
+    if getattr(inv, 'order', None) is not None and inv.order.warehouse_id is None:
+        return 'Servicio'
+    return 'Pedido'
+
+
+def _invoice_reference(inv: Invoice) -> str:
+    if getattr(inv, 'order', None) is not None and inv.order.customer_po:
+        return inv.order.customer_po
+    if inv.order_id:
+        prefix = 'SRV' if _invoice_origin_label(inv) == 'Servicio' else 'PED'
+        return f'{prefix}-{inv.order_id}'
+    return '-'
+
+
 @app.get('/reportes/estado-cuentas/<int:client_id>')
 def account_statement_detail(client_id):
     client = company_get(Client, client_id)
     invoices = (
         company_query(Invoice)
         .filter_by(client_id=client.id)
-        .options(joinedload(Invoice.order), joinedload(Invoice.payments))
+        .options(joinedload(Invoice.order), joinedload(Invoice.items), joinedload(Invoice.payments))
         .all()
     )
     rows = []
@@ -4589,9 +4784,11 @@ def account_statement_detail(client_id):
         if balance <= 0:
             continue
         due = inv.date + timedelta(days=30)
+        origin = _invoice_origin_label(inv)
         rows.append({
             'document': inv.ncf or f'FAC-{inv.id}',
-            'order': inv.order.customer_po if inv.order and inv.order.customer_po else inv.order_id,
+            'origin': origin,
+            'order': _invoice_reference(inv),
             'date': inv.date.strftime('%d/%m/%Y'),
             'due': due.strftime('%d/%m/%Y'),
             'info': inv.note or '',

@@ -107,3 +107,104 @@ def test_service_quotation_pdf_is_generated_under_servicios(tmp_path):
     assert pdf_resp.headers.get('Content-Type', '').startswith('application/pdf')
     archived = list(archive_root.glob('**/servicios/*.pdf'))
     assert archived, 'Expected archived PDF under servicios folder'
+
+
+def test_create_service_invoice_mode_creates_invoice_and_client(tmp_path):
+    _seed_base(tmp_path)
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        resp = c.post('/cotizaciones/nuevo-servicio', data={
+            'create_client': '1',
+            'new_client_type': 'fiscal',
+            'new_client_name': 'Empresa SRL',
+            'new_client_identifier': '101010101',
+            'new_client_email': 'empresa@example.com',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'document_mode': 'factura',
+            'service_name[]': ['Consultoría'],
+            'service_description[]': ['Proyecto mensual'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1000'],
+            'service_itbis[]': ['1'],
+            'note': 'Facturar este servicio',
+        }, follow_redirects=False)
+
+    assert resp.status_code == 302
+    assert resp.headers['Location'].endswith('/facturas')
+
+    with app.app_context():
+        from models import Client, Invoice
+        cli = Client.query.filter_by(name='Empresa SRL').first()
+        assert cli is not None
+        assert cli.is_final_consumer is False
+        inv = Invoice.query.order_by(Invoice.id.desc()).first()
+        assert inv is not None
+        assert inv.invoice_type == 'Crédito Fiscal'
+        assert inv.total > inv.subtotal
+
+
+def test_service_edit_route_updates_itbis_and_total(tmp_path):
+    _seed_base(tmp_path)
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        c.post('/cotizaciones/nuevo-servicio', data={
+            'client_id': '1',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'service_name[]': ['Servicio Base'],
+            'service_description[]': ['Sin impuesto'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1000'],
+            'service_itbis[]': ['0'],
+        }, follow_redirects=False)
+
+        resp = c.post('/cotizaciones/editar-servicio/1', data={
+            'client_type': 'fiscal',
+            'client_name': 'Cliente Servicio',
+            'client_last_name': '',
+            'client_identifier': '101010101',
+            'client_phone': '',
+            'client_email': 'cliente@example.com',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'bank': '',
+            'validity_period': '1m',
+            'note': 'Editado',
+            'service_name[]': ['Servicio Base'],
+            'service_description[]': ['Con impuesto'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1000'],
+            'service_itbis[]': ['1'],
+        }, follow_redirects=False)
+
+    assert resp.status_code == 302
+    assert resp.headers['Location'].endswith('/cotizaciones')
+
+    with app.app_context():
+        from models import Quotation
+        q = Quotation.query.get(1)
+        assert q is not None
+        assert q.itbis > 0
+        assert q.total > q.subtotal
+
+
+def test_service_rows_use_service_edit_link(tmp_path):
+    _seed_base(tmp_path)
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        c.post('/cotizaciones/nuevo-servicio', data={
+            'client_id': '1',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'service_name[]': ['Servicio X'],
+            'service_description[]': ['Desc'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1000'],
+            'service_itbis[]': ['0'],
+        }, follow_redirects=False)
+        html = c.get('/cotizaciones').get_data(as_text=True)
+    assert '/cotizaciones/editar-servicio/1' in html
