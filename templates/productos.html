@@ -2,17 +2,17 @@
 {% block title %}Productos{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-4">Productos</h1>
-<div class="mb-4 flex flex-wrap gap-2">
-  <a href="{{ url_for('products_import') }}" class="btn-secondary">Importar CSV</a>
-  <a href="{{ url_for('export_products', cat=current_cat) }}" class="btn-secondary">Exportar productos</a>
-  <a href="{{ url_for('product_price_history') }}" class="btn-secondary">Historial de precios</a>
+<div class="mb-4 action-bar">
+  <a href="{{ url_for('products_import') }}" class="action-btn is-info">Importar CSV</a>
+  <a href="{{ url_for('export_products', cat=current_cat) }}" class="action-btn is-primary">Exportar productos</a>
+  <a href="{{ url_for('product_price_history') }}" class="action-btn is-warning">Historial de precios</a>
 </div>
 <form method="post" class="card mb-6 space-y-4">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <p class="text-sm text-gray-600">
     Si activa <strong>Usar costo</strong>, el costo debe ser mayor que 0. El sistema mostrará advertencias cuando el margen sea bajo o negativo.
   </p>
-  <div class="grid md:grid-cols-8 gap-4 items-center">
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-4 items-center">
     <input id="name" name="name" placeholder="Nombre" class="input" required>
     <select name="unit" class="input" required>
       {% for u in units %}<option value="{{ u }}">{{ u }}</option>{% endfor %}
@@ -36,17 +36,17 @@
       <span>ITBIS</span>
     </label>
   </div>
-  <button class="btn-primary">Agregar</button>
+  <button class="btn-primary w-full sm:w-auto">Agregar</button>
 </form>
 
-<form method="get" class="mb-4 flex flex-col sm:flex-row sm:space-x-2 space-y-2 sm:space-y-0">
-  <select name="cat" class="input">
+<form method="get" class="mb-4 flex flex-col sm:flex-row sm:items-end gap-2">
+  <select name="cat" class="input w-full sm:w-auto">
     <option value="">Todas las categorías</option>
     {% for c in categories %}
     <option value="{{ c }}" {% if current_cat == c %}selected{% endif %}>{{ c }}</option>
     {% endfor %}
   </select>
-  <button class="btn-secondary">Filtrar</button>
+  <button class="btn-secondary w-full sm:w-auto">Filtrar</button>
 </form>
 
 <div class="card overflow-x-auto">
@@ -83,9 +83,11 @@
         </td>
         <td class="p-2">{{ p.category }}</td>
         <td class="p-2">{{ 'Sí' if p.has_itbis else 'No' }}</td>
-        <td class="p-2 space-x-2">
-          <a class="text-blue-500" href="{{ url_for('edit_product', product_id=p.id) }}">Editar</a>
-          <a class="text-red-500" href="{{ url_for('delete_product', product_id=p.id) }}">Eliminar</a>
+        <td class="p-2">
+          <div class="action-bar">
+            <a class="action-btn is-warning" href="{{ url_for('edit_product', product_id=p.id) }}">Editar</a>
+            <a class="action-btn" style="background-color:#dc2626" href="{{ url_for('delete_product', product_id=p.id) }}">Eliminar</a>
+          </div>
         </td>
       </tr>
     {% endfor %}
