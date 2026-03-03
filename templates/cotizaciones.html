@@ -70,9 +70,9 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="action-btn is-info px-3 py-1 rounded-md text-white font-semibold" style="background-color:#6366f1"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 inline" viewBox="0 0 24 24" fill="currentColor"><path d="M2 4l20 8-20 8 4-8-4-8zm6.5 8L4.8 7.5 16 12 4.8 16.5 8.5 12z"/></svg> Enviar</button>
           </form>
-          <a class="action-btn is-warning px-3 py-1 rounded-md text-white font-semibold" style="background-color:#d97706" href="{{ url_for('edit_quotation', quotation_id=q.id) }}">Editar</a>
-          {% set expired = q.valid_until < now %}
           {% set is_service = q.warehouse_id is none %}
+          <a class="action-btn is-warning px-3 py-1 rounded-md text-white font-semibold" style="background-color:#d97706" href="{{ url_for('edit_service_quotation', quotation_id=q.id) if is_service else url_for('edit_quotation', quotation_id=q.id) }}">Editar</a>
+          {% set expired = q.valid_until < now %}
           {% if is_service %}
             <span class="action-btn is-disabled px-3 py-1 rounded-md text-white font-semibold" style="background-color:#9ca3af">Sin pedido</span>
           {% elif expired %}

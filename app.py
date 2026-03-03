@@ -3606,6 +3606,77 @@ def new_service_quotation_alias():
     return new_service_quotation()
 
 
+
+
+@app.route('/cotizaciones/editar-servicio/<int:quotation_id>', methods=['GET', 'POST'])
+def edit_service_quotation(quotation_id):
+    quotation = company_get(Quotation, quotation_id)
+    if _quotation_doc_type(quotation) != 'servicios':
+        return redirect(url_for('edit_quotation', quotation_id=quotation_id))
+
+    if request.method == 'POST':
+        client = quotation.client
+        is_final = request.form.get('client_type') == 'final'
+        identifier = (request.form.get('client_identifier') or '').strip() or None
+        if not is_final and not identifier:
+            flash('El identificador es obligatorio para comprobante fiscal')
+            return redirect(url_for('edit_service_quotation', quotation_id=quotation.id))
+
+        client.name = request.form.get('client_name') or client.name
+        client.last_name = (request.form.get('client_last_name') or '').strip() or None
+        client.identifier = identifier
+        client.phone = request.form.get('client_phone')
+        client.email = request.form.get('client_email')
+        client.is_final_consumer = is_final
+
+        items = build_service_items(
+            request.form.getlist('service_name[]'),
+            request.form.getlist('service_description[]'),
+            request.form.getlist('service_quantity[]'),
+            request.form.getlist('service_rate[]'),
+            request.form.getlist('service_itbis[]'),
+        )
+        if not items:
+            flash('Debe mantener al menos un servicio')
+            return redirect(url_for('edit_service_quotation', quotation_id=quotation.id))
+
+        subtotal, itbis, total = calculate_totals(items)
+        quotation.subtotal = subtotal
+        quotation.itbis = itbis
+        quotation.total = total
+        quotation.seller = request.form.get('seller')
+        quotation.payment_method = request.form.get('payment_method')
+        quotation.bank = request.form.get('bank') if quotation.payment_method == 'Transferencia' else None
+        quotation.note = request.form.get('note')
+        validity_days = _quotation_validity_days(request.form.get('validity_period'))
+        quotation.valid_until = (quotation.date or dom_now()) + timedelta(days=validity_days)
+
+        quotation.items.clear()
+        for it in items:
+            quotation.items.append(QuotationItem(**it))
+
+        db.session.commit()
+
+        company = get_company_info()
+        try:
+            service_pdf_bytes = _build_service_quotation_pdf_bytes(quotation, company)
+            _archive_pdf_copy(
+                'servicios',
+                quotation.id,
+                service_pdf_bytes,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+            )
+        except Exception as exc:
+            app.logger.exception('Service quote archive update failed id=%s: %s', quotation.id, exc)
+
+        flash('Servicio actualizado')
+        return redirect(url_for('list_quotations'))
+
+    sellers = company_query(User).options(load_only(User.id, User.first_name, User.last_name)).all()
+    return render_template('cotizacion_servicio_edit.html', quotation=quotation, sellers=sellers)
+
+
 @app.route('/cotizaciones/editar/<int:quotation_id>', methods=['GET', 'POST'])
 def edit_quotation(quotation_id):
     quotation = company_get(Quotation, quotation_id)
