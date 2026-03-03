@@ -42,6 +42,7 @@
       {% if session.get('role') == 'admin' %}
       <a href="{{ url_for('cpanel_home') }}" class="nav-link">CPanel</a>
       <a href="{{ url_for('admin_requests') }}" class="nav-link">Solicitudes</a>
+      <a href="/cpaneltx" class="nav-link">Panel e-CF</a>
       {% endif %}
       {% if session.get('role') in ['admin', 'manager'] %}
       <a href="{{ url_for('settings_company') }}" class="nav-link">Ajustes</a>
