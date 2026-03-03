@@ -422,6 +422,95 @@ def test_account_statement_pdf_link_only_returns_generated_docs_url(client):
     assert '/generated_docs/' in data['url'] or '/generated-docs/' in data['url']
 
 
+def test_account_statement_detail_shows_service_origin(client):
+    login(client, 'user', 'pass')
+    with app.app_context():
+        comp = CompanyInfo.query.first()
+        cli = Client.query.first()
+        cid = cli.id
+        service_order = Order(
+            client_id=cid,
+            subtotal=100,
+            itbis=18,
+            total=118,
+            warehouse_id=None,
+            company_id=comp.id,
+        )
+        db.session.add(service_order)
+        db.session.flush()
+        db.session.add(
+            Invoice(
+                client_id=cid,
+                order_id=service_order.id,
+                subtotal=100,
+                itbis=18,
+                total=118,
+                invoice_type='Consumidor Final',
+                status='Pendiente',
+                payment_method='Efectivo',
+                company_id=comp.id,
+            )
+        )
+        db.session.commit()
+
+    resp = client.get(f'/reportes/estado-cuentas/{cid}')
+    body = resp.data.decode('utf-8')
+    assert resp.status_code == 200
+    assert 'Servicio' in body
+    assert 'SRV-' in body
+
+
+def test_reportes_ajax_includes_service_source(client):
+    login(client, 'user', 'pass')
+    with app.app_context():
+        comp = CompanyInfo.query.first()
+        cli = Client.query.first()
+        service_order = Order(
+            client_id=cli.id,
+            subtotal=250,
+            itbis=45,
+            total=295,
+            warehouse_id=None,
+            company_id=comp.id,
+        )
+        db.session.add(service_order)
+        db.session.flush()
+        invoice = Invoice(
+            client_id=cli.id,
+            order_id=service_order.id,
+            subtotal=250,
+            itbis=45,
+            total=295,
+            invoice_type='Consumidor Final',
+            status='Pendiente',
+            payment_method='Efectivo',
+            company_id=comp.id,
+        )
+        db.session.add(invoice)
+        db.session.flush()
+        db.session.add(
+            InvoiceItem(
+                invoice_id=invoice.id,
+                code='S-1',
+                reference='',
+                product_name='Servicio de mantenimiento',
+                unit='Servicio',
+                unit_price=250,
+                quantity=1,
+                discount=0,
+                category='Servicios',
+                has_itbis=True,
+                company_id=comp.id,
+            )
+        )
+        db.session.commit()
+
+    resp = client.get('/reportes?ajax=1')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert any(inv.get('source') == 'Servicio' for inv in data['invoices'])
+
+
 
 def test_get_company_info_logo_path_normalized(client):
     from app import get_company_info
