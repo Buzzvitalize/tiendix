@@ -79,18 +79,23 @@ def fe_set_config():
                 normalized_rnc = normalized_rnc or None
             else:
                 normalized_rnc = raw_rnc
-            settings["rnc_emisor"] = normalized_rnc
-            # Guardar también en columna directa del modelo/config.
+            # Guardar en columna directa del modelo/config (sin duplicar en settings_json).
             fields["rnc_emisor"] = normalized_rnc
         if "settings_json" in payload and isinstance(payload["settings_json"], dict):
-            settings.update(payload["settings_json"])
+            incoming_settings = dict(payload["settings_json"])
+            # settings_json queda para flags; evitar duplicidad de rnc_emisor.
+            incoming_settings.pop("rnc_emisor", None)
+            settings.update(incoming_settings)
         fields["settings_json"] = settings
 
         if fields.get("cert_storage_mode") == "DB" and payload.get("p12_base64"):
             try:
-                fields["cert_p12_bytes"] = base64.b64decode(payload["p12_base64"], validate=True)
+                cert_blob = base64.b64decode(payload["p12_base64"], validate=True)
             except Exception as exc:
                 raise ValueError("p12_base64 inválido") from exc
+            if len(cert_blob) > (5 * 1024 * 1024):
+                raise ValueError("Certificado demasiado grande (máx 5MB)")
+            fields["cert_p12_bytes"] = cert_blob
 
         if fields.get("cert_storage_mode") == "PATH" and not fields.get("cert_path"):
             raise ValueError("cert_path es requerido cuando cert_storage_mode=PATH")
@@ -119,6 +124,11 @@ def fe_issue():
             "e_ncf": doc.e_ncf,
             "tipo_ecf": doc.tipo_ecf,
         })
+    except ValueError as exc:
+        msg = str(exc)
+        if "Facturación electrónica no está habilitada para la compañía" in msg:
+            return jsonify({"ok": False, "error": msg}), 409
+        return jsonify({"ok": False, "error": msg}), 400
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 

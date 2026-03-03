@@ -1,11 +1,14 @@
 """Tareas de procesamiento e-CF para ejecución por cron/cPanel."""
 
+import logging
+
 from ecf.constants import ECF_EVENT_ERROR
 from ecf.repository import list_pending_for_retry, log_event, mark_status
 from ecf.service import check_one
 
 
 FINAL_STATUSES = {"ACCEPTED", "CONDITIONAL", "REJECTED", "ERROR"}
+logger = logging.getLogger(__name__)
 
 
 def process_pending(limit: int = 50) -> dict:
@@ -42,7 +45,9 @@ def process_pending(limit: int = 50) -> dict:
                 summary["processing"] += 1
         except Exception as exc:
             summary["errors"] += 1
+            logger.exception("ecf_process_pending failed doc_id=%s", doc.id)
             mark_status(doc.id, "ERROR", message=str(exc))
             log_event(doc.id, ECF_EVENT_ERROR, {"error": str(exc), "source": "tasks.process_pending"})
 
+    logger.info("ecf_process_pending summary=%s", summary)
     return summary
