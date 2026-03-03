@@ -2177,14 +2177,20 @@ def terminos():
 @app.route('/admin/solicitudes')
 @admin_only
 def admin_requests():
-    requests = AccountRequest.query.all()
+    page = request.args.get('page', 1, type=int)
+    requests = (
+        AccountRequest.query
+        .order_by(AccountRequest.id.desc())
+        .paginate(page=page, per_page=25, error_out=False)
+    )
     return render_template('admin_solicitudes.html', requests=requests, signup_auto_approve=_is_signup_auto_approve_enabled())
 
 
 @app.route('/admin/companies')
 @admin_only
 def admin_companies():
-    companies = CompanyInfo.query.all()
+    page = request.args.get('page', 1, type=int)
+    companies = CompanyInfo.query.order_by(CompanyInfo.id.asc()).paginate(page=page, per_page=25, error_out=False)
     return render_template('admin_companies.html', companies=companies)
 
 
@@ -2465,7 +2471,12 @@ def cpanel_announcements():
         flash('Aviso general creado')
         return redirect(url_for('cpanel_announcements'))
 
-    announcements = SystemAnnouncement.query.order_by(SystemAnnouncement.updated_at.desc()).all()
+    page = request.args.get('page', 1, type=int)
+    announcements = (
+        SystemAnnouncement.query
+        .order_by(SystemAnnouncement.updated_at.desc())
+        .paginate(page=page, per_page=25, error_out=False)
+    )
     return render_template('cpanel_announcements.html', announcements=announcements)
 
 
@@ -4590,9 +4601,27 @@ def pay_invoice(invoice_id):
 
 @app.route('/notificaciones')
 def notifications_view():
-    unread = company_query(Notification).filter_by(is_read=False).order_by(Notification.created_at.desc()).all()
-    archived = company_query(Notification).filter_by(is_read=True).order_by(*_archived_notification_ordering()).all()
-    return render_template('notifications.html', notifications=unread + archived, unread_notifications=unread, archived_notifications=archived)
+    page = request.args.get('page', 1, type=int)
+    unread = (
+        company_query(Notification)
+        .filter_by(is_read=False)
+        .order_by(Notification.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    archived = (
+        company_query(Notification)
+        .filter_by(is_read=True)
+        .order_by(*_archived_notification_ordering())
+        .paginate(page=page, per_page=50, error_out=False)
+    )
+    return render_template(
+        'notifications.html',
+        notifications=unread + archived.items,
+        unread_notifications=unread,
+        archived_notifications=archived.items,
+        archived_pagination=archived,
+    )
 
 
 @app.post('/notificaciones/<int:nid>/leer')
