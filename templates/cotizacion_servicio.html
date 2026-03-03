@@ -105,8 +105,7 @@
       <tbody id="service-body"></tbody>
     </table>
   </div>
-  <div class="action-bar justify-between">
-    <button type="button" class="action-btn is-info btn-info" id="add-service-row-top">+ Agregar artículo</button>
+  <div class="action-bar">
     <button type="button" class="action-btn is-info btn-info" id="add-service-row">Agregar artículo</button>
     <span class="text-sm font-semibold">Total: <span id="service-total">RD$0.00</span></span>
   </div>
@@ -119,7 +118,6 @@
 (function(){
   const body = document.getElementById('service-body');
   const addBtn = document.getElementById('add-service-row');
-  const addTopBtn = document.getElementById('add-service-row-top');
   const totalEl = document.getElementById('service-total');
   const createClient = document.getElementById('service-create-client');
   const panel = document.getElementById('new-client-panel');
@@ -178,7 +176,6 @@
 
   if (createClient) createClient.addEventListener('change', toggleNewClient);
   if (addBtn) addBtn.addEventListener('click', addRow);
-  if (addTopBtn) addTopBtn.addEventListener('click', addRow);
   toggleNewClient();
   if (!body.querySelector('tr')) addRow();
 })();
