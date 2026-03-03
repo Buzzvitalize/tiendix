@@ -1,14 +1,18 @@
 import click
 
-from ecf.service import EcfService
+from ecf.tasks import process_pending
 
 
 def register_cli(app):
     @app.cli.command("ecf_process_pending")
     @click.option("--limit", default=50, show_default=True, type=int)
     def ecf_process_pending(limit: int):
-        """Procesa documentos e-CF pendientes (modo cron/cPanel)."""
-        results = EcfService.process_pending(limit=limit)
-        click.echo(f"Procesados: {len(results)}")
-        for item in results:
-            click.echo(f"#{item['id']} -> {item['status']} :: {item['message']}")
+        """Procesa documentos e-CF pendientes (cron/cPanel)."""
+        summary = process_pending(limit=limit)
+        click.echo("e-CF pending processing")
+        click.echo(f"processed:   {summary['processed']}")
+        click.echo(f"accepted:    {summary['accepted']}")
+        click.echo(f"conditional: {summary['conditional']}")
+        click.echo(f"rejected:    {summary['rejected']}")
+        click.echo(f"processing:  {summary['processing']}")
+        click.echo(f"errors:      {summary['errors']}")

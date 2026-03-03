@@ -1,75 +1,60 @@
-# Módulo DGII e-CF (Admin/Técnica)
+# e-CF (Administración/Técnica)
 
-## Resumen
-Se agregó un módulo e-CF desacoplado en `ecf/` con 3 modos por compañía:
+## 1) Ejecutar `updatecf1.sql` en phpMyAdmin
+1. Entrar a **cPanel > phpMyAdmin**.
+2. Seleccionar la base de datos de Tiendix.
+3. Pestaña **Importar**.
+4. Cargar y ejecutar `updatecf1.sql`.
+5. Verificar tablas: `ecf_company_config`, `ecf_document`, `ecf_events`.
 
-1. `DIRECT_DGII`
-2. `PSE_EXTERNAL`
-3. `PSE_ECOSEA` (stub futuro)
+## 2) Endpoints API
+Base: sesión activa en el sistema.
 
-El flujo tradicional NCF sigue intacto por defecto. Solo se usa e-CF si se activa por compañía en `ecf_company_config`.
+- `GET /api/fe/config`
+- `POST /api/fe/config`
+- `POST /api/fe/issue`
+- `GET /api/fe/doc/<id>`
+- `POST /api/fe/doc/<id>/check`
+- `GET /api/fe/doc/<id>/pdf`
 
-## Blueprints
-- `ecf_api_bp`: `/api/fe/*`
-- `ecf_admin_bp`: `/fe/*`
-- `pse_gateway_bp`: `/pse/ecosea/*` (stub)
+## 3) Configuración por modo
 
-## Operación en cPanel
-Sin workers permanentes. Usar Cron:
+### DIRECT_DGII
+- `mode=DIRECT_DGII`
+- Recomendado iniciar con `mock_sign=true`.
+- `dgii_env`: `precert`, `cert`, `prod`.
 
+### PSE_EXTERNAL
+- `mode=PSE_EXTERNAL`
+- Definir `pse_base_url` o `pse_issue_url` + `pse_status_url` (+ `pse_pdf_url` opcional).
+- Credenciales: `pse_api_key` o `pse_client_id` + `pse_client_secret`.
+
+### PSE_ECOSEA (stub)
+- `mode=PSE_ECOSEA`
+- Para pruebas internas.
+
+## 4) Cron cPanel
+### Comando recomendado
 ```bash
-cd /home/usuario/app
-source /home/usuario/virtualenv/app/3.11/bin/activate
+cd /home/USUARIO/apps/tiendix
+source /home/USUARIO/virtualenv/tiendix/3.11/bin/activate
 flask ecf_process_pending --limit 50
 ```
 
-Frecuencia recomendada: cada 1-5 minutos.
+Frecuencia sugerida: cada **1 o 2 minutos**.
 
-## CLI
-Comando registrado:
-
+## 5) Variables de entorno PSE stub
 ```bash
-flask ecf_process_pending --limit 50
+ECOSEA_PSE_STUB_ENABLED=1
+ECOSEA_PSE_STUB_SECRET=tu_secreto_largo
+```
+Enviar header:
+```http
+X-PSE-SECRET: tu_secreto_largo
 ```
 
-## API mínima
-### Configurar compañía
-`POST /api/fe/configure`
-
-```json
-{
-  "company_id": 1,
-  "enabled": true,
-  "mode": "DIRECT_DGII",
-  "settings": {
-    "mock_sign": true,
-    "dgii_submit_url": ""
-  }
-}
-```
-
-### Encolar emisión
-`POST /api/fe/emit`
-
-```json
-{
-  "company_id": 1,
-  "invoice_id": 1201,
-  "xml_payload": "<eCF>...</eCF>"
-}
-```
-
-### Estado
-`GET /api/fe/status/<doc_id>`
-
-## Firma XML
-Archivo `ecf/signer.py` incluye firma mock por defecto para compatibilidad con cPanel compartido.
-- `mock_sign=true`: agrega huella SHA256 en comentario XML.
-- Implementación real se deja preparada para fase futura.
-
-## Persistencia PDF
-`ecf_documents.pdf_blob` se llena **solo** en estados `ACCEPTED` o `CONDITIONAL`.
-
-## Integración con facturación actual
-No se reemplazaron rutas/funciones existentes de NCF tradicional.
-La integración recomendada en siguiente fase es invocar `EcfService.enqueue_invoice(...)` tras crear factura cuando FE esté activa.
+## 6) Notas de seguridad
+- Nunca exponer `cert_password` ni bytes del certificado en respuestas API.
+- Preferir `cert_storage_mode=PATH` cuando exista filesystem seguro en servidor.
+- Si usa `DB` (BLOB), asegurar respaldos frecuentes de MySQL y control de acceso.
+- Revisar permisos de archivos y backups cifrados.
