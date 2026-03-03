@@ -1680,6 +1680,14 @@ def _resolve_footer_text(use_default_flag: str | None, custom_footer: str | None
     return custom or None
 
 
+def _should_sync_document_email() -> bool:
+    """Use synchronous SMTP only when explicitly enabled (or during tests)."""
+    if current_app.testing:
+        return True
+    raw = str(current_app.config.get('SYNC_DOCUMENT_EMAIL', '0')).strip().lower()
+    return raw in {'1', 'true', 'yes', 'on'}
+
+
 def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
     validity_days = 30
     if quotation.valid_until and quotation.date:
@@ -4154,7 +4162,7 @@ def send_quotation_email(quotation_id):
         show_validity=True,
         validity_days=validity_days,
     )
-    send_email(client.email, subject, html, asynchronous=False, max_retries=1)
+    send_email(client.email, subject, html, asynchronous=not _should_sync_document_email(), max_retries=1)
     flash(f'Cotización enviada con éxito a {client.email}')
     return redirect(url_for('list_quotations'))
 
@@ -4414,7 +4422,7 @@ def send_order_email(order_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, asynchronous=False, max_retries=1)
+    send_email(client.email, subject, html, asynchronous=not _should_sync_document_email(), max_retries=1)
     flash(f'Pedido enviado con exito a {client.email}')
     return redirect(url_for('list_orders'))
 
@@ -4548,7 +4556,7 @@ def send_invoice_email(invoice_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, asynchronous=False, max_retries=1)
+    send_email(client.email, subject, html, asynchronous=not _should_sync_document_email(), max_retries=1)
     flash(f'Factura enviada con exito a {client.email}')
     return redirect(url_for('list_invoices'))
 
