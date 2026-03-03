@@ -1,61 +1,72 @@
-import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
-import requests
+from ecf.backends.base import FeBackend
+from ecf.constants import (
+    ECF_STATUS_ACCEPTED,
+    ECF_STATUS_PROCESSING,
+    ECF_STATUS_REJECTED,
+)
 
-from ecf.backends.base import BackendResult, EcfBackend
-from ecf.signer import sign_xml
 
-
-class DirectDgiiBackend(EcfBackend):
+class DirectDgiiBackend(FeBackend):
     mode = "DIRECT_DGII"
 
-    def issue(self, document: dict, company_config: dict) -> BackendResult:
-        payload = document.get("xml_payload") or self._build_min_xml(document)
-        signed_xml = sign_xml(payload, mock_mode=company_config.get("mock_sign", True))
-        dgii_url = company_config.get("dgii_submit_url")
-        if dgii_url:
-            try:
-                resp = requests.post(dgii_url, data=signed_xml.encode("utf-8"), timeout=20)
-                return BackendResult(
-                    status="SENT" if resp.ok else "ERROR",
-                    message=f"DGII HTTP {resp.status_code}",
-                    track_id=str(uuid.uuid4()),
-                    payload={"response_text": resp.text[:1000], "signed_xml": signed_xml},
-                )
-            except Exception as exc:
-                return BackendResult(status="ERROR", message=f"Error enviando a DGII: {exc}")
-        return BackendResult(
-            status="SENT",
-            message="Documento enviado en modo mock DIRECT_DGII",
-            track_id=str(uuid.uuid4()),
-            payload={"signed_xml": signed_xml},
-        )
+    def issue(self, doc, invoice, items, cfg) -> dict:
+        token = self.auth(cfg)
+        track_id = self.send(doc.xml_signed or "", cfg, token, doc_id=doc.id)
+        return {
+            "track_id": track_id,
+            "status": ECF_STATUS_PROCESSING,
+            "raw": {"provider": "DGII", "mock": self._is_stub(cfg), "token": bool(token)},
+        }
 
-    def check(self, document: dict, company_config: dict) -> BackendResult:
-        current_status = document.get("status")
-        if current_status == "SENT":
-            return BackendResult(
-                status="ACCEPTED",
-                message="Mock: DGII marcó el e-CF como aceptado",
-                payload={"accepted_at": datetime.utcnow().isoformat()},
-            )
-        return BackendResult(status=current_status or "PENDING", message="Sin cambios")
+    def check_status(self, doc, cfg) -> dict:
+        token = self.auth(cfg)
+        status, message, raw = self.check(doc.track_id, cfg, token, attempts=int(doc.attempts or 0))
+        return {"status": status, "message": message, "raw": raw}
 
-    def get_pdf(self, document: dict, company_config: dict) -> BackendResult:
-        content = f"e-CF {document.get('id')} / modo DIRECT_DGII".encode("utf-8")
-        return BackendResult(
-            status=document.get("status", "PENDING"),
-            message="PDF simulado",
-            pdf_bytes=content,
-            pdf_filename=f"ecf-{document.get('id')}.pdf",
-        )
+    def fetch_pdf(self, doc, cfg) -> bytes | None:
+        return None
+
+    def auth(self, cfg) -> str:
+        now = datetime.utcnow()
+        if getattr(cfg, "token_cache", None) and getattr(cfg, "token_expires_at", None):
+            if cfg.token_expires_at > now:
+                return cfg.token_cache
+
+        if self._is_stub(cfg):
+            return "DGII-MOCK-TOKEN"
+
+        # TODO: Integrar endpoint real de autenticación DGII.
+        raise RuntimeError("Auth DGII real no implementado (configure stub/mock_sign para pruebas)")
+
+    def send(self, xml_signed: str, cfg, token: str, *, doc_id: int) -> str:
+        if not xml_signed:
+            raise ValueError("xml_signed vacío para envío DGII")
+        if self._is_stub(cfg):
+            return f"DGII-MOCK-{doc_id}"
+
+        # TODO: Integrar endpoint real de envío DGII.
+        raise RuntimeError("Envío DGII real no implementado")
+
+    def check(self, track_id: str | None, cfg, token: str, *, attempts: int) -> tuple[str, str, dict]:
+        if not track_id:
+            return ECF_STATUS_PROCESSING, "Sin track_id aún", {"mock": self._is_stub(cfg)}
+
+        if self._is_stub(cfg):
+            settings = getattr(cfg, "settings_json", {}) or {}
+            force_reject = bool(settings.get("force_reject")) if isinstance(settings, dict) else False
+            if force_reject and attempts >= 2:
+                return ECF_STATUS_REJECTED, "Mock DGII: rechazado por force_reject", {"track_id": track_id}
+            if attempts >= 2:
+                return ECF_STATUS_ACCEPTED, "Mock DGII: aceptado", {"track_id": track_id}
+            return ECF_STATUS_PROCESSING, "Mock DGII: en proceso", {"track_id": track_id}
+
+        # TODO: Integrar endpoint real de consulta DGII.
+        raise RuntimeError("Consulta de estado DGII real no implementada")
 
     @staticmethod
-    def _build_min_xml(document: dict) -> str:
-        return (
-            "<eCF>"
-            f"<Id>{document.get('id')}</Id>"
-            f"<InvoiceId>{document.get('invoice_id')}</InvoiceId>"
-            "</eCF>"
-        )
+    def _is_stub(cfg) -> bool:
+        dgii_env = (getattr(cfg, "dgii_env", None) or "").strip()
+        mock_sign = bool(getattr(cfg, "mock_sign", True))
+        return (not dgii_env) or mock_sign

@@ -1,29 +1,22 @@
-import uuid
+from ecf.backends.base import FeBackend
+from ecf.constants import ECF_STATUS_ACCEPTED, ECF_STATUS_PROCESSING
 
-from ecf.backends.base import BackendResult, EcfBackend
 
-
-class PseEcoseaStubBackend(EcfBackend):
+class PseEcoseaStubBackend(FeBackend):
     mode = "PSE_ECOSEA"
 
-    def issue(self, document: dict, company_config: dict) -> BackendResult:
-        return BackendResult(
-            status="SENT",
-            message="ECOSEA stub: issue recibido",
-            track_id=f"ecosea-{uuid.uuid4()}",
-            payload={"stub": True},
-        )
+    def issue(self, doc, invoice, items, cfg) -> dict:
+        return {
+            "track_id": f"ECOSEA-PSE-{doc.id}",
+            "status": ECF_STATUS_PROCESSING,
+            "raw": {"stub": True},
+        }
 
-    def check(self, document: dict, company_config: dict) -> BackendResult:
-        if document.get("status") == "SENT":
-            return BackendResult(status="CONDITIONAL", message="ECOSEA stub: estado condicional")
-        return BackendResult(status=document.get("status", "PENDING"), message="Sin cambios")
+    def check_status(self, doc, cfg) -> dict:
+        if int(doc.attempts or 0) >= 2:
+            return {"status": ECF_STATUS_ACCEPTED, "message": "ECOSEA stub: aceptado", "raw": {"stub": True}}
+        return {"status": ECF_STATUS_PROCESSING, "message": "ECOSEA stub: procesando", "raw": {"stub": True}}
 
-    def get_pdf(self, document: dict, company_config: dict) -> BackendResult:
-        content = b"PDF STUB ECOSEA"
-        return BackendResult(
-            status=document.get("status", "PENDING"),
-            message="PDF stub ECOSEA",
-            pdf_bytes=content,
-            pdf_filename=f"ecosea-{document.get('id')}.pdf",
-        )
+    def fetch_pdf(self, doc, cfg) -> bytes | None:
+        # TODO: generar PDF válido completo desde backend ECOSEA cuando exista servicio real.
+        return b"%PDF-1.4\n% ECOSEA STUB PDF\n"

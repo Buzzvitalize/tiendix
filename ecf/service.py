@@ -1,186 +1,235 @@
-import json
+"""Núcleo de servicio e-CF (FASE 4): emisión + consulta por backend."""
+
 from datetime import datetime
+import logging
 
-from sqlalchemy import text
+from ecf.constants import (
+    DIRECT_DGII,
+    ECF_EVENT_AUTH,
+    ECF_EVENT_BUILD_XML,
+    ECF_EVENT_ERROR,
+    ECF_EVENT_PDF,
+    ECF_EVENT_SEND,
+    ECF_EVENT_SIGN,
+    ECF_EVENT_STATUS_CHECK,
+    ECF_FINAL_OK_STATUSES,
+    ECF_STATUS_ERROR,
+)
+from ecf.engine import assert_enabled, get_backend
+from ecf.models import EcfDocument
+from ecf.repository import (
+    create_ecf_document,
+    get_company_config,
+    log_event,
+    mark_sent,
+    mark_status,
+    save_xml_signed,
+    save_xml_unsigned,
+    schedule_retry,
+)
+from ecf.signer import sign_xml
+from ecf.xml_builder import build_ecf_xml
+from models import CompanyInfo, Invoice, InvoiceItem, db
+from weasy_pdf import generate_pdf_bytes
 
-from ecf.backends import get_backend
-from ecf.constants import EcfMode, EcfPdfStatuses
-from models import db
+logger = logging.getLogger(__name__)
+
+
+def issue_ecf_for_invoice(company_id: int, invoice_id: int) -> EcfDocument:
+    cfg = get_company_config(company_id)
+    assert_enabled(cfg)
+
+    invoice = (
+        Invoice.query
+        .filter(Invoice.id == int(invoice_id), Invoice.company_id == int(company_id))
+        .first()
+    )
+    if not invoice:
+        raise ValueError(f"Factura no encontrada para company_id={company_id}, invoice_id={invoice_id}")
+
+    items = (
+        InvoiceItem.query
+        .filter(InvoiceItem.invoice_id == int(invoice_id), InvoiceItem.company_id == int(company_id))
+        .order_by(InvoiceItem.id.asc())
+        .all()
+    )
+    if not items:
+        raise ValueError("La factura no tiene items para emitir e-CF")
+
+    tipo_ecf = _map_tipo_ecf(invoice)
+    e_ncf = (invoice.ncf or "").strip() or f"ECF-{company_id}-{invoice.id}"
+
+    doc = create_ecf_document(
+        company_id=company_id,
+        invoice_id=invoice.id,
+        backend_mode=cfg.mode,
+        tipo_ecf=tipo_ecf,
+        e_ncf=e_ncf,
+    )
+
+    invoice.company = db.session.get(CompanyInfo, invoice.company_id)  # helper para xml_builder
+
+    xml_unsigned = build_ecf_xml(invoice, items, cfg, tipo_ecf)
+    save_xml_unsigned(doc.id, xml_unsigned)
+    log_event(doc.id, ECF_EVENT_BUILD_XML, {"tipo_ecf": tipo_ecf, "e_ncf": e_ncf})
+
+    xml_signed = sign_xml(xml_unsigned, cfg)
+    save_xml_signed(doc.id, xml_signed)
+    log_event(doc.id, ECF_EVENT_SIGN, {"mock_sign": bool(cfg.mock_sign)})
+
+    backend = get_backend(cfg.mode)
+    issue_result = backend.issue(_refresh_doc(doc.id), invoice, items, cfg)
+
+    if cfg.mode == DIRECT_DGII:
+        log_event(doc.id, ECF_EVENT_AUTH, {"provider": "DGII", "mock": bool(cfg.mock_sign)})
+
+    mark_sent(doc.id, issue_result.get("track_id"), response_payload=issue_result.get("raw"))
+    log_event(
+        doc.id,
+        ECF_EVENT_SEND,
+        {
+            "track_id": issue_result.get("track_id"),
+            "status": issue_result.get("status"),
+            "provider": cfg.mode,
+        },
+    )
+
+    backoff = compute_backoff_seconds(_refresh_doc(doc.id).attempts or 0)
+    if backoff > 0:
+        schedule_retry(doc.id, backoff, attempts_increment=False)
+
+    logger.info("e-CF emitido doc_id=%s company_id=%s invoice_id=%s mode=%s", doc.id, company_id, invoice_id, cfg.mode)
+    return _refresh_doc(doc.id)
+
+
+def check_one(doc_id: int) -> EcfDocument:
+    doc = _refresh_doc(doc_id)
+    cfg = get_company_config(doc.company_id)
+    assert_enabled(cfg)
+
+    backend = get_backend(cfg.mode)
+    check = backend.check_status(doc, cfg)
+
+    status = check.get("status") or ECF_STATUS_ERROR
+    message = check.get("message") or ""
+    raw = check.get("raw")
+
+    mark_status(doc.id, status, message=message, response_payload=raw)
+    log_event(doc.id, ECF_EVENT_STATUS_CHECK, {"status": status, "message": message})
+
+    doc = _refresh_doc(doc.id)
+    if doc.status in ECF_FINAL_OK_STATUSES:
+        pdf_bytes = backend.fetch_pdf(doc, cfg)
+        if not pdf_bytes:
+            pdf_bytes = _generate_pdf_from_invoice(doc)
+
+        if pdf_bytes:
+            doc.pdf_blob = pdf_bytes
+            doc.pdf_size_bytes = len(pdf_bytes)
+            doc.pdf_filename = doc.pdf_filename or f"ecf-{doc.id}.pdf"
+            doc.pdf_mime = doc.pdf_mime or "application/pdf"
+            db.session.commit()
+            log_event(doc.id, ECF_EVENT_PDF, {"size_bytes": len(pdf_bytes), "filename": doc.pdf_filename})
+    else:
+        backoff = compute_backoff_seconds(doc.attempts or 0)
+        if backoff < 0:
+            mark_status(doc.id, ECF_STATUS_ERROR, message="Máximo de reintentos alcanzado")
+            log_event(doc.id, ECF_EVENT_ERROR, {"message": "Máximo de reintentos alcanzado"})
+        else:
+            schedule_retry(doc.id, backoff, attempts_increment=True)
+
+    return _refresh_doc(doc.id)
+
+
+def compute_backoff_seconds(attempts: int) -> int:
+    attempts = int(attempts or 0)
+    if attempts <= 5:
+        return 30
+    if attempts <= 10:
+        return 120
+    if attempts <= 25:
+        return 300
+    return -1
 
 
 class EcfService:
-    @staticmethod
-    def get_company_config(company_id: int) -> dict | None:
-        row = db.session.execute(
-            text(
-                """
-                SELECT company_id, enabled, mode, settings_json, updated_at
-                FROM ecf_company_config
-                WHERE company_id = :company_id
-                """
-            ),
-            {"company_id": company_id},
-        ).mappings().first()
-        if not row:
-            return None
-        settings = {}
-        if row["settings_json"]:
-            try:
-                settings = json.loads(row["settings_json"])
-            except json.JSONDecodeError:
-                settings = {}
-        return {
-            "company_id": row["company_id"],
-            "enabled": bool(row["enabled"]),
-            "mode": row["mode"],
-            "settings": settings,
-            "updated_at": row["updated_at"],
-        }
+    """Compatibilidad de import para capas superiores existentes."""
 
     @staticmethod
-    def upsert_company_config(company_id: int, enabled: bool, mode: str, settings: dict) -> None:
-        if mode not in EcfMode:
-            raise ValueError("Modo e-CF inválido")
-        db.session.execute(
-            text(
-                """
-                INSERT INTO ecf_company_config (company_id, enabled, mode, settings_json, updated_at)
-                VALUES (:company_id, :enabled, :mode, :settings_json, NOW())
-                ON DUPLICATE KEY UPDATE
-                    enabled = VALUES(enabled),
-                    mode = VALUES(mode),
-                    settings_json = VALUES(settings_json),
-                    updated_at = NOW()
-                """
-            ),
-            {
-                "company_id": company_id,
-                "enabled": 1 if enabled else 0,
-                "mode": mode,
-                "settings_json": json.dumps(settings or {}),
-            },
-        )
-        db.session.commit()
+    def issue_ecf_for_invoice(company_id: int, invoice_id: int) -> EcfDocument:
+        return issue_ecf_for_invoice(company_id, invoice_id)
 
     @staticmethod
-    def enqueue_invoice(invoice_id: int, company_id: int, xml_payload: str | None = None) -> int:
-        config = EcfService.get_company_config(company_id)
-        if not config or not config["enabled"]:
-            raise ValueError("Facturación electrónica no está activada para esta compañía")
-
-        result = db.session.execute(
-            text(
-                """
-                INSERT INTO ecf_documents (
-                    company_id, invoice_id, backend_mode, status, xml_payload, created_at, updated_at
-                ) VALUES (
-                    :company_id, :invoice_id, :backend_mode, 'PENDING', :xml_payload, NOW(), NOW()
-                )
-                """
-            ),
-            {
-                "company_id": company_id,
-                "invoice_id": invoice_id,
-                "backend_mode": config["mode"],
-                "xml_payload": xml_payload,
-            },
-        )
-        db.session.commit()
-        return int(result.lastrowid)
+    def check_one(doc_id: int) -> EcfDocument:
+        return check_one(doc_id)
 
     @staticmethod
-    def get_document(doc_id: int) -> dict | None:
-        row = db.session.execute(
-            text("SELECT * FROM ecf_documents WHERE id = :id"),
-            {"id": doc_id},
-        ).mappings().first()
-        return dict(row) if row else None
+    def compute_backoff_seconds(attempts: int) -> int:
+        return compute_backoff_seconds(attempts)
 
-    @staticmethod
-    def process_document(doc_id: int) -> dict:
-        document = EcfService.get_document(doc_id)
-        if not document:
-            raise ValueError("Documento e-CF no encontrado")
-        config = EcfService.get_company_config(document["company_id"])
-        if not config:
-            raise ValueError("Configuración e-CF no encontrada")
-        backend = get_backend(config["mode"])
-        if not backend:
-            raise ValueError("Backend no soportado")
 
-        if document["status"] in ("PENDING", "ERROR"):
-            result = backend.issue(document, config["settings"])
-        else:
-            result = backend.check(document, config["settings"])
+def _map_tipo_ecf(invoice: Invoice) -> str:
+    invoice_type = (getattr(invoice, "invoice_type", None) or "").strip().lower()
+    ncf = (getattr(invoice, "ncf", None) or "").strip().upper()
 
-        EcfService._save_result(document, result, config)
-        return {"id": doc_id, "status": result.status, "message": result.message}
+    if "consumidor" in invoice_type or ncf.startswith("B02"):
+        return "31"
+    if "crédito" in invoice_type or "credito" in invoice_type or ncf.startswith("B01"):
+        return "33"
+    return "31"
 
-    @staticmethod
-    def process_pending(limit: int = 50) -> list[dict]:
-        rows = db.session.execute(
-            text(
-                """
-                SELECT id FROM ecf_documents
-                WHERE status IN ('PENDING', 'SENT', 'ERROR')
-                ORDER BY created_at ASC
-                LIMIT :limit
-                """
-            ),
-            {"limit": limit},
-        ).mappings().all()
-        output = []
-        for row in rows:
-            try:
-                output.append(EcfService.process_document(int(row["id"])))
-            except Exception as exc:  # pragma: no cover
-                output.append({"id": int(row["id"]), "status": "ERROR", "message": str(exc)})
-        return output
 
-    @staticmethod
-    def _save_result(document: dict, result, config: dict) -> None:
-        accepted_at = "NOW()" if result.status in EcfPdfStatuses else "accepted_at"
-        sql = f"""
-            UPDATE ecf_documents
-            SET
-                status = :status,
-                error_message = :error_message,
-                provider_track_id = COALESCE(:provider_track_id, provider_track_id),
-                response_payload = :response_payload,
-                attempts = COALESCE(attempts, 0) + 1,
-                updated_at = NOW(),
-                accepted_at = {accepted_at}
-            WHERE id = :id
-        """
-        db.session.execute(
-            text(sql),
-            {
-                "id": document["id"],
-                "status": result.status,
-                "error_message": None if result.status != "ERROR" else result.message,
-                "provider_track_id": result.track_id,
-                "response_payload": json.dumps(result.payload or {}),
-            },
-        )
+def _refresh_doc(doc_id: int) -> EcfDocument:
+    doc = db.session.get(EcfDocument, int(doc_id))
+    if not doc:
+        raise ValueError(f"Documento e-CF no encontrado: {doc_id}")
+    return doc
 
-        if result.status in EcfPdfStatuses:
-            backend = get_backend(config["mode"])
-            pdf_result = backend.get_pdf(document, config["settings"])
-            if pdf_result.pdf_bytes:
-                db.session.execute(
-                    text(
-                        """
-                        UPDATE ecf_documents
-                        SET pdf_blob = :pdf_blob,
-                            pdf_filename = :pdf_filename,
-                            pdf_mime = 'application/pdf'
-                        WHERE id = :id
-                        """
-                    ),
-                    {
-                        "id": document["id"],
-                        "pdf_blob": pdf_result.pdf_bytes,
-                        "pdf_filename": pdf_result.pdf_filename or f"ecf-{document['id']}.pdf",
-                    },
-                )
-        db.session.commit()
+
+def _generate_pdf_from_invoice(doc: EcfDocument) -> bytes | None:
+    invoice = db.session.get(Invoice, int(doc.invoice_id))
+    if not invoice:
+        return None
+
+    items = (
+        InvoiceItem.query
+        .filter(InvoiceItem.invoice_id == invoice.id, InvoiceItem.company_id == doc.company_id)
+        .order_by(InvoiceItem.id.asc())
+        .all()
+    )
+    if not items:
+        return None
+
+    company_obj = db.session.get(CompanyInfo, int(doc.company_id))
+    company = {
+        "name": getattr(company_obj, "name", ""),
+        "address": " ".join(filter(None, [getattr(company_obj, "street", ""), getattr(company_obj, "sector", ""), getattr(company_obj, "province", "")])),
+        "website": getattr(company_obj, "website", None),
+        "phone": getattr(company_obj, "phone", None),
+    }
+
+    client = {
+        "name": getattr(invoice.client, "name", ""),
+        "identifier": getattr(invoice.client, "identifier", ""),
+        "address": " ".join(filter(None, [getattr(invoice.client, "street", ""), getattr(invoice.client, "sector", ""), getattr(invoice.client, "province", "")])),
+        "phone": getattr(invoice.client, "phone", ""),
+        "email": getattr(invoice.client, "email", ""),
+    }
+
+    return generate_pdf_bytes(
+        "Factura",
+        company,
+        client,
+        items,
+        float(invoice.subtotal or 0),
+        float(invoice.itbis or 0),
+        float(invoice.total or 0),
+        ncf=invoice.ncf,
+        seller=invoice.seller,
+        payment_method=invoice.payment_method,
+        bank=invoice.bank,
+        doc_number=invoice.id,
+        invoice_type=invoice.invoice_type,
+        note=invoice.note,
+        date=invoice.date,
+    )
