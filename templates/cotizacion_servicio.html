@@ -1,0 +1,183 @@
+{% extends 'base.html' %}
+{% block title %}Nuevo Servicio{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-4">Nuevo Servicio</h1>
+<form method="post" class="card space-y-4">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
+      <select name="client_id" class="input" id="service-client-id">
+        <option value="">Seleccione cliente</option>
+        {% for c in clients %}
+        <option value="{{ c.id }}">{{ c.name }}{% if c.identifier %} - {{ c.identifier }}{% endif %}</option>
+        {% endfor %}
+      </select>
+      <label class="mt-2 inline-flex items-center gap-2 text-sm">
+        <input type="checkbox" id="service-create-client" name="create_client" value="1">
+        <span>Crear cliente nuevo</span>
+      </label>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Documento a crear</label>
+      <select name="document_mode" class="input">
+        <option value="cotizacion">Cotización de servicio</option>
+        <option value="factura">Factura de servicio</option>
+      </select>
+    </div>
+
+    <div id="new-client-panel" class="hidden md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 border rounded-lg p-3 bg-gray-50">
+      <div class="md:col-span-2 flex gap-4">
+        <label><input type="radio" name="new_client_type" value="final" checked> Personal (Consumidor Final)</label>
+        <label><input type="radio" name="new_client_type" value="fiscal"> Empresa (Comprobante Fiscal)</label>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+        <input name="new_client_name" class="input" placeholder="Nombre del cliente">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Apellido</label>
+        <input name="new_client_last_name" class="input" placeholder="Apellido (opcional)">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Documento (Cédula/RNC)</label>
+        <input name="new_client_identifier" class="input" placeholder="Documento">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+        <input name="new_client_phone" class="input" placeholder="Teléfono">
+      </div>
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-gray-700 mb-1">Correo</label>
+        <input name="new_client_email" class="input" placeholder="correo@cliente.com">
+      </div>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Vendedor</label>
+      <select name="seller" class="input">
+        <option value="">Seleccione</option>
+        {% for s in sellers %}
+        <option value="{{ s.first_name }} {{ s.last_name }}">{{ s.first_name }} {{ s.last_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Método de pago</label>
+      <select name="payment_method" class="input" id="payment_method">
+        <option>Efectivo</option>
+        <option>Transferencia</option>
+        <option>Tarjeta</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Banco</label>
+      <input name="bank" class="input" id="bank_field" placeholder="Banco (si aplica)">
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Vigencia</label>
+      <select name="validity_period" class="input">
+        {% for value,days in validity_options.items() %}
+        <option value="{{ value }}">{{ days }} días</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="md:col-span-2">
+      <label class="block text-sm font-medium text-gray-700 mb-1">Nota</label>
+      <textarea name="note" class="input" rows="2" placeholder="Nota opcional del servicio"></textarea>
+    </div>
+  </div>
+
+  <div class="card overflow-x-auto">
+    <table class="min-w-full text-sm" id="service-table">
+      <thead class="bg-gray-100">
+        <tr>
+          <th class="p-2 text-left">Artículo</th>
+          <th class="p-2 text-left">Descripción</th>
+          <th class="p-2 text-left">Cantidad</th>
+          <th class="p-2 text-left">Tarifa</th>
+          <th class="p-2 text-left">ITBIS 18%</th>
+          <th class="p-2 text-left">Monto</th>
+          <th class="p-2"></th>
+        </tr>
+      </thead>
+      <tbody id="service-body"></tbody>
+    </table>
+  </div>
+  <div class="action-bar">
+    <button type="button" class="action-btn is-info btn-info" id="add-service-row">Agregar artículo</button>
+    <span class="text-sm font-semibold">Total: <span id="service-total">RD$0.00</span></span>
+  </div>
+  <button class="btn-primary">Guardar Servicio</button>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const body = document.getElementById('service-body');
+  const addBtn = document.getElementById('add-service-row');
+  const totalEl = document.getElementById('service-total');
+  const createClient = document.getElementById('service-create-client');
+  const panel = document.getElementById('new-client-panel');
+  const clientSelect = document.getElementById('service-client-id');
+
+  function money(v){ return new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(v || 0); }
+
+  function toggleNewClient(){
+    const enabled = createClient.checked;
+    panel.classList.toggle('hidden', !enabled);
+    clientSelect.disabled = enabled;
+    if (enabled) clientSelect.value = '';
+  }
+
+  function recalc(){
+    let total = 0;
+    body.querySelectorAll('tr').forEach((row)=>{
+      const qty = parseFloat(row.querySelector('[name="service_quantity[]"]').value || '0');
+      const rate = parseFloat(row.querySelector('[name="service_rate[]"]').value || '0');
+      const useTax = row.querySelector('[name="service_itbis[]"]').value === '1';
+      let amount = Math.max(qty,0) * Math.max(rate,0);
+      if (useTax) amount *= 1.18;
+      row.querySelector('.row-amount').textContent = money(amount);
+      total += amount;
+    });
+    totalEl.textContent = money(total);
+  }
+
+  function bindRow(tr){
+    tr.querySelectorAll('input,select').forEach((i)=>{
+      i.addEventListener('input', recalc);
+      i.addEventListener('change', recalc);
+    });
+    const removeBtn = tr.querySelector('.service-remove-btn');
+    if (removeBtn) {
+      removeBtn.addEventListener('click', ()=>{ tr.remove(); recalc(); });
+    }
+  }
+
+  function addRow(){
+    const tr = document.createElement('tr');
+    tr.className = 'border-t';
+    tr.innerHTML = `
+      <td class="p-2"><input class="input" name="service_name[]" placeholder="Nombre del servicio" required></td>
+      <td class="p-2"><input class="input" name="service_description[]" placeholder="Descripción"></td>
+      <td class="p-2"><input class="input" type="number" min="1" step="1" name="service_quantity[]" value="1" required></td>
+      <td class="p-2"><input class="input" type="number" min="0" step="0.01" name="service_rate[]" value="0" required></td>
+      <td class="p-2"><select class="input" name="service_itbis[]"><option value="0">No</option><option value="1">Sí</option></select></td>
+      <td class="p-2 row-amount">RD$0.00</td>
+      <td class="p-2"><button type="button" class="action-btn is-danger btn-danger service-remove-btn">Quitar</button></td>
+    `;
+    body.appendChild(tr);
+    bindRow(tr);
+    recalc();
+  }
+
+  if (createClient) createClient.addEventListener('change', toggleNewClient);
+  if (addBtn) addBtn.addEventListener('click', addRow);
+  toggleNewClient();
+  if (!body.querySelector('tr')) addRow();
+})();
+</script>
+{% endblock %}
