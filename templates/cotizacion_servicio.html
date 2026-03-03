@@ -156,7 +156,7 @@
       <td class="p-2"><input class="input" type="number" min="0" step="0.01" name="service_rate[]" value="0" required></td>
       <td class="p-2"><select class="input" name="service_itbis[]"><option value="0">No</option><option value="1">Sí</option></select></td>
       <td class="p-2 row-amount">RD$0.00</td>
-      <td class="p-2"><button type="button" class="action-btn" style="background-color:#dc2626">Quitar</button></td>
+      <td class="p-2"><button type="button" class="btn-danger">Quitar</button></td>
     `;
     tr.querySelectorAll('input,select').forEach((i)=>i.addEventListener('input', recalc));
     tr.querySelector('button').addEventListener('click', ()=>{ tr.remove(); recalc(); });
