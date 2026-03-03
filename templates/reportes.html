@@ -257,21 +257,23 @@
         <th class="p-2 text-left">Cliente</th>
         <th class="p-2 text-left">Fecha</th>
         <th class="p-2 text-left">Estado</th>
+        <th class="p-2 text-left">Origen</th>
         <th class="p-2 text-right">Total</th>
       </tr>
     </thead>
     <tbody>
       {% if invoices %}
-      {% for inv in invoices %}
+      {% for inv in invoice_rows %}
       <tr class="border-t">
-        <td class="p-2">{{ inv.client.name }}</td>
-        <td class="p-2">{{ inv.date.strftime('%Y-%m-%d') }}</td>
-        <td class="p-2">{{ inv.status }}</td>
+        <td class="p-2">{{ inv.client }}</td>
+        <td class="p-2">{{ inv.date }}</td>
+        <td class="p-2">{{ inv.estado }}</td>
+        <td class="p-2">{{ inv.source }}</td>
         <td class="p-2 text-right">{{ inv.total | money }}</td>
       </tr>
       {% endfor %}
       {% else %}
-      <tr class="border-t"><td class="p-2 text-center" colspan="4">Sin datos</td></tr>
+      <tr class="border-t"><td class="p-2 text-center" colspan="5">Sin datos</td></tr>
       {% endif %}
     </tbody>
   </table>

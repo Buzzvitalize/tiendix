@@ -4374,12 +4374,24 @@ def reportes():
     pagination = (
         q.options(
             joinedload(Invoice.client),
+            joinedload(Invoice.order),
+            joinedload(Invoice.items),
             load_only(Invoice.client_id, Invoice.total, Invoice.date, Invoice.status),
         )
         .order_by(Invoice.date.desc())
         .paginate(page=page, per_page=10, error_out=False)
     )
     invoices = pagination.items
+    invoice_rows = [
+        {
+            'client': inv.client.name if inv.client else '',
+            'date': inv.date.strftime('%Y-%m-%d'),
+            'estado': inv.status or '',
+            'source': _invoice_origin_label(inv),
+            'total': inv.total,
+        }
+        for inv in invoices
+    ]
 
     total_sales, unique_clients, invoice_count = (
         q.with_entities(
@@ -4686,15 +4698,7 @@ def reportes():
                 'year_prev': year_prev,
                 'top_categories_year': [{'category': c or 'Sin categoría', 'total': t or 0} for c, t in top_cats],
                 'trend_24': trend_24,
-                'invoices': [
-                    {
-                        'client': i.client.name if i.client else '',
-                        'date': i.date.strftime('%Y-%m-%d'),
-                        'estado': i.status or '',
-                        'total': i.total,
-                    }
-                    for i in invoices
-                ],
+                'invoices': invoice_rows,
                 'pagination': {'page': pagination.page, 'pages': pagination.pages},
                 'kpi_changes': kpi_changes,
             }
@@ -4703,6 +4707,7 @@ def reportes():
     return render_template(
         'reportes.html',
         invoices=invoices,
+        invoice_rows=invoice_rows,
         pagination=pagination,
         sales_by_category=sales_by_category,
         stats=stats,
@@ -4739,13 +4744,35 @@ def _invoice_balance(inv):
     return inv.total - sum(p.amount for p in inv.payments)
 
 
+def _invoice_origin_label(inv: Invoice) -> str:
+    categories = {
+        (getattr(item, 'category', '') or '').strip().lower()
+        for item in (getattr(inv, 'items', None) or [])
+        if item is not None
+    }
+    if categories and categories.issubset({'servicios'}):
+        return 'Servicio'
+    if getattr(inv, 'order', None) is not None and inv.order.warehouse_id is None:
+        return 'Servicio'
+    return 'Pedido'
+
+
+def _invoice_reference(inv: Invoice) -> str:
+    if getattr(inv, 'order', None) is not None and inv.order.customer_po:
+        return inv.order.customer_po
+    if inv.order_id:
+        prefix = 'SRV' if _invoice_origin_label(inv) == 'Servicio' else 'PED'
+        return f'{prefix}-{inv.order_id}'
+    return '-'
+
+
 @app.get('/reportes/estado-cuentas/<int:client_id>')
 def account_statement_detail(client_id):
     client = company_get(Client, client_id)
     invoices = (
         company_query(Invoice)
         .filter_by(client_id=client.id)
-        .options(joinedload(Invoice.order), joinedload(Invoice.payments))
+        .options(joinedload(Invoice.order), joinedload(Invoice.items), joinedload(Invoice.payments))
         .all()
     )
     rows = []
@@ -4757,9 +4784,11 @@ def account_statement_detail(client_id):
         if balance <= 0:
             continue
         due = inv.date + timedelta(days=30)
+        origin = _invoice_origin_label(inv)
         rows.append({
             'document': inv.ncf or f'FAC-{inv.id}',
-            'order': inv.order.customer_po if inv.order and inv.order.customer_po else inv.order_id,
+            'origin': origin,
+            'order': _invoice_reference(inv),
             'date': inv.date.strftime('%d/%m/%Y'),
             'due': due.strftime('%d/%m/%Y'),
             'info': inv.note or '',
