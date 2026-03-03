@@ -72,7 +72,16 @@ def fe_set_config():
             settings = dict(getattr(cfg_prev, "settings_json", {}) or {})
 
         if "rnc_emisor" in payload:
-            settings["rnc_emisor"] = payload.get("rnc_emisor")
+            raw_rnc = payload.get("rnc_emisor")
+            if isinstance(raw_rnc, str):
+                normalized_rnc = raw_rnc.strip()
+                # Permite limpiar el valor si viene vacío.
+                normalized_rnc = normalized_rnc or None
+            else:
+                normalized_rnc = raw_rnc
+            settings["rnc_emisor"] = normalized_rnc
+            # Guardar también en columna directa del modelo/config.
+            fields["rnc_emisor"] = normalized_rnc
         if "settings_json" in payload and isinstance(payload["settings_json"], dict):
             settings.update(payload["settings_json"])
         fields["settings_json"] = settings
