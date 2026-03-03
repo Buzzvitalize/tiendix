@@ -4366,15 +4366,16 @@ def quotation_to_order(quotation_id):
             )
             db.session.add(mov)
     db.session.commit()
-    company = get_company_info()
-    order_pdf_bytes = _build_order_pdf_bytes(order, company)
-    _archive_pdf_copy(
-        'pedido',
-        order.id,
-        order_pdf_bytes,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-    )
+    if _should_eager_generate_pdf():
+        company = get_company_info()
+        order_pdf_bytes = _build_order_pdf_bytes(order, company)
+        _archive_pdf_copy(
+            'pedido',
+            order.id,
+            order_pdf_bytes,
+            company_name=company.get('name'),
+            company_id=current_company_id(),
+        )
     flash('Pedido creado')
     notify('Pedido creado')
     return redirect(url_for('list_orders'))
@@ -4481,15 +4482,16 @@ def order_to_invoice(order_id):
         db.session.add(i_item)
     order.status = 'Entregado'
     db.session.commit()
-    company_info = get_company_info()
-    invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company_info)
-    _archive_pdf_copy(
-        _invoice_doc_type(invoice),
-        invoice.id,
-        invoice_pdf_bytes,
-        company_name=company_info.get('name'),
-        company_id=current_company_id(),
-    )
+    if _should_eager_generate_pdf():
+        company_info = get_company_info()
+        invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company_info)
+        _archive_pdf_copy(
+            _invoice_doc_type(invoice),
+            invoice.id,
+            invoice_pdf_bytes,
+            company_name=company_info.get('name'),
+            company_id=current_company_id(),
+        )
     flash('Factura generada')
     notify('Factura generada')
     log_audit('invoice_create', 'invoice', invoice.id, details=f'from_order={order.id};total={invoice.total:.2f}')
@@ -4646,6 +4648,13 @@ def _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria):
     if categoria:
         q = q.join(Invoice.items).filter(InvoiceItem.category == categoria)
     return q
+
+
+def _count_up_to_limit(query, limit: int) -> int:
+    """Count rows up to ``limit`` to avoid expensive full COUNT(*) scans."""
+    safe_limit = max(int(limit), 1)
+    ids = query.with_entities(Invoice.id).order_by(None).limit(safe_limit).all()
+    return len(ids)
 
 
 @app.route('/reportes')
@@ -5194,16 +5203,17 @@ def export_reportes():
 
     start, end, estado, categoria, _ = _parse_report_params(fecha_inicio, fecha_fin, estado, categoria)
     q = _filtered_invoice_query(start, end, estado, categoria)
-    count = q.count()
+    max_rows = current_app.config.get('MAX_EXPORT_ROWS', MAX_EXPORT_ROWS)
+    sampled = _count_up_to_limit(q, max_rows + 1)
+    exceeds_max_rows = sampled > max_rows
     filtros = {'fecha_inicio': fecha_inicio, 'fecha_fin': fecha_fin, 'estado': estado, 'categoria': categoria}
     user = session.get('full_name') or session.get('username')
 
-    max_rows = current_app.config.get('MAX_EXPORT_ROWS', MAX_EXPORT_ROWS)
-    if count > max_rows and request.args.get('async') != '1':
+    if exceeds_max_rows and request.args.get('async') != '1':
         log_export(user, formato, tipo, filtros, 'fail', 'too_many_rows')
         return jsonify({'error': 'too many rows', 'suggest': 'async'}), 400
 
-    if count > max_rows and request.args.get('async') == '1':
+    if exceeds_max_rows and request.args.get('async') == '1':
         entry_id = log_export(user, formato, tipo, filtros, 'queued')
         enqueue_export(
             _export_job,
