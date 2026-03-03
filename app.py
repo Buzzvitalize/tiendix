@@ -1930,6 +1930,7 @@ def require_login():
         'auth.login',
         'static',
         'request_account',
+        'rnc_lookup',
         'auth.logout',
         'auth.reset_request',
         'auth.reset_password',

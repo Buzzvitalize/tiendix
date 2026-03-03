@@ -62,10 +62,14 @@
         <div>
           <label for="company-name" class="block text-sm font-medium text-gray-700 mb-1">Nombre de la empresa o marca</label>
           <input id="company-name" name="company" placeholder="Nombre de la empresa o marca" class="input" required>
+          <p id="rnc-helper" class="hidden text-xs mt-1 text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-1">
+            Coloca tu número RNC para llenar este campo automáticamente con el nombre de tu empresa.
+          </p>
         </div>
         <div>
           <label for="identifier" class="block text-sm font-medium text-gray-700 mb-1">Cédula / RNC</label>
           <input id="identifier" name="identifier" placeholder="Cédula" class="input" required>
+          <p id="rnc-lookup-status" class="hidden text-xs mt-1"></p>
         </div>
         <div>
           <label for="address" class="block text-sm font-medium text-gray-700 mb-1">Dirección de la empresa</label>
@@ -138,6 +142,9 @@
   const formAlert = document.getElementById('form-alert');
   const passwordField = document.getElementById('password');
   const confirmField = document.getElementById('confirm-password');
+  const companyField = document.getElementById('company-name');
+  const rncHelper = document.getElementById('rnc-helper');
+  const rncLookupStatus = document.getElementById('rnc-lookup-status');
   const strengthBar = document.getElementById('password-strength-bar');
   const strengthText = document.getElementById('password-strength-text');
   const signupForm = document.getElementById('signup-form');
@@ -195,12 +202,55 @@
     }
   }
 
-  function lookupRnc(){
-    const r=idField.value.replace(/-/g,'');
-    fetch(`/api/rnc/${r}`).then(r=>r.json()).then(data=>{
-      const field=document.getElementById('company-name');
-      if(data.name && field && !field.value){ field.value=data.name; }
-    });
+  function setRncStatus(message, tone='neutral'){
+    if(!rncLookupStatus) return;
+    if(!message){
+      rncLookupStatus.textContent='';
+      rncLookupStatus.className='hidden text-xs mt-1';
+      return;
+    }
+    const palette = {
+      neutral: 'text-gray-600',
+      ok: 'text-green-700',
+      warn: 'text-amber-700',
+      error: 'text-red-600',
+    };
+    rncLookupStatus.textContent=message;
+    rncLookupStatus.className=`text-xs mt-1 ${palette[tone] || palette.neutral}`;
+  }
+
+  async function lookupRnc(){
+    const r=idField.value.replace(/-/g,'').trim();
+    if(r.length !== 9){
+      setRncStatus('RNC incompleto. Debe tener 9 dígitos.', 'warn');
+      return;
+    }
+    setRncStatus('Consultando RNC...', 'neutral');
+    try{
+      const resp = await fetch(`/api/rnc/${r}`);
+      const data = await resp.json();
+      if(data.name && companyField){
+        companyField.value=data.name;
+        setRncStatus('Empresa encontrada y nombre completado automáticamente.', 'ok');
+      }else{
+        setRncStatus('No se encontró ese RNC en la base de datos.', 'warn');
+      }
+    }catch(_err){
+      setRncStatus('No se pudo consultar el RNC en este momento.', 'error');
+    }
+  }
+
+  function updateAccountTypeUI(){
+    const type=document.querySelector('input[name="account_type"]:checked').value;
+    const isBusiness = type === 'empresarial';
+    idField.placeholder = isBusiness ? 'RNC' : 'Cédula';
+    if(rncHelper) rncHelper.classList.toggle('hidden', !isBusiness);
+    if(!isBusiness){
+      setRncStatus('');
+    } else {
+      setRncStatus('Escribe el RNC y sal del campo para autocompletar el nombre de empresa.', 'neutral');
+    }
+    applyIdMask();
   }
 
   document.querySelectorAll('.phone-mask').forEach(el=>{
@@ -217,10 +267,7 @@
   });
 
   document.querySelectorAll('input[name="account_type"]').forEach(el=>{
-    el.addEventListener('change',()=>{
-      idField.placeholder = el.value === 'personal' ? 'Cédula' : 'RNC o Cédula';
-      applyIdMask();
-    });
+    el.addEventListener('change', updateAccountTypeUI);
   });
 
   passwordField.addEventListener('input', updatePasswordStrength);
@@ -261,7 +308,7 @@
   });
 
   updatePasswordStrength();
-  applyIdMask();
+  updateAccountTypeUI();
 </script>
 </body>
 </html>
