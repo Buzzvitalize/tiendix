@@ -284,7 +284,7 @@ def test_generate_service_invoice_from_existing_service_quote(tmp_path):
         resp = c.post('/cotizaciones/1/generar-factura-servicio', data={}, follow_redirects=False)
 
     assert resp.status_code == 302
-    assert '/facturas/1/pdf' in resp.headers['Location']
+    assert '/facturas/1/archivo' in resp.headers['Location']
 
     with app.app_context():
         from models import Invoice

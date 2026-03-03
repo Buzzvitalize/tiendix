@@ -66,6 +66,10 @@ class ProductPriceLog(db.Model):
     user = db.relationship('User')
 
 class Quotation(db.Model):
+    __table_args__ = (
+        db.Index('ix_quotation_company_status_valid_until', 'company_id', 'status', 'valid_until'),
+        db.Index('ix_quotation_company_date', 'company_id', 'date'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     client_id = db.Column(db.Integer, db.ForeignKey('client.id'), nullable=False)
     date = db.Column(db.DateTime, default=dom_now)
@@ -101,6 +105,9 @@ class QuotationItem(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey('company_info.id'), nullable=False)
 
 class Order(db.Model):
+    __table_args__ = (
+        db.Index('ix_order_company_quotation', 'company_id', 'quotation_id'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     client_id = db.Column(db.Integer, db.ForeignKey('client.id'), nullable=False)
     quotation_id = db.Column(db.Integer, db.ForeignKey('quotation.id'))

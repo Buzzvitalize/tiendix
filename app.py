@@ -1742,6 +1742,14 @@ def _resolve_footer_text(use_default_flag: str | None, custom_footer: str | None
     return custom or None
 
 
+def _should_eager_generate_pdf() -> bool:
+    """Disable eager PDF generation in create flows by default to prevent timeouts."""
+    if current_app.testing:
+        return True
+    raw = str(current_app.config.get('EAGER_PDF_ON_CREATE', '0')).strip().lower()
+    return raw in {'1', 'true', 'yes', 'on'}
+
+
 def _should_sync_document_email() -> bool:
     """Use synchronous SMTP only when explicitly enabled (or during tests)."""
     if current_app.testing:
@@ -3643,6 +3651,7 @@ def list_quotations():
         page=page, per_page=20, error_out=False
     )
     service_invoice_ids = {}
+    service_invoice_urls = {}
     service_quote_ids = [q.id for q in quotations.items if _quotation_doc_type(q) == 'servicios']
     if service_quote_ids:
         rows = (
@@ -3653,6 +3662,9 @@ def list_quotations():
             .all()
         )
         service_invoice_ids = {qid: iid for qid, iid in rows if qid and iid}
+        company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+        for qid, invoice_id in service_invoice_ids.items():
+            service_invoice_urls[qid] = url_for('invoice_archived_link', invoice_id=invoice_id)
 
     archived_urls = {}
     for q in quotations.items:
@@ -3683,6 +3695,7 @@ def list_quotations():
         status=status,
         now=now,
         service_invoice_ids=service_invoice_ids,
+        service_invoice_urls=service_invoice_urls,
     )
 
 @app.route('/cotizaciones/nueva', methods=['GET', 'POST'])
@@ -3729,30 +3742,31 @@ def new_quotation():
 
         company = get_company_info()
         archived_path = None
-        try:
-            quote_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
-            archived_path = _archive_pdf_copy(
-                'cotizacion',
-                quotation.id,
-                quote_pdf_bytes,
-                company_name=company.get('name'),
-                company_id=current_company_id(),
-            )
-        except Exception as exc:
-            app.logger.exception('Quote archive generation failed id=%s: %s', quotation.id, exc)
+        if _should_eager_generate_pdf():
+            try:
+                quote_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
+                archived_path = _archive_pdf_copy(
+                    'cotizacion',
+                    quotation.id,
+                    quote_pdf_bytes,
+                    company_name=company.get('name'),
+                    company_id=current_company_id(),
+                )
+            except Exception as exc:
+                app.logger.exception('Quote archive generation failed id=%s: %s', quotation.id, exc)
 
-        if archived_path:
-            archived_url = _archived_download_url(
-                'cotizacion',
-                quotation.id,
-                company_name=company.get('name'),
-                company_id=current_company_id(),
-                full_path=archived_path,
-            )
-            if archived_url:
-                flash(f'PDF generado: {archived_url}')
-        else:
-            flash('La cotización fue creada, pero el PDF no se pudo generar en este momento.')
+            if archived_path:
+                archived_url = _archived_download_url(
+                    'cotizacion',
+                    quotation.id,
+                    company_name=company.get('name'),
+                    company_id=current_company_id(),
+                    full_path=archived_path,
+                )
+                if archived_url:
+                    flash(f'PDF generado: {archived_url}')
+            else:
+                flash('La cotización fue creada, pero el PDF no se pudo generar en este momento.')
 
         is_first_quotation = company_query(Quotation).count() == 1
         if is_first_quotation and archived_path:
@@ -3924,31 +3938,32 @@ def new_service_quotation():
         notify('Servicio guardado')
         log_audit('service_create', 'quotation', quotation.id, details=f'client={client.id};total={total:.2f}')
 
-        company = get_company_info()
-        try:
-            service_pdf_bytes = _build_service_quotation_pdf_bytes(quotation, company)
-            _archive_pdf_copy(
-                'servicios',
-                quotation.id,
-                service_pdf_bytes,
-                company_name=company.get('name'),
-                company_id=current_company_id(),
-            )
-        except Exception as exc:
-            app.logger.exception('Service quote archive generation failed id=%s: %s', quotation.id, exc)
-
-        if invoice_created:
+        if _should_eager_generate_pdf():
+            company = get_company_info()
             try:
-                invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company)
+                service_pdf_bytes = _build_service_quotation_pdf_bytes(quotation, company)
                 _archive_pdf_copy(
-                    _invoice_doc_type(invoice),
-                    invoice.id,
-                    invoice_pdf_bytes,
+                    'servicios',
+                    quotation.id,
+                    service_pdf_bytes,
                     company_name=company.get('name'),
                     company_id=current_company_id(),
                 )
             except Exception as exc:
-                app.logger.exception('Service invoice archive generation failed id=%s: %s', invoice.id, exc)
+                app.logger.exception('Service quote archive generation failed id=%s: %s', quotation.id, exc)
+
+            if invoice_created:
+                try:
+                    invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company)
+                    _archive_pdf_copy(
+                        _invoice_doc_type(invoice),
+                        invoice.id,
+                        invoice_pdf_bytes,
+                        company_name=company.get('name'),
+                        company_id=current_company_id(),
+                    )
+                except Exception as exc:
+                    app.logger.exception('Service invoice archive generation failed id=%s: %s', invoice.id, exc)
 
         if invoice_created:
             return redirect(url_for('list_invoices'))
@@ -4383,7 +4398,7 @@ def generate_service_invoice_from_quotation(quotation_id):
         .first()
     )
     if existing:
-        return redirect(url_for('invoice_pdf', invoice_id=existing.id))
+        return redirect(url_for('invoice_archived_link', invoice_id=existing.id))
 
     client = quotation.client
     service_order = Order(
@@ -4469,20 +4484,21 @@ def generate_service_invoice_from_quotation(quotation_id):
     quotation.status = 'convertida'
     db.session.commit()
 
-    company = get_company_info()
-    try:
-        invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company)
-        _archive_pdf_copy(
-            _invoice_doc_type(invoice),
-            invoice.id,
-            invoice_pdf_bytes,
-            company_name=company.get('name'),
-            company_id=current_company_id(),
-        )
-    except Exception as exc:
-        app.logger.exception('Service invoice archive generation failed id=%s: %s', invoice.id, exc)
+    if _should_eager_generate_pdf():
+        company = get_company_info()
+        try:
+            invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company)
+            _archive_pdf_copy(
+                _invoice_doc_type(invoice),
+                invoice.id,
+                invoice_pdf_bytes,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+            )
+        except Exception as exc:
+            app.logger.exception('Service invoice archive generation failed id=%s: %s', invoice.id, exc)
 
-    return redirect(url_for('invoice_pdf', invoice_id=invoice.id))
+    return redirect(url_for('invoice_archived_link', invoice_id=invoice.id))
 
 
 @app.route('/cotizaciones/<int:quotation_id>/convertir', methods=['GET', 'POST'])
@@ -4824,6 +4840,51 @@ def notifications_read(nid):
             return jsonify({'ok': False, 'error': 'No se pudo archivar la notificación'}), 500
         flash('No se pudo archivar la notificación. Intente nuevamente.')
         return redirect(request.referrer or url_for('notifications_view'))
+
+
+def _invoice_generated_docs_url(invoice: Invoice, company_name: str | None = None) -> str:
+    doc_type = _invoice_doc_type(invoice)
+    archived = _resolve_archived_pdf_path(
+        doc_type,
+        invoice.id,
+        company_name=company_name,
+        company_id=current_company_id(),
+    )
+    if not archived.exists():
+        pdf_data = _build_invoice_pdf_bytes(invoice, get_company_info())
+        archived_copy = _archive_pdf_copy(
+            doc_type,
+            invoice.id,
+            pdf_data,
+            company_name=company_name,
+            company_id=current_company_id(),
+        )
+        if archived_copy:
+            archived = Path(archived_copy)
+
+    if not archived.exists():
+        raise RuntimeError(f'No se pudo generar archivo PDF para factura {invoice.id}')
+
+    return _archived_download_url(
+        doc_type,
+        invoice.id,
+        company_name=company_name,
+        company_id=current_company_id(),
+        full_path=str(archived),
+    )
+
+
+@app.route('/facturas/<int:invoice_id>/archivo')
+def invoice_archived_link(invoice_id):
+    invoice = company_get(Invoice, invoice_id)
+    company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    try:
+        link = _invoice_generated_docs_url(invoice, company_name=company_name)
+    except Exception as exc:
+        app.logger.exception('No se pudo resolver enlace archived para factura %s: %s', invoice.id, exc)
+        return redirect(url_for('invoice_pdf', invoice_id=invoice.id))
+    return redirect(link)
+
 
 @app.route('/facturas/<int:invoice_id>/pdf')
 def invoice_pdf(invoice_id):
