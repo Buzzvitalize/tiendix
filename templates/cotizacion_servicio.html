@@ -106,7 +106,7 @@
     </table>
   </div>
   <div class="action-bar">
-    <button type="button" class="action-btn is-info" id="add-service-row">Agregar servicio</button>
+    <button type="button" class="action-btn is-info" id="add-service-row">Agregar artículo</button>
     <span class="text-sm font-semibold">Total: <span id="service-total">RD$0.00</span></span>
   </div>
   <button class="btn-primary">Guardar Servicio</button>
@@ -146,6 +146,17 @@
     totalEl.textContent = money(total);
   }
 
+  function bindRow(tr){
+    tr.querySelectorAll('input,select').forEach((i)=>{
+      i.addEventListener('input', recalc);
+      i.addEventListener('change', recalc);
+    });
+    const removeBtn = tr.querySelector('.service-remove-btn');
+    if (removeBtn) {
+      removeBtn.addEventListener('click', ()=>{ tr.remove(); recalc(); });
+    }
+  }
+
   function addRow(){
     const tr = document.createElement('tr');
     tr.className = 'border-t';
@@ -156,18 +167,17 @@
       <td class="p-2"><input class="input" type="number" min="0" step="0.01" name="service_rate[]" value="0" required></td>
       <td class="p-2"><select class="input" name="service_itbis[]"><option value="0">No</option><option value="1">Sí</option></select></td>
       <td class="p-2 row-amount">RD$0.00</td>
-      <td class="p-2"><button type="button" class="btn-danger">Quitar</button></td>
+      <td class="p-2"><button type="button" class="action-btn is-danger service-remove-btn">Quitar</button></td>
     `;
-    tr.querySelectorAll('input,select').forEach((i)=>i.addEventListener('input', recalc));
-    tr.querySelector('button').addEventListener('click', ()=>{ tr.remove(); recalc(); });
     body.appendChild(tr);
+    bindRow(tr);
     recalc();
   }
 
-  createClient.addEventListener('change', toggleNewClient);
-  addBtn.addEventListener('click', addRow);
+  if (createClient) createClient.addEventListener('change', toggleNewClient);
+  if (addBtn) addBtn.addEventListener('click', addRow);
   toggleNewClient();
-  addRow();
+  if (!body.querySelector('tr')) addRow();
 })();
 </script>
 {% endblock %}

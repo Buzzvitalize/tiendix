@@ -2,10 +2,19 @@
 {% block title %}Productos{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-4">Productos</h1>
-<div class="mb-4 action-bar">
-  <a href="{{ url_for('products_import') }}" class="btn-info">Importar CSV</a>
-  <a href="{{ url_for('export_products', cat=current_cat) }}" class="btn-primary">Exportar productos</a>
-  <a href="{{ url_for('product_price_history') }}" class="btn-warning">Historial de precios</a>
+<div class="grid md:grid-cols-3 gap-3 mb-4">
+  <a href="{{ url_for('products_import') }}" class="card p-3 hover:bg-blue-50 transition-colors">
+    <div class="text-sm font-semibold text-blue-700">Importar CSV</div>
+    <div class="text-xs text-gray-500">Carga productos desde archivo</div>
+  </a>
+  <a href="{{ url_for('export_products', cat=current_cat) }}" class="card p-3 hover:bg-emerald-50 transition-colors">
+    <div class="text-sm font-semibold text-emerald-700">Exportar productos</div>
+    <div class="text-xs text-gray-500">Descarga catálogo filtrado</div>
+  </a>
+  <a href="{{ url_for('product_price_history') }}" class="card p-3 hover:bg-amber-50 transition-colors">
+    <div class="text-sm font-semibold text-amber-700">Historial de precios</div>
+    <div class="text-xs text-gray-500">Revisa cambios por producto</div>
+  </a>
 </div>
 <form method="post" class="card mb-6 space-y-4">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -85,8 +94,8 @@
         <td class="p-2">{{ 'Sí' if p.has_itbis else 'No' }}</td>
         <td class="p-2">
           <div class="action-bar">
-            <a class="btn-warning" href="{{ url_for('edit_product', product_id=p.id) }}">Editar</a>
-            <a class="btn-danger" href="{{ url_for('delete_product', product_id=p.id) }}">Eliminar</a>
+            <a class="action-btn is-warning" href="{{ url_for('edit_product', product_id=p.id) }}">Editar</a>
+            <a class="action-btn is-danger" href="{{ url_for('delete_product', product_id=p.id) }}">Eliminar</a>
           </div>
         </td>
       </tr>
