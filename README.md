@@ -136,6 +136,8 @@ Endpoints:
 
 Runbook completo: `docs/timeout_runbook.md`.
 
+Si operas exclusivamente con phpMyAdmin, usa también `maint/phpmyadmin_timeout_kit.sql` para diagnóstico DB guiado.
+
 ## Ejecutar con Docker (guía para principiantes)
 
 Si nunca has usado Docker, sigue estos pasos literalmente:

@@ -99,3 +99,20 @@ Ya usa timeout explícito con `MAIL_CONNECT_TIMEOUT_SEC`.
 2. Reiniciar app en cPanel.
 3. Verificar `__health` y `__ready`.
 4. Mantener instrumentación en rollback si es posible para no perder trazabilidad.
+
+
+## 10) Flujo específico para phpMyAdmin (sin acceso root)
+Cuando solo tienes phpMyAdmin (sin shell ni MySQL root), usa `maint/phpmyadmin_timeout_kit.sql`.
+
+Pasos recomendados:
+1. Ejecuta bloques 1–4 para validar versión, límites y estado de índices.
+2. Ejecuta bloque 6 para medir volumen real de tablas críticas.
+3. Ejecuta los `EXPLAIN` del bloque 7 ajustando `company_id` y fechas.
+4. Si `EXPLAIN` no usa índices esperados (`type=ALL`, `rows` muy alto), corrige índices desde migración o manualmente.
+5. Cruza hallazgos con `request_id` y eventos `slow_query` en `logs/app.log`.
+
+Señales de riesgo frecuentes en hosting cPanel/phpMyAdmin:
+- `max_connections` bajo + muchas sesiones en `SHOW PROCESSLIST`.
+- `tmp_table_size` muy bajo para agregaciones de reportes.
+- `EXPLAIN` con full scan en `invoice`/`invoice_item` durante reportes.
+- crecimiento de `invoice_item` sin mantenimiento de índices.
