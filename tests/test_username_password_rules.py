@@ -65,6 +65,21 @@ def test_request_account_rejects_case_insensitive_duplicate_username(client):
     assert b'ya existe' in resp.data.lower()
 
 
+def test_request_account_page_shows_rnc_autofill_hint(client):
+    resp = client.get('/solicitar-cuenta')
+    body = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    assert 'Coloca tu número RNC para llenar este campo automáticamente' in body
+    assert 'Empresa encontrada y nombre completado automáticamente.' in body
+
+
+def test_rnc_lookup_is_available_without_login(client):
+    resp = client.get('/api/rnc/101010101')
+    assert resp.status_code == 200
+    assert resp.is_json
+    assert 'name' in resp.get_json()
+
+
 def test_first_account_becomes_admin_owner(tmp_path):
     db_path = tmp_path / 'owner.sqlite'
     app.config.from_object('config.TestingConfig')

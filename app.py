@@ -1708,7 +1708,39 @@ def _build_order_pdf_bytes(order: Order, company: dict[str, str | None]) -> byte
     )
 
 
+def _invoice_doc_type(invoice: Invoice) -> str:
+    categories = {
+        (getattr(item, 'category', '') or '').strip().lower()
+        for item in (getattr(invoice, 'items', None) or [])
+        if item is not None
+    }
+    if categories and categories.issubset({'servicios'}):
+        return 'serviciofact'
+    if getattr(invoice, 'order', None) is not None and invoice.order.warehouse_id is None:
+        return 'serviciofact'
+    return 'factura'
+
+
 def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -> bytes:
+    if _invoice_doc_type(invoice) == 'serviciofact':
+        return generate_service_pdf_bytes(
+            'Factura de Servicio',
+            company,
+            invoice.client,
+            invoice.items,
+            invoice.total,
+            seller=invoice.seller,
+            payment_method=invoice.payment_method,
+            bank=invoice.bank,
+            doc_number=invoice.id,
+            note=invoice.note,
+            date=invoice.date,
+            footer=(
+                "Factura de servicio generada electronicamente, valida sin firma ni sello. "
+                "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emision. "
+                "Gracias por su preferencia."
+            ),
+        )
     return generate_pdf_bytes(
         'Factura',
         company,
@@ -1741,7 +1773,7 @@ def _ensure_company_archive_dirs(company_id: int | None, company_name: str | Non
         short = _company_short_slug(company_name)
         token = _company_private_token(company_id, company_name)
         base = _archive_root_dir() / short / token
-        for doc_type in ('cotizacion', 'servicios', 'pedido', 'factura', 'estado_cuenta', 'reporte', 'reportes'):
+        for doc_type in ('cotizacion', 'servicios', 'pedido', 'factura', 'serviciofact', 'estado_cuenta', 'reporte', 'reportes'):
             (base / doc_type).mkdir(parents=True, exist_ok=True)
     except Exception as exc:
         app.logger.warning('Could not create company PDF directories (%s): %s', company_id, exc)
@@ -1898,6 +1930,7 @@ def require_login():
         'auth.login',
         'static',
         'request_account',
+        'rnc_lookup',
         'auth.logout',
         'auth.reset_request',
         'auth.reset_password',
@@ -3593,6 +3626,19 @@ def new_service_quotation():
             app.logger.exception('Service quote archive generation failed id=%s: %s', quotation.id, exc)
 
         if invoice_created:
+            try:
+                invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company)
+                _archive_pdf_copy(
+                    _invoice_doc_type(invoice),
+                    invoice.id,
+                    invoice_pdf_bytes,
+                    company_name=company.get('name'),
+                    company_id=current_company_id(),
+                )
+            except Exception as exc:
+                app.logger.exception('Service invoice archive generation failed id=%s: %s', invoice.id, exc)
+
+        if invoice_created:
             return redirect(url_for('list_invoices'))
         return redirect(url_for('list_quotations'))
 
@@ -4201,7 +4247,7 @@ def order_to_invoice(order_id):
     company_info = get_company_info()
     invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company_info)
     _archive_pdf_copy(
-        'factura',
+        _invoice_doc_type(invoice),
         invoice.id,
         invoice_pdf_bytes,
         company_name=company_info.get('name'),
@@ -4238,9 +4284,10 @@ def list_invoices():
     archived_invoice_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for f in invoices:
-        archived = _resolve_archived_pdf_path('factura', f.id, company_name=company_name, company_id=current_company_id())
+        doc_type = _invoice_doc_type(f)
+        archived = _resolve_archived_pdf_path(doc_type, f.id, company_name=company_name, company_id=current_company_id())
         if archived.exists():
-            url = _archived_download_url('factura', f.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
+            url = _archived_download_url(doc_type, f.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:
                 archived_invoice_urls[f.id] = url
     return render_template('factura.html', invoices=invoices, q=q, archived_invoice_urls=archived_invoice_urls)
@@ -4254,10 +4301,11 @@ def send_invoice_email(invoice_id):
         flash('Alerta: este cliente no tiene correo')
         return redirect(url_for('list_invoices'))
     company = get_company_info()
-    download_url = _document_download_url('factura', invoice.id, company_name=company.get('name'))
+    invoice_doc_type = _invoice_doc_type(invoice)
+    download_url = _document_download_url(invoice_doc_type, invoice.id, company_name=company.get('name'))
     if not download_url:
         download_url = url_for('invoice_pdf', invoice_id=invoice.id, _external=True)
-    email_ref = _document_email_reference(download_url, 'factura', invoice.id, company_name=company.get('name'))
+    email_ref = _document_email_reference(download_url, invoice_doc_type, invoice.id, company_name=company.get('name'))
     subject = _document_email_subject(company.get('name', 'Empresa'), 'factura', email_ref)
     html = render_template(
         'emails/document_send.html',
@@ -4320,11 +4368,12 @@ def notifications_read(nid):
 def invoice_pdf(invoice_id):
     invoice = company_get(Invoice, invoice_id)
     company = get_company_info()
-    filename = f'factura_{invoice_id}.pdf'
+    invoice_doc_type = _invoice_doc_type(invoice)
+    filename = f'{invoice_doc_type}_{invoice_id}.pdf'
     app.logger.info("Generating invoice PDF %s", invoice_id)
     pdf_data = _build_invoice_pdf_bytes(invoice, company)
     return _archive_and_send_pdf(
-        doc_type='factura',
+        doc_type=invoice_doc_type,
         doc_number=invoice.id,
         pdf_data=pdf_data,
         download_name=filename,

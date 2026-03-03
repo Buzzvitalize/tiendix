@@ -5,6 +5,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app import app, db
 from models import CompanyInfo, User, Client
+import weasy_pdf
 
 
 def _seed_base(tmp_path):
@@ -111,6 +112,8 @@ def test_service_quotation_pdf_is_generated_under_servicios(tmp_path):
 
 def test_create_service_invoice_mode_creates_invoice_and_client(tmp_path):
     _seed_base(tmp_path)
+    archive_root = tmp_path / 'generated_docs'
+    app.config['PDF_ARCHIVE_ROOT'] = str(archive_root)
     with app.test_client() as c:
         c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
         resp = c.post('/cotizaciones/nuevo-servicio', data={
@@ -143,6 +146,36 @@ def test_create_service_invoice_mode_creates_invoice_and_client(tmp_path):
         assert inv is not None
         assert inv.invoice_type == 'Crédito Fiscal'
         assert inv.total > inv.subtotal
+
+    archived = list(archive_root.glob('**/serviciofact/*.pdf'))
+    assert archived, 'Expected archived service invoice PDF under serviciofact folder'
+
+
+def test_service_invoice_pdf_redirects_to_serviciofact_path(tmp_path):
+    _seed_base(tmp_path)
+    archive_root = tmp_path / 'generated_docs'
+    app.config['PDF_ARCHIVE_ROOT'] = str(archive_root)
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        c.post('/cotizaciones/nuevo-servicio', data={
+            'client_id': '1',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'document_mode': 'factura',
+            'service_name[]': ['Instalación'],
+            'service_description[]': ['Servicio técnico'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1500'],
+            'service_itbis[]': ['0'],
+        }, follow_redirects=False)
+
+        pdf_resp = c.get('/facturas/1/pdf', follow_redirects=False)
+
+    assert pdf_resp.status_code == 200
+    archived_url = pdf_resp.headers.get('X-Archived-Url', '')
+    assert '/generated_docs/' in archived_url or '/generated-docs/' in archived_url
+    assert '/serviciofact/' in archived_url
 
 
 def test_service_edit_route_updates_itbis_and_total(tmp_path):
@@ -208,3 +241,54 @@ def test_service_rows_use_service_edit_link(tmp_path):
         }, follow_redirects=False)
         html = c.get('/cotizaciones').get_data(as_text=True)
     assert '/cotizaciones/editar-servicio/1' in html
+
+
+def test_generate_service_pdf_bytes_uses_only_user_created_rows(monkeypatch):
+    original_cell = weasy_pdf._cell
+    captured_texts: list[str] = []
+
+    def tracked_cell(pdf, w, h=0, txt='', *args, **kwargs):
+        captured_texts.append(str(txt))
+        return original_cell(pdf, w, h, txt, *args, **kwargs)
+
+    monkeypatch.setattr(weasy_pdf, '_cell', tracked_cell)
+
+    company = {'name': 'Carlos SRL', 'street': '', 'phone': '', 'rnc': '', 'logo': None}
+    client = {'name': 'Cliente Servicio', 'identifier': '', 'address': '', 'phone': '', 'email': ''}
+    items = [
+        {
+            'product_name': 'Servicio A: Desc A',
+            'quantity': 1,
+            'unit_price': 100,
+            'discount': 0,
+            'has_itbis': False,
+        },
+        {
+            'product_name': 'Servicio B: Desc B',
+            'quantity': 2,
+            'unit_price': 50,
+            'discount': 0,
+            'has_itbis': False,
+        },
+        {
+            'product_name': 'Servicio C: Desc C',
+            'quantity': 3,
+            'unit_price': 25,
+            'discount': 0,
+            'has_itbis': True,
+        },
+    ]
+
+    payload = weasy_pdf.generate_service_pdf_bytes(
+        'Servicio',
+        company,
+        client,
+        items,
+        total=363,
+    )
+
+    assert payload.startswith(b'%PDF')
+    assert sum('Servicio A: Desc A' in t for t in captured_texts) == 1
+    assert sum('Servicio B: Desc B' in t for t in captured_texts) == 1
+    assert sum('Servicio C: Desc C' in t for t in captured_texts) == 1
+    assert sum('Servicio D: Desc D' in t for t in captured_texts) == 0
