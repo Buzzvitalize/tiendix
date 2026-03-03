@@ -135,6 +135,10 @@ class OrderItem(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey('company_info.id'), nullable=False)
 
 class Invoice(db.Model):
+    __table_args__ = (
+        db.Index('ix_invoice_company_date', 'company_id', 'date'),
+        db.Index('ix_invoice_company_status_date', 'company_id', 'status', 'date'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     client_id = db.Column(db.Integer, db.ForeignKey('client.id'), nullable=False)
     order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False)
@@ -166,6 +170,10 @@ class Payment(db.Model):
     invoice = db.relationship('Invoice', back_populates='payments')
 
 class InvoiceItem(db.Model):
+    __table_args__ = (
+        db.Index('ix_invoice_item_company_category', 'company_id', 'category'),
+        db.Index('ix_invoice_item_invoice_company', 'invoice_id', 'company_id'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     invoice_id = db.Column(db.Integer, db.ForeignKey('invoice.id'), nullable=False)
     code = db.Column(db.String(50))

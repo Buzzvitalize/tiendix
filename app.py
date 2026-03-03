@@ -1237,8 +1237,12 @@ def generate_reference(name: str) -> str:
     return f"{prefix}{next_no:03d}"
 
 
-def _parse_report_params(fecha_inicio, fecha_fin, estado, categoria):
-    """Validate and normalize report filter parameters."""
+def _parse_report_params(fecha_inicio, fecha_fin, estado, categoria, default_days=None):
+    """Validate and normalize report filter parameters.
+
+    When ``default_days`` is provided and no date range is passed, a recent
+    time window is applied to avoid expensive full-history report queries.
+    """
     start = end = None
     if fecha_inicio:
         try:
@@ -1252,11 +1256,18 @@ def _parse_report_params(fecha_inicio, fecha_fin, estado, categoria):
             end = None
     if start and end and start > end:
         start = end = None
+    used_default_range = False
+    if default_days and not start and not end:
+        # Use the start of day to keep query semantics predictable.
+        now = dom_now()
+        start = datetime(now.year, now.month, now.day) - timedelta(days=default_days)
+        end = datetime(now.year, now.month, now.day, 23, 59, 59)
+        used_default_range = True
     if estado not in INVOICE_STATUSES:
         estado = None
     if categoria not in CATEGORIES:
         categoria = None
-    return start, end, estado, categoria
+    return start, end, estado, categoria, used_default_range
 
 
 @app.template_filter('phone')
@@ -4427,7 +4438,9 @@ def reportes():
     categoria = request.args.get('categoria')
     page = request.args.get('page', 1, type=int)
 
-    start, end, estado, categoria = _parse_report_params(fecha_inicio, fecha_fin, estado, categoria)
+    start, end, estado, categoria, used_default_range = _parse_report_params(
+        fecha_inicio, fecha_fin, estado, categoria, default_days=90
+    )
     q = _filtered_invoice_query(start, end, estado, categoria)
 
     pagination = (
@@ -4730,9 +4743,11 @@ def reportes():
         'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'
     ]
 
+    effective_fecha_inicio = fecha_inicio or (start.strftime('%Y-%m-%d') if used_default_range and start else '')
+    effective_fecha_fin = fecha_fin or (end.strftime('%Y-%m-%d') if used_default_range and end else '')
     filters = {
-        'fecha_inicio': fecha_inicio or '',
-        'fecha_fin': fecha_fin or '',
+        'fecha_inicio': effective_fecha_inicio,
+        'fecha_fin': effective_fecha_fin,
         'estado': estado or '',
         'categoria': categoria or '',
     }
@@ -4790,6 +4805,7 @@ def reportes():
         filters=filters,
         categories=CATEGORIES,
         statuses=INVOICE_STATUSES,
+        used_default_range=used_default_range,
     )
 
 
@@ -4958,7 +4974,7 @@ def export_reportes():
     estado = request.args.get('estado')
     categoria = request.args.get('categoria')
 
-    start, end, estado, categoria = _parse_report_params(fecha_inicio, fecha_fin, estado, categoria)
+    start, end, estado, categoria, _ = _parse_report_params(fecha_inicio, fecha_fin, estado, categoria)
     q = _filtered_invoice_query(start, end, estado, categoria)
     count = q.count()
     filtros = {'fecha_inicio': fecha_inicio, 'fecha_fin': fecha_fin, 'estado': estado, 'categoria': categoria}
