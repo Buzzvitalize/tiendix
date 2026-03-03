@@ -74,7 +74,15 @@
           <a class="action-btn is-warning px-3 py-1 rounded-md text-white font-semibold" style="background-color:#d97706" href="{{ url_for('edit_service_quotation', quotation_id=q.id) if is_service else url_for('edit_quotation', quotation_id=q.id) }}">Editar</a>
           {% set expired = q.valid_until < now %}
           {% if is_service %}
-            <span class="action-btn is-disabled px-3 py-1 rounded-md text-white font-semibold" style="background-color:#9ca3af">Sin pedido</span>
+            {% set service_invoice_id = service_invoice_ids.get(q.id) %}
+            {% if service_invoice_id %}
+              <a class="action-btn is-success px-3 py-1 rounded-md text-white font-semibold" style="background-color:#16a34a" href="{{ service_invoice_urls.get(q.id) or url_for('invoice_archived_link', invoice_id=service_invoice_id) }}">Ver Factura</a>
+            {% else %}
+              <form method="post" action="{{ url_for('generate_service_invoice_from_quotation', quotation_id=q.id) }}" class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="action-btn is-success px-3 py-1 rounded-md text-white font-semibold" style="background-color:#16a34a">Generar Factura</button>
+              </form>
+            {% endif %}
           {% elif expired %}
             <span class="action-btn is-disabled px-3 py-1 rounded-md text-white font-semibold" style="background-color:#9ca3af">Crear Pedido</span>
           {% else %}

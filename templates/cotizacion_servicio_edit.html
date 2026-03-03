@@ -2,7 +2,7 @@
 {% block title %}Editar Servicio{% endblock %}
 {% block content %}
 <h1 class="text-2xl font-semibold mb-4">Editar Servicio</h1>
-<form method="post" class="card space-y-4">
+<form method="post" class="card space-y-4" id="service-edit-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -35,7 +35,7 @@
     </div>
     <div>
       <label class="block text-sm font-medium text-gray-700 mb-1">Vendedor</label>
-      <select name="seller" class="input">
+      <select name="seller" class="input" id="service-edit-seller">
         <option value="">Seleccione</option>
         {% for s in sellers %}
         {% set seller_name = (s.first_name ~ ' ' ~ s.last_name).strip() %}
@@ -65,6 +65,13 @@
         <option value="3m" {% if validity_days > 60 %}selected{% endif %}>90 días</option>
       </select>
     </div>
+    <div class="md:col-span-2 rounded border border-gray-200 p-3 bg-gray-50">
+      <label class="inline-flex items-center gap-2 text-sm mb-2">
+        <input type="checkbox" name="use_default_footer" id="use-default-footer" value="1" {% if not quotation.footer_text %}checked{% endif %}>
+        <span>Usar pie de factura predeterminado</span>
+      </label>
+      <textarea name="custom_footer" id="custom-footer" class="input" rows="2" placeholder="Escriba un pie personalizado" {% if not quotation.footer_text %}disabled{% endif %}>{{ quotation.footer_text or '' }}</textarea>
+    </div>
     <div class="md:col-span-2">
       <label class="block text-sm font-medium text-gray-700 mb-1">Nota</label>
       <textarea name="note" class="input" rows="2">{{ quotation.note or '' }}</textarea>
@@ -79,6 +86,7 @@
           <th class="p-2 text-left">Descripción</th>
           <th class="p-2 text-left">Cantidad</th>
           <th class="p-2 text-left">Tarifa</th>
+          <th class="p-2 text-left">Descuento</th>
           <th class="p-2 text-left">ITBIS 18%</th>
           <th class="p-2 text-left">Monto</th>
           <th class="p-2"></th>
@@ -93,6 +101,7 @@
           <td class="p-2"><input class="input" name="service_description[]" value="{{ parts[1].strip() if parts|length > 1 else '' }}"></td>
           <td class="p-2"><input class="input" type="number" min="1" step="1" name="service_quantity[]" value="{{ item.quantity }}" required></td>
           <td class="p-2"><input class="input" type="number" min="0" step="0.01" name="service_rate[]" value="{{ '%.2f'|format(item.unit_price) }}" required></td>
+          <td class="p-2"><input class="input" type="number" min="0" step="0.01" name="service_discount[]" value="{{ '%.2f'|format(item.discount or 0) }}"></td>
           <td class="p-2"><select class="input" name="service_itbis[]"><option value="0" {% if not item.has_itbis %}selected{% endif %}>No</option><option value="1" {% if item.has_itbis %}selected{% endif %}>Sí</option></select></td>
           <td class="p-2 row-amount">RD$0.00</td>
           <td class="p-2"><button type="button" class="action-btn is-danger btn-danger service-remove-btn">Quitar</button></td>
@@ -103,7 +112,12 @@
   </div>
   <div class="action-bar">
     <button type="button" class="action-btn is-info btn-info" id="add-service-row">Agregar artículo</button>
-    <span class="text-sm font-semibold">Total: <span id="service-total">RD$0.00</span></span>
+    <div class="text-sm space-y-1">
+      <div>Subtotal: <span id="service-subtotal">RD$0.00</span></div>
+      <div>Descuento: <span id="service-discount">RD$0.00</span></div>
+      <div>ITBIS (18%): <span id="service-itbis">RD$0.00</span></div>
+      <div class="font-semibold">Total: <span id="service-total">RD$0.00</span></div>
+    </div>
   </div>
   <button class="btn-primary">Guardar cambios</button>
 </form>
@@ -115,20 +129,39 @@
   const body = document.getElementById('service-body');
   const addBtn = document.getElementById('add-service-row');
   const totalEl = document.getElementById('service-total');
+  const subtotalEl = document.getElementById('service-subtotal');
+  const discountEl = document.getElementById('service-discount');
+  const itbisEl = document.getElementById('service-itbis');
+  const form = document.getElementById('service-edit-form');
+  const sellerSelect = document.getElementById('service-edit-seller');
+  const footerCheckbox = document.getElementById('use-default-footer');
+  const customFooter = document.getElementById('custom-footer');
 
   function money(v){ return new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(v || 0); }
 
   function recalc(){
+    let subtotal = 0;
+    let totalDiscount = 0;
+    let itbis = 0;
     let total = 0;
     body.querySelectorAll('tr').forEach((row)=>{
       const qty = parseFloat(row.querySelector('[name="service_quantity[]"]').value || '0');
       const rate = parseFloat(row.querySelector('[name="service_rate[]"]').value || '0');
+      const discount = Math.max(parseFloat(row.querySelector('[name="service_discount[]"]').value || '0'),0);
       const useTax = row.querySelector('[name="service_itbis[]"]').value === '1';
-      let amount = Math.max(qty,0) * Math.max(rate,0);
-      if (useTax) amount *= 1.18;
+      const base = Math.max(qty,0) * Math.max(rate,0);
+      const net = Math.max(base - discount, 0);
+      const tax = useTax ? (net * 0.18) : 0;
+      const amount = net + tax;
       row.querySelector('.row-amount').textContent = money(amount);
+      subtotal += net;
+      totalDiscount += Math.min(discount, base);
+      itbis += tax;
       total += amount;
     });
+    subtotalEl.textContent = money(subtotal);
+    discountEl.textContent = money(totalDiscount);
+    itbisEl.textContent = money(itbis);
     totalEl.textContent = money(total);
   }
 
@@ -151,6 +184,7 @@
       <td class="p-2"><input class="input" name="service_description[]" placeholder="Descripción"></td>
       <td class="p-2"><input class="input" type="number" min="1" step="1" name="service_quantity[]" value="1" required></td>
       <td class="p-2"><input class="input" type="number" min="0" step="0.01" name="service_rate[]" value="0" required></td>
+      <td class="p-2"><input class="input" type="number" min="0" step="0.01" name="service_discount[]" value="0"></td>
       <td class="p-2"><select class="input" name="service_itbis[]"><option value="0">No</option><option value="1">Sí</option></select></td>
       <td class="p-2 row-amount">RD$0.00</td>
       <td class="p-2"><button type="button" class="action-btn is-danger btn-danger service-remove-btn">Quitar</button></td>
@@ -160,8 +194,24 @@
     recalc();
   }
 
+  function toggleFooter(){
+    const useDefault = footerCheckbox.checked;
+    customFooter.disabled = useDefault;
+    if (useDefault) customFooter.value = '';
+  }
+
   body.querySelectorAll('tr').forEach(bindRow);
   addBtn.addEventListener('click', addRow);
+  if (footerCheckbox) footerCheckbox.addEventListener('change', toggleFooter);
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      if (!sellerSelect.value) {
+        e.preventDefault();
+        alert('Seleccione un vendedor antes de guardar.');
+      }
+    });
+  }
+  toggleFooter();
   recalc();
 })();
 </script>

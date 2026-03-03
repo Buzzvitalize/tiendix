@@ -61,7 +61,7 @@ except ModuleNotFoundError:  # pragma: no cover
     Workbook = None
 from datetime import datetime, timedelta
 from pathlib import Path
-from sqlalchemy import and_, extract, func, inspect, or_, case
+from sqlalchemy import and_, extract, func, inspect, or_, case, event, text
 from sqlalchemy.exc import NoSuchTableError
 from sqlalchemy.orm import load_only, joinedload
 from sqlalchemy.engine import make_url
@@ -145,6 +145,17 @@ APP_VERSION_HIGHLIGHTS = [
     '2026-03-01 · Renderizado PDF con fpdf2 para descargas más estables en hosting compartido.',
     '2026-03-01 · Refuerzo de seguridad: validación runtime, bloqueo de rutas sensibles y mejoras de auditoría.',
 ]
+
+REQUEST_SLOW_WARN_MS = max(int(os.getenv('SLOW_REQUEST_WARN_MS', '2000')), 100)
+REQUEST_SLOW_ERROR_MS = max(int(os.getenv('SLOW_REQUEST_ERROR_MS', '10000')), REQUEST_SLOW_WARN_MS)
+SLOW_QUERY_WARN_MS = max(int(os.getenv('SLOW_QUERY_WARN_MS', '500')), 50)
+ENABLE_ROUTE_PROFILING = str(os.getenv('ENABLE_ROUTE_PROFILING', '0')).strip().lower() in {'1','true','yes','on'}
+_SQL_TIMING_INSTALLED = False
+
+
+def _json_log(event_name: str, **fields):
+    payload = {'event': event_name, **fields}
+    app.logger.info(json.dumps(payload, ensure_ascii=False, default=str))
 
 def _normalized_database_url(url: str | None) -> str | None:
     """Normalize DB URL so cPanel/MySQL strings work with SQLAlchemy.
@@ -280,15 +291,17 @@ def block_sensitive_paths():
 
 @app.before_request
 def attach_request_context_log():
-    g.request_id = uuid.uuid4().hex[:12]
+    incoming_rid = (request.headers.get('X-Request-ID') or '').strip()
+    g.request_id = incoming_rid[:64] if incoming_rid else uuid.uuid4().hex[:12]
     g.request_started_at = time.time()
-    app.logger.info(
-        'REQ_START id=%s method=%s path=%s ip=%s ua=%s',
-        g.request_id,
-        request.method,
-        request.full_path,
-        request.remote_addr,
-        request.user_agent.string[:200] if request.user_agent else '',
+    _json_log(
+        'request_start',
+        request_id=g.request_id,
+        method=request.method,
+        path=request.path,
+        query=request.query_string.decode('utf-8', errors='ignore')[:500],
+        ip=request.remote_addr,
+        user_agent=(request.user_agent.string[:200] if request.user_agent else ''),
     )
 
 
@@ -297,12 +310,28 @@ def log_response_result(response):
     rid = getattr(g, 'request_id', '-')
     started = getattr(g, 'request_started_at', None)
     duration_ms = int((time.time() - started) * 1000) if started else -1
-    app.logger.info(
-        'REQ_END id=%s status=%s duration_ms=%s',
-        rid,
-        response.status_code,
-        duration_ms,
-    )
+    response.headers['X-Request-ID'] = rid
+    level = 'info'
+    if duration_ms >= REQUEST_SLOW_ERROR_MS:
+        level = 'error'
+    elif duration_ms >= REQUEST_SLOW_WARN_MS:
+        level = 'warning'
+
+    payload = {
+        'event': 'request_end',
+        'request_id': rid,
+        'status': response.status_code,
+        'duration_ms': duration_ms,
+        'method': request.method,
+        'path': request.path,
+    }
+    message = json.dumps(payload, ensure_ascii=False, default=str)
+    if level == 'error':
+        app.logger.error(message)
+    elif level == 'warning':
+        app.logger.warning(message)
+    else:
+        app.logger.info(message)
     return response
 
 
@@ -311,7 +340,7 @@ def handle_unexpected_error(exc):
     if isinstance(exc, HTTPException):
         return exc
     rid = getattr(g, 'request_id', '-')
-    app.logger.exception('REQ_FAIL id=%s method=%s path=%s err=%s', rid, request.method, request.path, exc)
+    app.logger.exception(json.dumps({'event':'request_fail','request_id':rid,'method':request.method,'path':request.path,'error':str(exc)}, ensure_ascii=False, default=str))
     return render_template('error.html', request_id=rid), 500
 
 
@@ -328,6 +357,37 @@ if database_url:
     app.logger.info('Database URI override applied from resolved environment variables')
 else:
     app.logger.info('Database configuration loaded from default config')
+
+
+def _install_sql_timing_hooks():
+    global _SQL_TIMING_INSTALLED
+    if _SQL_TIMING_INSTALLED:
+        return
+    engine = db.engine
+
+    @event.listens_for(engine, 'before_cursor_execute')
+    def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):  # pragma: no cover
+        stack = conn.info.setdefault('query_start_time', [])
+        stack.append(time.time())
+
+    @event.listens_for(engine, 'after_cursor_execute')
+    def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):  # pragma: no cover
+        stack = conn.info.get('query_start_time') or []
+        started = stack.pop() if stack else None
+        if started is None:
+            return
+        duration_ms = int((time.time() - started) * 1000)
+        if duration_ms >= SLOW_QUERY_WARN_MS:
+            rid = getattr(g, 'request_id', '-') if has_request_context() else '-'
+            stmt = ' '.join((statement or '').split())[:500]
+            app.logger.warning(json.dumps({
+                'event': 'slow_query',
+                'request_id': rid,
+                'duration_ms': duration_ms,
+                'statement': stmt,
+            }, ensure_ascii=False, default=str))
+
+    _SQL_TIMING_INSTALLED = True
 
 MAIL_SERVER = os.getenv('MAIL_SERVER')
 MAIL_PORT = int(os.getenv('MAIL_PORT', 587))
@@ -582,6 +642,8 @@ _ensure_mysql_driver_available(app.config)
 _maybe_fix_cpanel_access_denied(app.config)
 db.init_app(app)
 migrate.init_app(app, db)
+with app.app_context():
+    _install_sql_timing_hooks()
 csrf = CSRFProtect(app)
 app.register_blueprint(auth_bp)
 app.register_blueprint(ecf_api_bp)
@@ -1237,8 +1299,12 @@ def generate_reference(name: str) -> str:
     return f"{prefix}{next_no:03d}"
 
 
-def _parse_report_params(fecha_inicio, fecha_fin, estado, categoria):
-    """Validate and normalize report filter parameters."""
+def _parse_report_params(fecha_inicio, fecha_fin, estado, categoria, default_days=None):
+    """Validate and normalize report filter parameters.
+
+    When ``default_days`` is provided and no date range is passed, a recent
+    time window is applied to avoid expensive full-history report queries.
+    """
     start = end = None
     if fecha_inicio:
         try:
@@ -1252,11 +1318,18 @@ def _parse_report_params(fecha_inicio, fecha_fin, estado, categoria):
             end = None
     if start and end and start > end:
         start = end = None
+    used_default_range = False
+    if default_days and not start and not end:
+        # Use the start of day to keep query semantics predictable.
+        now = dom_now()
+        start = datetime(now.year, now.month, now.day) - timedelta(days=default_days)
+        end = datetime(now.year, now.month, now.day, 23, 59, 59)
+        used_default_range = True
     if estado not in INVOICE_STATUSES:
         estado = None
     if categoria not in CATEGORIES:
         categoria = None
-    return start, end, estado, categoria
+    return start, end, estado, categoria, used_default_range
 
 
 @app.template_filter('phone')
@@ -1288,18 +1361,21 @@ def calculate_totals(items):
     return subtotal, itbis, subtotal + itbis
 
 
-def build_service_items(service_names, service_descriptions, quantities, rates, itbis_flags):
+def build_service_items(service_names, service_descriptions, quantities, rates, discounts, itbis_flags):
     items = []
     if not itbis_flags:
         itbis_flags = ['0'] * len(service_names)
-    for idx, (name, description, qty_raw, rate_raw, itbis_raw) in enumerate(
-        zip(service_names, service_descriptions, quantities, rates, itbis_flags),
+    if not discounts:
+        discounts = ['0'] * len(service_names)
+    for idx, (name, description, qty_raw, rate_raw, discount_raw, itbis_raw) in enumerate(
+        zip(service_names, service_descriptions, quantities, rates, discounts, itbis_flags),
         start=1,
     ):
         service_name = (name or '').strip()
         service_desc = (description or '').strip()
         qty = max(_to_int(qty_raw), 1)
         rate = max(_to_float(rate_raw), 0.0)
+        discount = max(_to_float(discount_raw), 0.0)
         if not service_name and not service_desc:
             continue
         label = service_name or f"Servicio {idx}"
@@ -1311,7 +1387,7 @@ def build_service_items(service_names, service_descriptions, quantities, rates, 
             'unit': 'Servicio',
             'unit_price': rate,
             'quantity': qty,
-            'discount': 0.0,
+            'discount': discount,
             'category': 'Servicios',
             'has_itbis': str(itbis_raw).lower() in {'1', 'true', 'on', 'yes'},
             'company_id': current_company_id(),
@@ -1640,6 +1716,48 @@ def _archived_pdf_path(doc_type: str, doc_number: int | str, *, company_name: st
     return _archive_root_dir() / short / token / safe_type / f"{stem}.pdf"
 
 
+def _default_quotation_footer(validity_days: int) -> str:
+    return (
+        f"Condiciones: Esta cotizacion es valida por {validity_days} dias a partir de la fecha de emision. "
+        "Los precios estan sujetos a cambios sin previo aviso. "
+        "El ITBIS ha sido calculado conforme a la ley vigente."
+    )
+
+
+def _default_service_footer(validity_days: int) -> str:
+    return f"Condiciones: Este servicio es valido por {validity_days} dias a partir de la fecha de emision."
+
+
+def _default_invoice_footer() -> str:
+    return (
+        "Factura generada electronicamente. Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emision. "
+        "Gracias por su preferencia."
+    )
+
+
+def _resolve_footer_text(use_default_flag: str | None, custom_footer: str | None) -> str | None:
+    custom = (custom_footer or '').strip()
+    if use_default_flag == '1':
+        return None
+    return custom or None
+
+
+def _should_eager_generate_pdf() -> bool:
+    """Disable eager PDF generation in create flows by default to prevent timeouts."""
+    if current_app.testing:
+        return True
+    raw = str(current_app.config.get('EAGER_PDF_ON_CREATE', '0')).strip().lower()
+    return raw in {'1', 'true', 'yes', 'on'}
+
+
+def _should_sync_document_email() -> bool:
+    """Use synchronous SMTP only when explicitly enabled (or during tests)."""
+    if current_app.testing:
+        return True
+    raw = str(current_app.config.get('SYNC_DOCUMENT_EMAIL', '0')).strip().lower()
+    return raw in {'1', 'true', 'yes', 'on'}
+
+
 def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | None]) -> bytes:
     validity_days = 30
     if quotation.valid_until and quotation.date:
@@ -1662,11 +1780,7 @@ def _build_quotation_pdf_bytes(quotation: Quotation, company: dict[str, str | No
         note=quotation.note,
         date=quotation.date,
         valid_until=quotation.valid_until,
-        footer=(
-            f"Condiciones: Esta cotizacion es valida por {validity_days} dias a partir de la fecha de emision. "
-            "Los precios estan sujetos a cambios sin previo aviso. "
-            "El ITBIS ha sido calculado conforme a la ley vigente."
-        ),
+        footer=quotation.footer_text or _default_quotation_footer(validity_days),
     )
 
 
@@ -1682,7 +1796,9 @@ def _build_service_quotation_pdf_bytes(quotation: Quotation, company: dict[str, 
         company,
         quotation.client,
         quotation.items,
-        quotation.total,
+        subtotal=quotation.subtotal,
+        itbis=quotation.itbis,
+        total=quotation.total,
         seller=quotation.seller,
         payment_method=quotation.payment_method,
         bank=quotation.bank,
@@ -1690,9 +1806,7 @@ def _build_service_quotation_pdf_bytes(quotation: Quotation, company: dict[str, 
         note=quotation.note,
         date=quotation.date,
         valid_until=quotation.valid_until,
-        footer=(
-            f"Condiciones: Este servicio es valido por {validity_days} dias a partir de la fecha de emision."
-        ),
+        footer=quotation.footer_text or _default_service_footer(validity_days),
     )
 
 
@@ -1733,23 +1847,27 @@ def _invoice_doc_type(invoice: Invoice) -> str:
 
 def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -> bytes:
     if _invoice_doc_type(invoice) == 'serviciofact':
+        valid_until = None
+        if getattr(invoice, 'order', None) is not None and getattr(invoice.order, 'quotation_id', None):
+            quotation = company_query(Quotation).filter_by(id=invoice.order.quotation_id).first()
+            valid_until = quotation.valid_until if quotation else None
         return generate_service_pdf_bytes(
-            'Factura de Servicio',
+            'Factura',
             company,
             invoice.client,
             invoice.items,
-            invoice.total,
+            subtotal=invoice.subtotal,
+            itbis=invoice.itbis,
+            total=invoice.total,
+            ncf=invoice.ncf,
             seller=invoice.seller,
             payment_method=invoice.payment_method,
             bank=invoice.bank,
             doc_number=invoice.id,
             note=invoice.note,
             date=invoice.date,
-            footer=(
-                "Factura de servicio generada electronicamente, valida sin firma ni sello. "
-                "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emision. "
-                "Gracias por su preferencia."
-            ),
+            valid_until=valid_until,
+            footer=invoice.footer_text or _default_invoice_footer(),
         )
     return generate_pdf_bytes(
         'Factura',
@@ -1768,11 +1886,7 @@ def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -
         invoice_type=invoice.invoice_type,
         note=invoice.note,
         date=invoice.date,
-        footer=(
-            "Factura generada electronicamente, valida sin firma ni sello. "
-            "Para reclamaciones favor comunicarse dentro de las 48 horas siguientes a la emision. "
-            "Gracias por su preferencia."
-        ),
+        footer=invoice.footer_text or _default_invoice_footer(),
     )
 
 
@@ -2133,14 +2247,20 @@ def terminos():
 @app.route('/admin/solicitudes')
 @admin_only
 def admin_requests():
-    requests = AccountRequest.query.all()
+    page = request.args.get('page', 1, type=int)
+    requests = (
+        AccountRequest.query
+        .order_by(AccountRequest.id.desc())
+        .paginate(page=page, per_page=25, error_out=False)
+    )
     return render_template('admin_solicitudes.html', requests=requests, signup_auto_approve=_is_signup_auto_approve_enabled())
 
 
 @app.route('/admin/companies')
 @admin_only
 def admin_companies():
-    companies = CompanyInfo.query.all()
+    page = request.args.get('page', 1, type=int)
+    companies = CompanyInfo.query.order_by(CompanyInfo.id.asc()).paginate(page=page, per_page=25, error_out=False)
     return render_template('admin_companies.html', companies=companies)
 
 
@@ -2421,7 +2541,12 @@ def cpanel_announcements():
         flash('Aviso general creado')
         return redirect(url_for('cpanel_announcements'))
 
-    announcements = SystemAnnouncement.query.order_by(SystemAnnouncement.updated_at.desc()).all()
+    page = request.args.get('page', 1, type=int)
+    announcements = (
+        SystemAnnouncement.query
+        .order_by(SystemAnnouncement.updated_at.desc())
+        .paginate(page=page, per_page=25, error_out=False)
+    )
     return render_template('cpanel_announcements.html', announcements=announcements)
 
 
@@ -2612,7 +2737,12 @@ def cpanel_company_delete(cid):
 @app.route('/cpaneltx/quotations')
 @admin_only
 def cpanel_quotations():
-    quotations = Quotation.query.options(joinedload(Quotation.client)).all()
+    page = request.args.get('page', 1, type=int)
+    quotations = (
+        Quotation.query.options(joinedload(Quotation.client))
+        .order_by(Quotation.date.desc())
+        .paginate(page=page, per_page=30, error_out=False)
+    )
     return render_template('cpanel_quotations.html', quotations=quotations)
 
 
@@ -2629,7 +2759,12 @@ def cpanel_quotation_delete(qid):
 @app.route('/cpaneltx/orders')
 @admin_only
 def cpanel_orders():
-    orders = Order.query.options(joinedload(Order.client)).all()
+    page = request.args.get('page', 1, type=int)
+    orders = (
+        Order.query.options(joinedload(Order.client))
+        .order_by(Order.date.desc())
+        .paginate(page=page, per_page=30, error_out=False)
+    )
     return render_template('cpanel_orders.html', orders=orders)
 
 
@@ -2647,7 +2782,12 @@ def cpanel_order_delete(oid):
 @app.route('/cpaneltx/invoices')
 @admin_only
 def cpanel_invoices():
-    invoices = Invoice.query.options(joinedload(Invoice.client)).all()
+    page = request.args.get('page', 1, type=int)
+    invoices = (
+        Invoice.query.options(joinedload(Invoice.client))
+        .order_by(Invoice.date.desc())
+        .paginate(page=page, per_page=30, error_out=False)
+    )
     return render_template('cpanel_invoices.html', invoices=invoices)
 
 
@@ -2740,6 +2880,69 @@ def cpanel_auditoria():
         user=user_q,
         suspicious_ips=suspicious_ips,
     )
+
+
+
+@app.get('/__health')
+def healthcheck():
+    return jsonify({'ok': True, 'status': 'healthy', 'app_env': app.config.get('APP_ENV')}), 200
+
+
+@app.get('/__ready')
+def readiness_check():
+    started = time.time()
+    try:
+        db.session.execute(text('SELECT 1'))
+        db_ok = True
+        db_error = None
+    except Exception as exc:
+        db_ok = False
+        db_error = str(exc)
+    duration_ms = int((time.time() - started) * 1000)
+    status = 200 if db_ok else 503
+    return jsonify({
+        'ok': db_ok,
+        'status': 'ready' if db_ok else 'not_ready',
+        'db_ok': db_ok,
+        'db_error': db_error,
+        'duration_ms': duration_ms,
+    }), status
+
+
+@app.get('/__admin/profile/reportes')
+@admin_only
+def profile_reportes():
+    if not ENABLE_ROUTE_PROFILING:
+        return ('Not Found', 404)
+    import cProfile
+    import io as _io
+    import pstats
+
+    fecha_inicio, fecha_fin, estado, categoria, _, _ = _parse_report_params(
+        request.args.get('fecha_inicio'),
+        request.args.get('fecha_fin'),
+        request.args.get('estado'),
+        request.args.get('categoria'),
+        default_days=90,
+    )
+
+    profiler = cProfile.Profile()
+    t0 = time.time()
+    profiler.enable()
+    rows = _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria).limit(300).all()
+    profiler.disable()
+    elapsed_ms = int((time.time() - t0) * 1000)
+
+    stream = _io.StringIO()
+    stats = pstats.Stats(profiler, stream=stream).sort_stats('cumtime')
+    stats.print_stats(40)
+
+    return jsonify({
+        'ok': True,
+        'rows_sampled': len(rows),
+        'elapsed_ms': elapsed_ms,
+        'profile': stream.getvalue(),
+    })
 
 
 # Clients CRUD
@@ -2964,25 +3167,32 @@ def export_products():
     query = company_query(Product)
     if cat:
         query = query.filter_by(category=cat)
-    products = query.order_by(Product.name.asc()).all()
 
-    mem = StringIO()
-    writer = csv.writer(mem)
-    writer.writerow(['code', 'reference', 'name', 'unit', 'price', 'cost_price', 'category', 'has_itbis'])
-    for p in products:
-        writer.writerow([
-            p.code,
-            p.reference or '',
-            p.name,
-            p.unit,
-            p.price,
-            p.cost_price if p.cost_price is not None else '',
-            p.category or '',
-            '1' if p.has_itbis else '0',
-        ])
-    mem.seek(0)
+    def generate_csv():
+        sio = StringIO()
+        writer = csv.writer(sio)
+        writer.writerow(['code', 'reference', 'name', 'unit', 'price', 'cost_price', 'category', 'has_itbis'])
+        yield sio.getvalue()
+        sio.seek(0)
+        sio.truncate(0)
+
+        for prod in query.order_by(Product.name.asc()).yield_per(200):
+            writer.writerow([
+                prod.code,
+                prod.reference or '',
+                prod.name,
+                prod.unit,
+                prod.price,
+                prod.cost_price if prod.cost_price is not None else '',
+                prod.category or '',
+                '1' if prod.has_itbis else '0',
+            ])
+            yield sio.getvalue()
+            sio.seek(0)
+            sio.truncate(0)
+
     return Response(
-        mem.getvalue(),
+        generate_csv(),
         mimetype='text/csv',
         headers={'Content-Disposition': 'attachment; filename=productos.csv'}
     )
@@ -3075,7 +3285,21 @@ def update_min_stock(stock_id):
 
 @app.route('/inventario/ajustar', methods=['GET', 'POST'])
 def inventory_adjust():
-    products = company_query(Product).order_by(Product.name).all()
+    product_q = (request.args.get('product_q') or '').strip()
+    product_limit = 250
+    products_query = company_query(Product)
+    if product_q:
+        like = f'%{product_q}%'
+        products_query = products_query.filter(
+            or_(
+                Product.name.ilike(like),
+                Product.code.ilike(like),
+                Product.reference.ilike(like),
+            )
+        )
+    products = products_query.order_by(Product.name).limit(product_limit).all()
+    product_count = products_query.order_by(None).count()
+    products_truncated = product_count > len(products)
     warehouses = company_query(Warehouse).order_by(Warehouse.name).all()
     if request.method == 'POST':
         pid = int(request.form['product_id'])
@@ -3119,7 +3343,15 @@ def inventory_adjust():
         db.session.commit()
         flash('Inventario actualizado')
         return redirect(url_for('inventory_report', warehouse_id=wid))
-    return render_template('inventario_ajuste.html', products=products, warehouses=warehouses)
+    return render_template(
+        'inventario_ajuste.html',
+        products=products,
+        warehouses=warehouses,
+        product_q=product_q,
+        product_count=product_count,
+        products_truncated=products_truncated,
+        product_limit=product_limit,
+    )
 
 
 @app.route('/inventario/importar', methods=['GET', 'POST'])
@@ -3207,7 +3439,21 @@ def inventory_import():
 
 @app.route('/inventario/transferir', methods=['GET', 'POST'])
 def inventory_transfer():
-    products = company_query(Product).order_by(Product.name).all()
+    product_q = (request.args.get('product_q') or '').strip()
+    product_limit = 250
+    products_query = company_query(Product)
+    if product_q:
+        like = f'%{product_q}%'
+        products_query = products_query.filter(
+            or_(
+                Product.name.ilike(like),
+                Product.code.ilike(like),
+                Product.reference.ilike(like),
+            )
+        )
+    products = products_query.order_by(Product.name).limit(product_limit).all()
+    product_count = products_query.order_by(None).count()
+    products_truncated = product_count > len(products)
     warehouses = company_query(Warehouse).order_by(Warehouse.name).all()
     if request.method == 'POST':
         pid = int(request.form['product_id'])
@@ -3259,7 +3505,15 @@ def inventory_transfer():
         db.session.commit()
         flash('Transferencia realizada')
         return redirect(url_for('inventory_report', warehouse_id=dest))
-    return render_template('inventario_transferir.html', products=products, warehouses=warehouses)
+    return render_template(
+        'inventario_transferir.html',
+        products=products,
+        warehouses=warehouses,
+        product_q=product_q,
+        product_count=product_count,
+        products_truncated=products_truncated,
+        product_limit=product_limit,
+    )
 
 
 @app.route('/almacenes', methods=['GET', 'POST'])
@@ -3332,6 +3586,33 @@ def product_price_history():
 
 
 # Quotations
+
+_expired_quote_refresh_tracker: dict[int, float] = {}
+
+
+def _refresh_expired_quotations_if_needed(now: datetime) -> None:
+    """Refresh quotation expired status with cooldown to reduce DB writes per request."""
+    cid = current_company_id()
+    if not cid:
+        return
+    cooldown_raw = os.getenv('QUOTATION_EXPIRY_REFRESH_SECONDS', '900')
+    try:
+        cooldown = max(int(str(cooldown_raw).strip()), 0)
+    except ValueError:
+        cooldown = 900
+
+    current_tick = time.monotonic()
+    last_tick = _expired_quote_refresh_tracker.get(cid)
+    if last_tick is not None and (current_tick - last_tick) < cooldown:
+        return
+
+    company_query(Quotation).filter(
+        Quotation.status == 'vigente', Quotation.valid_until < now
+    ).update({'status': 'vencida'}, synchronize_session=False)
+    db.session.commit()
+    _expired_quote_refresh_tracker[cid] = current_tick
+
+
 @app.route('/cotizaciones')
 def list_quotations():
     client_q = request.args.get('client')
@@ -3341,10 +3622,7 @@ def list_quotations():
     page = request.args.get('page', 1, type=int)
 
     now = dom_now()
-    company_query(Quotation).filter(
-        Quotation.status == 'vigente', Quotation.valid_until < now
-    ).update({'status': 'vencida'}, synchronize_session=False)
-    db.session.commit()
+    _refresh_expired_quotations_if_needed(now)
 
     query = company_query(Quotation).join(Client)
     if client_q:
@@ -3357,12 +3635,37 @@ def list_quotations():
     if date_to:
         dt = datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)
         query = query.filter(Quotation.date < dt)
-    if status:
+    if status == 'vencida':
+        query = query.filter(
+            or_(
+                Quotation.status == 'vencida',
+                and_(Quotation.status == 'vigente', Quotation.valid_until < now),
+            )
+        )
+    elif status == 'vigente':
+        query = query.filter(Quotation.status == 'vigente', Quotation.valid_until >= now)
+    elif status:
         query = query.filter(Quotation.status == status)
 
     quotations = query.order_by(Quotation.date.desc()).paginate(
         page=page, per_page=20, error_out=False
     )
+    service_invoice_ids = {}
+    service_invoice_urls = {}
+    service_quote_ids = [q.id for q in quotations.items if _quotation_doc_type(q) == 'servicios']
+    if service_quote_ids:
+        rows = (
+            company_query(Order)
+            .join(Invoice, Invoice.order_id == Order.id)
+            .with_entities(Order.quotation_id, Invoice.id)
+            .filter(Order.quotation_id.in_(service_quote_ids))
+            .all()
+        )
+        service_invoice_ids = {qid: iid for qid, iid in rows if qid and iid}
+        company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+        for qid, invoice_id in service_invoice_ids.items():
+            service_invoice_urls[qid] = url_for('invoice_archived_link', invoice_id=invoice_id)
+
     archived_urls = {}
     for q in quotations.items:
         doc_type = _quotation_doc_type(q)
@@ -3391,6 +3694,8 @@ def list_quotations():
         date_to=date_to,
         status=status,
         now=now,
+        service_invoice_ids=service_invoice_ids,
+        service_invoice_urls=service_invoice_urls,
     )
 
 @app.route('/cotizaciones/nueva', methods=['GET', 'POST'])
@@ -3418,9 +3723,10 @@ def new_quotation():
         date = dom_now()
         validity_days = _quotation_validity_days(request.form.get('validity_period'))
         valid_until = date + timedelta(days=validity_days)
+        footer_text = _resolve_footer_text(request.form.get('use_default_footer'), request.form.get('custom_footer'))
         quotation = Quotation(client_id=client.id, subtotal=subtotal, itbis=itbis, total=total,
                                seller=request.form.get('seller'), payment_method=payment_method,
-                               bank=bank, note=request.form.get('note'),
+                               bank=bank, note=request.form.get('note'), footer_text=footer_text,
                                warehouse_id=int(wid),
                                company_id=current_company_id(),
                                date=date, valid_until=valid_until)
@@ -3436,31 +3742,31 @@ def new_quotation():
 
         company = get_company_info()
         archived_path = None
-        try:
-            quotation_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
-            archived_path = _archive_pdf_copy(
-                'cotizacion',
-                quotation.id,
-                quotation_pdf_bytes,
-                company_name=company.get('name'),
-                company_id=current_company_id(),
-            )
-        except Exception as exc:
-            app.logger.exception('Quotation archive generation failed id=%s: %s', quotation.id, exc)
+        if _should_eager_generate_pdf():
+            try:
+                quote_pdf_bytes = _build_quotation_pdf_bytes(quotation, company)
+                archived_path = _archive_pdf_copy(
+                    'cotizacion',
+                    quotation.id,
+                    quote_pdf_bytes,
+                    company_name=company.get('name'),
+                    company_id=current_company_id(),
+                )
+            except Exception as exc:
+                app.logger.exception('Quote archive generation failed id=%s: %s', quotation.id, exc)
 
-        archived_url = None
-        if archived_path:
-            archived_url = _archived_download_url(
-                'cotizacion',
-                quotation.id,
-                company_name=company.get('name'),
-                company_id=current_company_id(),
-                full_path=archived_path,
-            )
-            if archived_url:
-                flash(f'PDF generado: {archived_url}')
-        else:
-            flash('La cotización fue creada, pero el PDF no se pudo generar en este momento.')
+            if archived_path:
+                archived_url = _archived_download_url(
+                    'cotizacion',
+                    quotation.id,
+                    company_name=company.get('name'),
+                    company_id=current_company_id(),
+                    full_path=archived_path,
+                )
+                if archived_url:
+                    flash(f'PDF generado: {archived_url}')
+            else:
+                flash('La cotización fue creada, pero el PDF no se pudo generar en este momento.')
 
         is_first_quotation = company_query(Quotation).count() == 1
         if is_first_quotation and archived_path:
@@ -3517,11 +3823,17 @@ def new_service_quotation():
             flash('Debe seleccionar un cliente registrado o crear uno nuevo')
             return redirect(url_for('new_service_quotation'))
 
+        seller = (request.form.get('seller') or '').strip()
+        if not seller:
+            flash('Debe seleccionar un vendedor')
+            return redirect(url_for('new_service_quotation'))
+
         items = build_service_items(
             request.form.getlist('service_name[]'),
             request.form.getlist('service_description[]'),
             request.form.getlist('service_quantity[]'),
             request.form.getlist('service_rate[]'),
+            request.form.getlist('service_discount[]'),
             request.form.getlist('service_itbis[]'),
         )
         if not items:
@@ -3537,15 +3849,18 @@ def new_service_quotation():
 
         doc_mode = request.form.get('document_mode', 'cotizacion')
 
+        footer_text = _resolve_footer_text(request.form.get('use_default_footer'), request.form.get('custom_footer'))
+
         quotation = Quotation(
             client_id=client.id,
             subtotal=subtotal,
             itbis=itbis,
             total=total,
-            seller=request.form.get('seller'),
+            seller=seller,
             payment_method=payment_method,
             bank=bank,
             note=request.form.get('note'),
+            footer_text=footer_text,
             warehouse_id=None,
             company_id=current_company_id(),
             date=date,
@@ -3564,7 +3879,7 @@ def new_service_quotation():
                 subtotal=subtotal,
                 itbis=itbis,
                 total=total,
-                seller=request.form.get('seller'),
+                seller=seller,
                 payment_method=payment_method,
                 bank=bank,
                 note=request.form.get('note'),
@@ -3599,10 +3914,11 @@ def new_service_quotation():
                 itbis=itbis,
                 total=total,
                 ncf=ncf,
-                seller=request.form.get('seller'),
+                seller=seller,
                 payment_method=payment_method,
                 bank=bank,
                 note=request.form.get('note'),
+                footer_text=footer_text,
                 invoice_type=invoice_type,
                 status='Pendiente',
                 warehouse_id=None,
@@ -3622,31 +3938,32 @@ def new_service_quotation():
         notify('Servicio guardado')
         log_audit('service_create', 'quotation', quotation.id, details=f'client={client.id};total={total:.2f}')
 
-        company = get_company_info()
-        try:
-            service_pdf_bytes = _build_service_quotation_pdf_bytes(quotation, company)
-            _archive_pdf_copy(
-                'servicios',
-                quotation.id,
-                service_pdf_bytes,
-                company_name=company.get('name'),
-                company_id=current_company_id(),
-            )
-        except Exception as exc:
-            app.logger.exception('Service quote archive generation failed id=%s: %s', quotation.id, exc)
-
-        if invoice_created:
+        if _should_eager_generate_pdf():
+            company = get_company_info()
             try:
-                invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company)
+                service_pdf_bytes = _build_service_quotation_pdf_bytes(quotation, company)
                 _archive_pdf_copy(
-                    _invoice_doc_type(invoice),
-                    invoice.id,
-                    invoice_pdf_bytes,
+                    'servicios',
+                    quotation.id,
+                    service_pdf_bytes,
                     company_name=company.get('name'),
                     company_id=current_company_id(),
                 )
             except Exception as exc:
-                app.logger.exception('Service invoice archive generation failed id=%s: %s', invoice.id, exc)
+                app.logger.exception('Service quote archive generation failed id=%s: %s', quotation.id, exc)
+
+            if invoice_created:
+                try:
+                    invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company)
+                    _archive_pdf_copy(
+                        _invoice_doc_type(invoice),
+                        invoice.id,
+                        invoice_pdf_bytes,
+                        company_name=company.get('name'),
+                        company_id=current_company_id(),
+                    )
+                except Exception as exc:
+                    app.logger.exception('Service invoice archive generation failed id=%s: %s', invoice.id, exc)
 
         if invoice_created:
             return redirect(url_for('list_invoices'))
@@ -3678,6 +3995,11 @@ def edit_service_quotation(quotation_id):
             flash('El identificador es obligatorio para comprobante fiscal')
             return redirect(url_for('edit_service_quotation', quotation_id=quotation.id))
 
+        seller = (request.form.get('seller') or '').strip()
+        if not seller:
+            flash('Debe seleccionar un vendedor')
+            return redirect(url_for('edit_service_quotation', quotation_id=quotation.id))
+
         client.name = request.form.get('client_name') or client.name
         client.last_name = (request.form.get('client_last_name') or '').strip() or None
         client.identifier = identifier
@@ -3690,6 +4012,7 @@ def edit_service_quotation(quotation_id):
             request.form.getlist('service_description[]'),
             request.form.getlist('service_quantity[]'),
             request.form.getlist('service_rate[]'),
+            request.form.getlist('service_discount[]'),
             request.form.getlist('service_itbis[]'),
         )
         if not items:
@@ -3700,10 +4023,11 @@ def edit_service_quotation(quotation_id):
         quotation.subtotal = subtotal
         quotation.itbis = itbis
         quotation.total = total
-        quotation.seller = request.form.get('seller')
+        quotation.seller = seller
         quotation.payment_method = request.form.get('payment_method')
         quotation.bank = request.form.get('bank') if quotation.payment_method == 'Transferencia' else None
         quotation.note = request.form.get('note')
+        quotation.footer_text = _resolve_footer_text(request.form.get('use_default_footer'), request.form.get('custom_footer'))
         validity_days = _quotation_validity_days(request.form.get('validity_period'))
         quotation.valid_until = (quotation.date or dom_now()) + timedelta(days=validity_days)
 
@@ -3769,6 +4093,7 @@ def edit_quotation(quotation_id):
         quotation.payment_method = payment_method
         quotation.bank = bank
         quotation.note = request.form.get('note')
+        quotation.footer_text = _resolve_footer_text(request.form.get('use_default_footer'), request.form.get('custom_footer'))
         validity_days = _quotation_validity_days(request.form.get('validity_period'))
         quotation.valid_until = (quotation.date or dom_now()) + timedelta(days=validity_days)
         for it in items:
@@ -4054,9 +4379,127 @@ def send_quotation_email(quotation_id):
         show_validity=True,
         validity_days=validity_days,
     )
-    send_email(client.email, subject, html, asynchronous=False, max_retries=1)
+    send_email(client.email, subject, html, asynchronous=not _should_sync_document_email(), max_retries=1)
     flash(f'Cotización enviada con éxito a {client.email}')
     return redirect(url_for('list_quotations'))
+
+@app.post('/cotizaciones/<int:quotation_id>/generar-factura-servicio')
+def generate_service_invoice_from_quotation(quotation_id):
+    quotation = company_get(Quotation, quotation_id)
+    if _quotation_doc_type(quotation) != 'servicios':
+        flash('Solo aplica para cotizaciones de servicio')
+        return redirect(url_for('list_quotations'))
+
+    existing = (
+        company_query(Invoice)
+        .join(Order, Invoice.order_id == Order.id)
+        .filter(Order.quotation_id == quotation.id)
+        .order_by(Invoice.id.desc())
+        .first()
+    )
+    if existing:
+        return redirect(url_for('invoice_archived_link', invoice_id=existing.id))
+
+    client = quotation.client
+    service_order = Order(
+        client_id=client.id,
+        quotation_id=quotation.id,
+        subtotal=quotation.subtotal,
+        itbis=quotation.itbis,
+        total=quotation.total,
+        seller=quotation.seller,
+        payment_method=quotation.payment_method,
+        bank=quotation.bank,
+        note=quotation.note,
+        status='Entregado',
+        warehouse_id=None,
+        company_id=current_company_id(),
+    )
+    db.session.add(service_order)
+    db.session.flush()
+    for it in quotation.items:
+        db.session.add(OrderItem(
+            order_id=service_order.id,
+            code=it.code,
+            reference=it.reference,
+            product_name=it.product_name,
+            unit=it.unit,
+            unit_price=it.unit_price,
+            quantity=it.quantity,
+            discount=it.discount,
+            category=it.category,
+            has_itbis=it.has_itbis,
+            company_id=current_company_id(),
+        ))
+
+    company_obj = db.session.get(CompanyInfo, current_company_id())
+    if client.is_final_consumer:
+        prefix, counter = 'B02', 'ncf_final'
+        invoice_type = 'Consumidor Final'
+    else:
+        prefix, counter = 'B01', 'ncf_fiscal'
+        invoice_type = 'Crédito Fiscal'
+    while True:
+        seq = getattr(company_obj, counter)
+        ncf = f"{prefix}{seq:08d}"
+        if not Invoice.query.filter_by(ncf=ncf).first():
+            setattr(company_obj, counter, seq + 1)
+            break
+        setattr(company_obj, counter, seq + 1)
+
+    invoice = Invoice(
+        client_id=client.id,
+        order_id=service_order.id,
+        subtotal=quotation.subtotal,
+        itbis=quotation.itbis,
+        total=quotation.total,
+        ncf=ncf,
+        seller=quotation.seller,
+        payment_method=quotation.payment_method,
+        bank=quotation.bank,
+        note=quotation.note,
+        footer_text=quotation.footer_text,
+        invoice_type=invoice_type,
+        status='Pendiente',
+        warehouse_id=None,
+        company_id=current_company_id(),
+    )
+    db.session.add(invoice)
+    db.session.flush()
+    for it in quotation.items:
+        db.session.add(InvoiceItem(
+            invoice_id=invoice.id,
+            code=it.code,
+            reference=it.reference,
+            product_name=it.product_name,
+            unit=it.unit,
+            unit_price=it.unit_price,
+            quantity=it.quantity,
+            discount=it.discount,
+            category=it.category,
+            has_itbis=it.has_itbis,
+            company_id=current_company_id(),
+        ))
+
+    quotation.status = 'convertida'
+    db.session.commit()
+
+    if _should_eager_generate_pdf():
+        company = get_company_info()
+        try:
+            invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company)
+            _archive_pdf_copy(
+                _invoice_doc_type(invoice),
+                invoice.id,
+                invoice_pdf_bytes,
+                company_name=company.get('name'),
+                company_id=current_company_id(),
+            )
+        except Exception as exc:
+            app.logger.exception('Service invoice archive generation failed id=%s: %s', invoice.id, exc)
+
+    return redirect(url_for('invoice_archived_link', invoice_id=invoice.id))
+
 
 @app.route('/cotizaciones/<int:quotation_id>/convertir', methods=['GET', 'POST'])
 def quotation_to_order(quotation_id):
@@ -4141,15 +4584,16 @@ def quotation_to_order(quotation_id):
             )
             db.session.add(mov)
     db.session.commit()
-    company = get_company_info()
-    order_pdf_bytes = _build_order_pdf_bytes(order, company)
-    _archive_pdf_copy(
-        'pedido',
-        order.id,
-        order_pdf_bytes,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-    )
+    if _should_eager_generate_pdf():
+        company = get_company_info()
+        order_pdf_bytes = _build_order_pdf_bytes(order, company)
+        _archive_pdf_copy(
+            'pedido',
+            order.id,
+            order_pdf_bytes,
+            company_name=company.get('name'),
+            company_id=current_company_id(),
+        )
     flash('Pedido creado')
     notify('Pedido creado')
     return redirect(url_for('list_orders'))
@@ -4158,10 +4602,12 @@ def quotation_to_order(quotation_id):
 @app.route('/pedidos')
 def list_orders():
     q = request.args.get('q')
+    page = request.args.get('page', 1, type=int)
     query = company_query(Order).join(Client)
     if q:
         query = query.filter((Client.name.contains(q)) | (Client.identifier.contains(q)))
-    orders = query.order_by(Order.date.desc()).all()
+    pagination = query.options(joinedload(Order.client)).order_by(Order.date.desc()).paginate(page=page, per_page=20, error_out=False)
+    orders = pagination.items
     archived_order_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for o in orders:
@@ -4170,7 +4616,7 @@ def list_orders():
             url = _archived_download_url('pedido', o.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:
                 archived_order_urls[o.id] = url
-    return render_template('pedido.html', orders=orders, q=q, archived_order_urls=archived_order_urls)
+    return render_template('pedido.html', orders=orders, q=q, archived_order_urls=archived_order_urls, pagination=pagination)
 
 @app.route('/pedidos/<int:order_id>/enviar', methods=['POST'])
 def send_order_email(order_id):
@@ -4195,7 +4641,7 @@ def send_order_email(order_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, asynchronous=False, max_retries=1)
+    send_email(client.email, subject, html, asynchronous=not _should_sync_document_email(), max_retries=1)
     flash(f'Pedido enviado con exito a {client.email}')
     return redirect(url_for('list_orders'))
 
@@ -4254,15 +4700,16 @@ def order_to_invoice(order_id):
         db.session.add(i_item)
     order.status = 'Entregado'
     db.session.commit()
-    company_info = get_company_info()
-    invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company_info)
-    _archive_pdf_copy(
-        _invoice_doc_type(invoice),
-        invoice.id,
-        invoice_pdf_bytes,
-        company_name=company_info.get('name'),
-        company_id=current_company_id(),
-    )
+    if _should_eager_generate_pdf():
+        company_info = get_company_info()
+        invoice_pdf_bytes = _build_invoice_pdf_bytes(invoice, company_info)
+        _archive_pdf_copy(
+            _invoice_doc_type(invoice),
+            invoice.id,
+            invoice_pdf_bytes,
+            company_name=company_info.get('name'),
+            company_id=current_company_id(),
+        )
     flash('Factura generada')
     notify('Factura generada')
     log_audit('invoice_create', 'invoice', invoice.id, details=f'from_order={order.id};total={invoice.total:.2f}')
@@ -4287,10 +4734,12 @@ def order_pdf(order_id):
 @app.route('/facturas')
 def list_invoices():
     q = request.args.get('q')
+    page = request.args.get('page', 1, type=int)
     query = company_query(Invoice).join(Client)
     if q:
         query = query.filter((Client.name.contains(q)) | (Client.identifier.contains(q)))
-    invoices = query.order_by(Invoice.date.desc()).all()
+    pagination = query.options(joinedload(Invoice.client)).order_by(Invoice.date.desc()).paginate(page=page, per_page=20, error_out=False)
+    invoices = pagination.items
     archived_invoice_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for f in invoices:
@@ -4300,7 +4749,7 @@ def list_invoices():
             url = _archived_download_url(doc_type, f.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:
                 archived_invoice_urls[f.id] = url
-    return render_template('factura.html', invoices=invoices, q=q, archived_invoice_urls=archived_invoice_urls)
+    return render_template('factura.html', invoices=invoices, q=q, archived_invoice_urls=archived_invoice_urls, pagination=pagination)
 
 
 @app.route('/facturas/<int:invoice_id>/enviar', methods=['POST'])
@@ -4327,7 +4776,7 @@ def send_invoice_email(invoice_id):
         show_validity=False,
         validity_days=None,
     )
-    send_email(client.email, subject, html, asynchronous=False, max_retries=1)
+    send_email(client.email, subject, html, asynchronous=not _should_sync_document_email(), max_retries=1)
     flash(f'Factura enviada con exito a {client.email}')
     return redirect(url_for('list_invoices'))
 
@@ -4344,9 +4793,27 @@ def pay_invoice(invoice_id):
 
 @app.route('/notificaciones')
 def notifications_view():
-    unread = company_query(Notification).filter_by(is_read=False).order_by(Notification.created_at.desc()).all()
-    archived = company_query(Notification).filter_by(is_read=True).order_by(*_archived_notification_ordering()).all()
-    return render_template('notifications.html', notifications=unread + archived, unread_notifications=unread, archived_notifications=archived)
+    page = request.args.get('page', 1, type=int)
+    unread = (
+        company_query(Notification)
+        .filter_by(is_read=False)
+        .order_by(Notification.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    archived = (
+        company_query(Notification)
+        .filter_by(is_read=True)
+        .order_by(*_archived_notification_ordering())
+        .paginate(page=page, per_page=50, error_out=False)
+    )
+    return render_template(
+        'notifications.html',
+        notifications=unread + archived.items,
+        unread_notifications=unread,
+        archived_notifications=archived.items,
+        archived_pagination=archived,
+    )
 
 
 @app.post('/notificaciones/<int:nid>/leer')
@@ -4373,6 +4840,51 @@ def notifications_read(nid):
             return jsonify({'ok': False, 'error': 'No se pudo archivar la notificación'}), 500
         flash('No se pudo archivar la notificación. Intente nuevamente.')
         return redirect(request.referrer or url_for('notifications_view'))
+
+
+def _invoice_generated_docs_url(invoice: Invoice, company_name: str | None = None) -> str:
+    doc_type = _invoice_doc_type(invoice)
+    archived = _resolve_archived_pdf_path(
+        doc_type,
+        invoice.id,
+        company_name=company_name,
+        company_id=current_company_id(),
+    )
+    if not archived.exists():
+        pdf_data = _build_invoice_pdf_bytes(invoice, get_company_info())
+        archived_copy = _archive_pdf_copy(
+            doc_type,
+            invoice.id,
+            pdf_data,
+            company_name=company_name,
+            company_id=current_company_id(),
+        )
+        if archived_copy:
+            archived = Path(archived_copy)
+
+    if not archived.exists():
+        raise RuntimeError(f'No se pudo generar archivo PDF para factura {invoice.id}')
+
+    return _archived_download_url(
+        doc_type,
+        invoice.id,
+        company_name=company_name,
+        company_id=current_company_id(),
+        full_path=str(archived),
+    )
+
+
+@app.route('/facturas/<int:invoice_id>/archivo')
+def invoice_archived_link(invoice_id):
+    invoice = company_get(Invoice, invoice_id)
+    company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
+    try:
+        link = _invoice_generated_docs_url(invoice, company_name=company_name)
+    except Exception as exc:
+        app.logger.exception('No se pudo resolver enlace archived para factura %s: %s', invoice.id, exc)
+        return redirect(url_for('invoice_pdf', invoice_id=invoice.id))
+    return redirect(link)
+
 
 @app.route('/facturas/<int:invoice_id>/pdf')
 def invoice_pdf(invoice_id):
@@ -4419,6 +4931,13 @@ def _filtered_invoice_query(fecha_inicio, fecha_fin, estado, categoria):
     return q
 
 
+def _count_up_to_limit(query, limit: int) -> int:
+    """Count rows up to ``limit`` to avoid expensive full COUNT(*) scans."""
+    safe_limit = max(int(limit), 1)
+    ids = query.with_entities(Invoice.id).order_by(None).limit(safe_limit).all()
+    return len(ids)
+
+
 @app.route('/reportes')
 def reportes():
     fecha_inicio = request.args.get('fecha_inicio')
@@ -4427,14 +4946,15 @@ def reportes():
     categoria = request.args.get('categoria')
     page = request.args.get('page', 1, type=int)
 
-    start, end, estado, categoria = _parse_report_params(fecha_inicio, fecha_fin, estado, categoria)
+    start, end, estado, categoria, used_default_range = _parse_report_params(
+        fecha_inicio, fecha_fin, estado, categoria, default_days=90
+    )
     q = _filtered_invoice_query(start, end, estado, categoria)
 
     pagination = (
         q.options(
             joinedload(Invoice.client),
             joinedload(Invoice.order),
-            joinedload(Invoice.items),
             load_only(Invoice.client_id, Invoice.total, Invoice.date, Invoice.status),
         )
         .order_by(Invoice.date.desc())
@@ -4730,9 +5250,11 @@ def reportes():
         'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'
     ]
 
+    effective_fecha_inicio = fecha_inicio or (start.strftime('%Y-%m-%d') if used_default_range and start else '')
+    effective_fecha_fin = fecha_fin or (end.strftime('%Y-%m-%d') if used_default_range and end else '')
     filters = {
-        'fecha_inicio': fecha_inicio or '',
-        'fecha_fin': fecha_fin or '',
+        'fecha_inicio': effective_fecha_inicio,
+        'fecha_fin': effective_fecha_fin,
         'estado': estado or '',
         'categoria': categoria or '',
     }
@@ -4790,13 +5312,27 @@ def reportes():
         filters=filters,
         categories=CATEGORIES,
         statuses=INVOICE_STATUSES,
+        used_default_range=used_default_range,
     )
 
 
 @app.get('/reportes/estado-cuentas')
 def account_statement_clients():
-    clients = company_query(Client).order_by(Client.name).all()
-    return render_template('estado_cuentas.html', clients=clients)
+    q = (request.args.get('q') or '').strip()
+    page = request.args.get('page', 1, type=int)
+    query = company_query(Client)
+    if q:
+        like = f'%{q}%'
+        query = query.filter(
+            or_(
+                Client.name.ilike(like),
+                Client.identifier.ilike(like),
+                Client.email.ilike(like),
+                Client.phone.ilike(like),
+            )
+        )
+    clients = query.order_by(Client.name.asc()).paginate(page=page, per_page=50, error_out=False)
+    return render_template('estado_cuentas.html', clients=clients, q=q)
 
 
 def _invoice_balance(inv):
@@ -4804,14 +5340,8 @@ def _invoice_balance(inv):
 
 
 def _invoice_origin_label(inv: Invoice) -> str:
-    categories = {
-        (getattr(item, 'category', '') or '').strip().lower()
-        for item in (getattr(inv, 'items', None) or [])
-        if item is not None
-    }
-    if categories and categories.issubset({'servicios'}):
-        return 'Servicio'
-    if getattr(inv, 'order', None) is not None and inv.order.warehouse_id is None:
+    # Fast-path: service invoices/orders are created without warehouse.
+    if getattr(inv, 'warehouse_id', None) is None:
         return 'Servicio'
     return 'Pedido'
 
@@ -4831,7 +5361,7 @@ def account_statement_detail(client_id):
     invoices = (
         company_query(Invoice)
         .filter_by(client_id=client.id)
-        .options(joinedload(Invoice.order), joinedload(Invoice.items), joinedload(Invoice.payments))
+        .options(joinedload(Invoice.order), joinedload(Invoice.payments))
         .all()
     )
     rows = []
@@ -4958,18 +5488,19 @@ def export_reportes():
     estado = request.args.get('estado')
     categoria = request.args.get('categoria')
 
-    start, end, estado, categoria = _parse_report_params(fecha_inicio, fecha_fin, estado, categoria)
+    start, end, estado, categoria, _ = _parse_report_params(fecha_inicio, fecha_fin, estado, categoria)
     q = _filtered_invoice_query(start, end, estado, categoria)
-    count = q.count()
+    max_rows = current_app.config.get('MAX_EXPORT_ROWS', MAX_EXPORT_ROWS)
+    sampled = _count_up_to_limit(q, max_rows + 1)
+    exceeds_max_rows = sampled > max_rows
     filtros = {'fecha_inicio': fecha_inicio, 'fecha_fin': fecha_fin, 'estado': estado, 'categoria': categoria}
     user = session.get('full_name') or session.get('username')
 
-    max_rows = current_app.config.get('MAX_EXPORT_ROWS', MAX_EXPORT_ROWS)
-    if count > max_rows and request.args.get('async') != '1':
+    if exceeds_max_rows and request.args.get('async') != '1':
         log_export(user, formato, tipo, filtros, 'fail', 'too_many_rows')
         return jsonify({'error': 'too many rows', 'suggest': 'async'}), 400
 
-    if count > max_rows and request.args.get('async') == '1':
+    if exceeds_max_rows and request.args.get('async') == '1':
         entry_id = log_export(user, formato, tipo, filtros, 'queued')
         enqueue_export(
             _export_job,
@@ -5212,7 +5743,7 @@ def export_inventory():
     if role not in ('admin', 'manager', 'contabilidad'):
         return '', 403
     company_id = current_company_id()
-    rows = (
+    query = (
         db.session.query(
             Product.code,
             Product.name,
@@ -5224,17 +5755,27 @@ def export_inventory():
         .join(Warehouse, ProductStock.warehouse_id == Warehouse.id)
         .filter(ProductStock.company_id == company_id)
         .order_by(Product.name)
-        .all()
     )
-    output = StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['Código', 'Producto', 'Almacén', 'Stock', 'Mínimo'])
-    for code, name, wh, stock, min_stock in rows:
-        writer.writerow([code or '', name or '', wh or '', stock, min_stock])
-    mem = BytesIO()
-    mem.write(output.getvalue().encode('utf-8'))
-    mem.seek(0)
-    return send_file(mem, mimetype='text/csv', as_attachment=True, download_name='inventario.csv')
+
+    def generate_csv():
+        sio = StringIO()
+        writer = csv.writer(sio)
+        writer.writerow(['Código', 'Producto', 'Almacén', 'Stock', 'Mínimo'])
+        yield sio.getvalue()
+        sio.seek(0)
+        sio.truncate(0)
+
+        for code, name, wh, stock, min_stock in query.yield_per(500):
+            writer.writerow([code or '', name or '', wh or '', stock, min_stock])
+            yield sio.getvalue()
+            sio.seek(0)
+            sio.truncate(0)
+
+    return Response(
+        generate_csv(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=inventario.csv'}
+    )
 
 
 @app.route('/reportes/exportes')
