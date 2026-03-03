@@ -3368,6 +3368,33 @@ def product_price_history():
 
 
 # Quotations
+
+_expired_quote_refresh_tracker: dict[int, float] = {}
+
+
+def _refresh_expired_quotations_if_needed(now: datetime) -> None:
+    """Refresh quotation expired status with cooldown to reduce DB writes per request."""
+    cid = current_company_id()
+    if not cid:
+        return
+    cooldown_raw = os.getenv('QUOTATION_EXPIRY_REFRESH_SECONDS', '900')
+    try:
+        cooldown = max(int(str(cooldown_raw).strip()), 0)
+    except ValueError:
+        cooldown = 900
+
+    current_tick = time.monotonic()
+    last_tick = _expired_quote_refresh_tracker.get(cid)
+    if last_tick is not None and (current_tick - last_tick) < cooldown:
+        return
+
+    company_query(Quotation).filter(
+        Quotation.status == 'vigente', Quotation.valid_until < now
+    ).update({'status': 'vencida'}, synchronize_session=False)
+    db.session.commit()
+    _expired_quote_refresh_tracker[cid] = current_tick
+
+
 @app.route('/cotizaciones')
 def list_quotations():
     client_q = request.args.get('client')
@@ -3377,10 +3404,7 @@ def list_quotations():
     page = request.args.get('page', 1, type=int)
 
     now = dom_now()
-    company_query(Quotation).filter(
-        Quotation.status == 'vigente', Quotation.valid_until < now
-    ).update({'status': 'vencida'}, synchronize_session=False)
-    db.session.commit()
+    _refresh_expired_quotations_if_needed(now)
 
     query = company_query(Quotation).join(Client)
     if client_q:
@@ -3393,7 +3417,16 @@ def list_quotations():
     if date_to:
         dt = datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)
         query = query.filter(Quotation.date < dt)
-    if status:
+    if status == 'vencida':
+        query = query.filter(
+            or_(
+                Quotation.status == 'vencida',
+                and_(Quotation.status == 'vigente', Quotation.valid_until < now),
+            )
+        )
+    elif status == 'vigente':
+        query = query.filter(Quotation.status == 'vigente', Quotation.valid_until >= now)
+    elif status:
         query = query.filter(Quotation.status == status)
 
     quotations = query.order_by(Quotation.date.desc()).paginate(
