@@ -68,3 +68,42 @@ def test_create_service_quotation_without_warehouse_archives_in_servicios(tmp_pa
         q = Quotation.query.first()
         assert q is not None
         assert q.warehouse_id is None
+
+
+def test_new_service_page_loads(tmp_path):
+    _seed_base(tmp_path)
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        resp = c.get('/cotizaciones/nuevo-servicio')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Nuevo Servicio' in html
+    assert 'Guardar Servicio' in html
+
+
+def test_service_quotation_pdf_is_generated_under_servicios(tmp_path):
+    _seed_base(tmp_path)
+    archive_root = tmp_path / 'generated_docs'
+    app.config['PDF_ARCHIVE_ROOT'] = str(archive_root)
+
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        create_resp = c.post('/cotizaciones/nuevo-servicio', data={
+            'client_id': '1',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'service_name[]': ['Instalación'],
+            'service_description[]': ['Instalación de equipo'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['2500'],
+            'note': 'Nota de servicio',
+        }, follow_redirects=False)
+        assert create_resp.status_code == 302
+
+        pdf_resp = c.get('/cotizaciones/1/pdf')
+
+    assert pdf_resp.status_code == 200
+    assert pdf_resp.headers.get('Content-Type', '').startswith('application/pdf')
+    archived = list(archive_root.glob('**/servicios/*.pdf'))
+    assert archived, 'Expected archived PDF under servicios folder'

@@ -38,8 +38,8 @@
     <div>
       <label class="block text-sm font-medium text-gray-700 mb-1">Vigencia</label>
       <select name="validity_period" class="input">
-        {% for value,label in validity_options %}
-        <option value="{{ value }}">{{ label }}</option>
+        {% for value,days in validity_options.items() %}
+        <option value="{{ value }}">{{ days }} días</option>
         {% endfor %}
       </select>
     </div>

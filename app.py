@@ -336,7 +336,7 @@ LOW_STOCK_SCAN_INTERVAL_SEC = int(os.getenv('LOW_STOCK_SCAN_INTERVAL_SEC', 1800)
 LOW_STOCK_SCAN_MAX_ITEMS = int(os.getenv('LOW_STOCK_SCAN_MAX_ITEMS', 200))
 NOTIFICATION_REFRESH_INTERVAL_SEC = int(os.getenv('NOTIFICATION_REFRESH_INTERVAL_SEC', 120))
 ENABLE_LOW_STOCK_SCAN = str(os.getenv('ENABLE_LOW_STOCK_SCAN', '0')).strip().lower() in {'1','true','yes','on'}
-ENABLE_NOTIFICATIONS_CONTEXT = str(os.getenv('ENABLE_NOTIFICATIONS_CONTEXT', '1')).strip().lower() in {'1','true','yes','on'}
+ENABLE_NOTIFICATIONS_CONTEXT = str(os.getenv('ENABLE_NOTIFICATIONS_CONTEXT', '0')).strip().lower() in {'1','true','yes','on'}
 ANNOUNCEMENT_REFRESH_INTERVAL_SEC = int(os.getenv('ANNOUNCEMENT_REFRESH_INTERVAL_SEC', 120))
 
 _active_announcement_cache = {'ts': 0, 'obj': None}
@@ -1456,12 +1456,18 @@ def inject_company():
                 )
         ann_now = int(time.time())
         if ann_now - int(_active_announcement_cache.get('ts', 0) or 0) >= ANNOUNCEMENT_REFRESH_INTERVAL_SEC:
-            _active_announcement_cache['obj'] = (
+            ann = (
                 SystemAnnouncement.query
                 .filter_by(is_active=True)
                 .order_by(SystemAnnouncement.updated_at.desc())
                 .first()
             )
+            _active_announcement_cache['obj'] = {
+                'title': ann.title,
+                'message': ann.message,
+                'scheduled_for': ann.scheduled_for,
+                'updated_at': ann.updated_at,
+            } if ann else None
             _active_announcement_cache['ts'] = ann_now
         active_announcement = _active_announcement_cache.get('obj')
     except Exception as exc:
@@ -3496,6 +3502,11 @@ def new_service_quotation():
     clients = company_query(Client).options(load_only(Client.id, Client.name, Client.identifier)).all()
     sellers = company_query(User).options(load_only(User.id, User.first_name, User.last_name)).all()
     return render_template('cotizacion_servicio.html', clients=clients, sellers=sellers, validity_options=QUOTATION_VALIDITY_OPTIONS)
+
+
+@app.route('/cotizaciones/nueva-servicio', methods=['GET', 'POST'])
+def new_service_quotation_alias():
+    return new_service_quotation()
 
 
 @app.route('/cotizaciones/editar/<int:quotation_id>', methods=['GET', 'POST'])
