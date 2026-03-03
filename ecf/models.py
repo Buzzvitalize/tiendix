@@ -68,8 +68,8 @@ class EcfDocument(db.Model):
     __tablename__ = "ecf_document"
 
     id = db.Column(db.BigInteger().with_variant(db.BigInteger, "mysql"), primary_key=True, autoincrement=True)
-    company_id = db.Column(db.BigInteger, nullable=False, index=True)
-    invoice_id = db.Column(db.BigInteger, nullable=False, index=True)
+    company_id = db.Column(db.Integer, nullable=False, index=True)
+    invoice_id = db.Column(db.Integer, nullable=False, index=True)
 
     backend_mode = db.Column(db.String(30), nullable=False, index=True)
     tipo_ecf = db.Column(db.String(5), nullable=False)
