@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h1>Wizard e-CF (simple)</h1>
+  <p>Formulario rápido para activar FE por compañía.</p>
+  <form id="ecf-wizard-form">
+    <div class="mb-3">
+      <label class="form-label">Company ID</label>
+      <input class="form-control" type="number" name="company_id" required />
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Modo</label>
+      <select class="form-select" name="mode">
+        <option value="DIRECT_DGII">DIRECT_DGII</option>
+        <option value="PSE_EXTERNAL">PSE_EXTERNAL</option>
+        <option value="PSE_ECOSEA">PSE_ECOSEA</option>
+      </select>
+    </div>
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" name="enabled" id="enabled" checked />
+      <label class="form-check-label" for="enabled">Activar facturación electrónica</label>
+    </div>
+    <button class="btn btn-primary" type="submit">Guardar</button>
+  </form>
+  <pre id="result" class="mt-3"></pre>
+</div>
+<script>
+document.getElementById('ecf-wizard-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  const payload = {
+    company_id: Number(form.get('company_id')),
+    mode: form.get('mode'),
+    enabled: form.get('enabled') === 'on',
+    settings: {}
+  };
+  const resp = await fetch('/api/fe/configure', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  document.getElementById('result').textContent = JSON.stringify(await resp.json(), null, 2);
+});
+</script>
+{% endblock %}

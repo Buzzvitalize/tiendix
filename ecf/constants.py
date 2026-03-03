@@ -1,0 +1,8 @@
+EcfMode = {
+    "DIRECT_DGII": "DIRECT_DGII",
+    "PSE_EXTERNAL": "PSE_EXTERNAL",
+    "PSE_ECOSEA": "PSE_ECOSEA",
+}
+
+EcfFinalStatuses = {"ACCEPTED", "CONDITIONAL", "REJECTED", "ERROR"}
+EcfPdfStatuses = {"ACCEPTED", "CONDITIONAL"}

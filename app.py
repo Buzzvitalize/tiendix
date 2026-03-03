@@ -80,6 +80,7 @@ from weasy_pdf import generate_pdf, generate_pdf_bytes, generate_service_pdf_byt
 from account_pdf import generate_account_statement_pdf, generate_account_statement_pdf_bytes
 from functools import wraps
 from auth import auth_bp, generate_reset_token
+from ecf import init_app as init_ecf_app
 from forms import AccountRequestForm
 from config import DevelopmentConfig, TestingConfig, ProductionConfig, validate_runtime_config
 try:
@@ -579,6 +580,7 @@ db.init_app(app)
 migrate.init_app(app, db)
 csrf = CSRFProtect(app)
 app.register_blueprint(auth_bp)
+init_ecf_app(app)
 
 # The database schema is managed via Flask-Migrate.  Tables should be
 # created with ``flask db upgrade`` instead of ``db.create_all`` to avoid
