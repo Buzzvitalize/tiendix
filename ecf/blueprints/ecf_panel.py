@@ -24,17 +24,17 @@ def _resolve_company_id() -> int:
     raise ValueError("company_id no disponible en sesión")
 
 
-@ecf_panel_bp.get("/cpaneltx")
+@ecf_panel_bp.get("/cpaneltx/ecf")
 def cpaneltx_panel():
     auth = _require_user()
     if auth is not None:
         return auth
     company_id = _resolve_company_id()
     config_safe = get_company_config_safe(company_id) or {}
-    return render_template("cpaneltx.html", company_id=company_id, config=config_safe)
+    return render_template("cpaneltx_ecf.html", company_id=company_id, config=config_safe)
 
 
-@ecf_panel_bp.get("/cpaneltx/help")
+@ecf_panel_bp.get("/cpaneltx/ecf/help")
 def cpaneltx_help():
     auth = _require_user()
     if auth is not None:
