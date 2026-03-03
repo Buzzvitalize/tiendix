@@ -1,6 +1,13 @@
 from datetime import datetime
 
-import requests
+try:
+    import requests
+except ModuleNotFoundError:  # pragma: no cover
+    requests = None
+
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from ecf.backends.base import FeBackend
 from ecf.constants import ECF_STATUS_ACCEPTED, ECF_STATUS_PROCESSING
@@ -26,9 +33,9 @@ class PseExternalBackend(FeBackend):
             "tipo_ecf": doc.tipo_ecf,
             "xml_signed": doc.xml_signed,
         }
-        resp = requests.post(issue_url, json=payload, headers=headers, timeout=20)
-        if not resp.ok:
-            raise RuntimeError(f"PSE issue error HTTP {resp.status_code}")
+        resp = _http_request('POST', issue_url, headers=headers, json_payload=payload)
+        if resp['status_code'] >= 400:
+            raise RuntimeError(f"PSE issue error HTTP {resp['status_code']}")
         data = _safe_json(resp)
         return {
             "track_id": data.get("track_id") or f"PSE-{doc.id}",
@@ -44,9 +51,9 @@ class PseExternalBackend(FeBackend):
 
         _, status_url, _ = self._resolve_urls(cfg)
         headers = self._build_headers(cfg)
-        resp = requests.get(status_url, params={"track_id": doc.track_id}, headers=headers, timeout=20)
-        if not resp.ok:
-            raise RuntimeError(f"PSE status error HTTP {resp.status_code}")
+        resp = _http_request('GET', status_url, headers=headers, params={"track_id": doc.track_id})
+        if resp['status_code'] >= 400:
+            raise RuntimeError(f"PSE status error HTTP {resp['status_code']}")
         data = _safe_json(resp)
         return {
             "status": data.get("status") or ECF_STATUS_PROCESSING,
@@ -60,9 +67,9 @@ class PseExternalBackend(FeBackend):
 
         _, _, pdf_url = self._resolve_urls(cfg)
         headers = self._build_headers(cfg)
-        resp = requests.get(pdf_url, params={"track_id": doc.track_id}, headers=headers, timeout=20)
-        if resp.ok and resp.content:
-            return resp.content
+        resp = _http_request('GET', pdf_url, headers=headers, params={"track_id": doc.track_id})
+        if resp['status_code'] < 400 and resp.get('content'):
+            return resp['content']
         return None
 
     def _resolve_urls(self, cfg) -> tuple[str, str, str]:
@@ -103,8 +110,63 @@ class PseExternalBackend(FeBackend):
         return isinstance(settings, dict) and bool(settings.get("mock_pse"))
 
 
-def _safe_json(resp) -> dict:
+def _safe_json(resp: dict) -> dict:
+    text = resp.get('text') or ''
+    if not text:
+        return {}
     try:
-        return resp.json() if resp.content else {}
+        import json
+
+        return json.loads(text)
     except Exception:
-        return {"raw_text": (resp.text or "")[:1000], "timestamp": datetime.utcnow().isoformat()}
+        return {"raw_text": text[:1000], "timestamp": datetime.utcnow().isoformat()}
+
+
+def _http_request(method: str, url: str, *, headers: dict | None = None, params: dict | None = None, json_payload: dict | None = None) -> dict:
+    headers = dict(headers or {})
+    params = params or {}
+
+    if params:
+        query = urllib.parse.urlencode(params)
+        sep = '&' if '?' in url else '?'
+        url = f"{url}{sep}{query}"
+
+    if requests is not None:
+        kwargs = {"headers": headers, "timeout": 20}
+        if json_payload is not None:
+            kwargs["json"] = json_payload
+        r = requests.request(method, url, **kwargs)
+        return {
+            "status_code": r.status_code,
+            "text": r.text or "",
+            "content": r.content or b"",
+        }
+
+    # Fallback urllib para entornos cPanel sin requests instalado.
+    data = None
+    if json_payload is not None:
+        import json
+
+        data = json.dumps(json_payload).encode('utf-8')
+        headers.setdefault('Content-Type', 'application/json')
+
+    req = urllib.request.Request(url=url, data=data, headers=headers, method=method.upper())
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            body = r.read()
+            return {
+                "status_code": int(getattr(r, 'status', 200) or 200),
+                "text": body.decode('utf-8', errors='replace'),
+                "content": body,
+            }
+    except urllib.error.HTTPError as exc:
+        body = exc.read() if hasattr(exc, 'read') else b''
+        return {
+            "status_code": int(exc.code),
+            "text": body.decode('utf-8', errors='replace'),
+            "content": body,
+        }
+    except Exception as exc:
+        raise RuntimeError(
+            "No se pudo conectar con PSE_EXTERNAL. Verifique red/URLs o instale requests en el entorno."
+        ) from exc

@@ -172,9 +172,18 @@ def _map_tipo_ecf(invoice: Invoice) -> str:
     invoice_type = (getattr(invoice, "invoice_type", None) or "").strip().lower()
     ncf = (getattr(invoice, "ncf", None) or "").strip().upper()
 
-    if "consumidor" in invoice_type or ncf.startswith("B02"):
+    # NCF tradicional -> tipo e-CF:
+    # B02 (Consumidor Final) => 31
+    # B01 (Crédito Fiscal) => 33
+    if ncf.startswith("B02"):
         return "31"
-    if "crédito" in invoice_type or "credito" in invoice_type or ncf.startswith("B01"):
+    if ncf.startswith("B01"):
+        return "33"
+
+    # Fallback por texto de tipo de factura
+    if "consumidor" in invoice_type:
+        return "31"
+    if "crédito" in invoice_type or "credito" in invoice_type:
         return "33"
     return "31"
 

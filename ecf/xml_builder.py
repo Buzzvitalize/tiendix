@@ -58,12 +58,18 @@ def build_ecf_xml(invoice, items, company_cfg, tipo_ecf: str) -> str:
 
 
 def _extract_emisor_rnc(invoice, company_cfg) -> str:
+    # Prioridad: cfg.rnc_emisor -> invoice.company.rnc -> settings_json.emisor_rnc
+    cfg_direct = (getattr(company_cfg, "rnc_emisor", None) or "").strip()
+    if cfg_direct:
+        return cfg_direct
+
     company = getattr(invoice, "company", None)
     if company and getattr(company, "rnc", None):
         return str(company.rnc).strip()
-    cfg_rnc = getattr(company_cfg, "settings_json", None)
-    if isinstance(cfg_rnc, dict):
-        return str(cfg_rnc.get("emisor_rnc") or "").strip()
+
+    cfg_settings = getattr(company_cfg, "settings_json", None)
+    if isinstance(cfg_settings, dict):
+        return str(cfg_settings.get("emisor_rnc") or "").strip()
     return ""
 
 
