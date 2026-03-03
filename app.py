@@ -3034,25 +3034,32 @@ def export_products():
     query = company_query(Product)
     if cat:
         query = query.filter_by(category=cat)
-    products = query.order_by(Product.name.asc()).all()
 
-    mem = StringIO()
-    writer = csv.writer(mem)
-    writer.writerow(['code', 'reference', 'name', 'unit', 'price', 'cost_price', 'category', 'has_itbis'])
-    for p in products:
-        writer.writerow([
-            p.code,
-            p.reference or '',
-            p.name,
-            p.unit,
-            p.price,
-            p.cost_price if p.cost_price is not None else '',
-            p.category or '',
-            '1' if p.has_itbis else '0',
-        ])
-    mem.seek(0)
+    def generate_csv():
+        sio = StringIO()
+        writer = csv.writer(sio)
+        writer.writerow(['code', 'reference', 'name', 'unit', 'price', 'cost_price', 'category', 'has_itbis'])
+        yield sio.getvalue()
+        sio.seek(0)
+        sio.truncate(0)
+
+        for prod in query.order_by(Product.name.asc()).yield_per(200):
+            writer.writerow([
+                prod.code,
+                prod.reference or '',
+                prod.name,
+                prod.unit,
+                prod.price,
+                prod.cost_price if prod.cost_price is not None else '',
+                prod.category or '',
+                '1' if prod.has_itbis else '0',
+            ])
+            yield sio.getvalue()
+            sio.seek(0)
+            sio.truncate(0)
+
     return Response(
-        mem.getvalue(),
+        generate_csv(),
         mimetype='text/csv',
         headers={'Content-Disposition': 'attachment; filename=productos.csv'}
     )
@@ -5081,8 +5088,21 @@ def reportes():
 
 @app.get('/reportes/estado-cuentas')
 def account_statement_clients():
-    clients = company_query(Client).order_by(Client.name).all()
-    return render_template('estado_cuentas.html', clients=clients)
+    q = (request.args.get('q') or '').strip()
+    page = request.args.get('page', 1, type=int)
+    query = company_query(Client)
+    if q:
+        like = f'%{q}%'
+        query = query.filter(
+            or_(
+                Client.name.ilike(like),
+                Client.identifier.ilike(like),
+                Client.email.ilike(like),
+                Client.phone.ilike(like),
+            )
+        )
+    clients = query.order_by(Client.name.asc()).paginate(page=page, per_page=50, error_out=False)
+    return render_template('estado_cuentas.html', clients=clients, q=q)
 
 
 def _invoice_balance(inv):
@@ -5493,7 +5513,7 @@ def export_inventory():
     if role not in ('admin', 'manager', 'contabilidad'):
         return '', 403
     company_id = current_company_id()
-    rows = (
+    query = (
         db.session.query(
             Product.code,
             Product.name,
@@ -5505,17 +5525,27 @@ def export_inventory():
         .join(Warehouse, ProductStock.warehouse_id == Warehouse.id)
         .filter(ProductStock.company_id == company_id)
         .order_by(Product.name)
-        .all()
     )
-    output = StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['Código', 'Producto', 'Almacén', 'Stock', 'Mínimo'])
-    for code, name, wh, stock, min_stock in rows:
-        writer.writerow([code or '', name or '', wh or '', stock, min_stock])
-    mem = BytesIO()
-    mem.write(output.getvalue().encode('utf-8'))
-    mem.seek(0)
-    return send_file(mem, mimetype='text/csv', as_attachment=True, download_name='inventario.csv')
+
+    def generate_csv():
+        sio = StringIO()
+        writer = csv.writer(sio)
+        writer.writerow(['Código', 'Producto', 'Almacén', 'Stock', 'Mínimo'])
+        yield sio.getvalue()
+        sio.seek(0)
+        sio.truncate(0)
+
+        for code, name, wh, stock, min_stock in query.yield_per(500):
+            writer.writerow([code or '', name or '', wh or '', stock, min_stock])
+            yield sio.getvalue()
+            sio.seek(0)
+            sio.truncate(0)
+
+    return Response(
+        generate_csv(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': 'attachment; filename=inventario.csv'}
+    )
 
 
 @app.route('/reportes/exportes')
