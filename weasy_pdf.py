@@ -343,3 +343,73 @@ def generate_pdf_bytes(title: str, company: dict, client: dict, items: list,
     _draw_totals(pdf, subtotal, itbis, total, total_discount, note, footer)
 
     return _output_pdf_bytes(pdf)
+
+
+def generate_service_pdf_bytes(title: str, company: dict, client: dict, items: list,
+                               total: float, seller: str | None = None,
+                               payment_method: str | None = None, bank: str | None = None,
+                               doc_number: int | None = None, note: str | None = None,
+                               date: datetime | None = None,
+                               valid_until: datetime | None = None,
+                               footer: str | None = None) -> bytes:
+    """Render a service PDF with simplified columns.
+
+    Columns: ID, Artículo + Descripción, Cantidad, Tarifa, Monto.
+    """
+    item_dicts = [_item_to_dict(i) for i in items]
+    client_dict = _client_to_dict(client)
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.add_page()
+
+    base_date = _to_dom_time(date or datetime.now(DOM_TZ))
+    _draw_header(pdf, title, company, base_date, doc_number, None, valid_until)
+    _draw_client_block(pdf, client_dict)
+    _draw_meta_block(pdf, seller, payment_method, bank, None)
+
+    headers = ['ID', 'Artículo + Descripción', 'Cant', 'Tarifa', 'Monto']
+    widths = [14, 104, 16, 26, 30]
+
+    pdf.ln(3)
+    pdf.set_fill_color(*BLUE)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font('Helvetica', 'B', 8)
+    for h, w in zip(headers, widths):
+        _cell(pdf, w, 7, _safe_text(h), border=1, align='C', fill=True, new_x=XPos.RIGHT, new_y=YPos.TOP)
+    pdf.ln()
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font('Helvetica', '', 8)
+    for idx, i in enumerate(item_dicts, start=1):
+        line_total = float(i.get('unit_price', 0) or 0) * float(i.get('quantity', 0) or 0)
+        row = [
+            str(idx),
+            str(i.get('product_name', '')),
+            str(i.get('quantity', '')),
+            _fmt_money(float(i.get('unit_price', 0) or 0)),
+            _fmt_money(line_total),
+        ]
+        for col, (text, w) in enumerate(zip(row, widths)):
+            align = 'R' if col in (3, 4) else ('C' if col in (0, 2) else 'L')
+            display_text = _fit_cell_text(pdf, text, max(w - 1.5, 1)) if col == 1 else _safe_text(text)
+            _cell(pdf, w, 6, display_text, border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
+        pdf.ln()
+
+    if note:
+        pdf.ln(3)
+        pdf.set_font('Helvetica', '', 9)
+        pdf.multi_cell(0, 5, _safe_text(f"Nota: {note}"))
+
+    pdf.ln(2)
+    pdf.set_font('Helvetica', 'B', 10)
+    pdf.set_text_color(*BLUE)
+    _cell(pdf, 0, 7, _safe_text(f"Total: {_fmt_money(total)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_text_color(0, 0, 0)
+
+    if footer:
+        pdf.ln(2)
+        pdf.set_font('Helvetica', '', 8)
+        pdf.multi_cell(0, 4, _safe_text(footer))
+
+    return _output_pdf_bytes(pdf)
