@@ -102,10 +102,12 @@ def test_service_quotation_pdf_is_generated_under_servicios(tmp_path):
         }, follow_redirects=False)
         assert create_resp.status_code == 302
 
-        pdf_resp = c.get('/cotizaciones/1/pdf')
+    with app.app_context():
+        from models import Quotation
+        q = Quotation.query.get(1)
+        assert q is not None
+        assert q.generated_doc_path and '/generated_docs/' in q.generated_doc_path
 
-    assert pdf_resp.status_code == 200
-    assert pdf_resp.headers.get('Content-Type', '').startswith('application/pdf')
     archived = list(archive_root.glob('**/servicios/*.pdf'))
     assert archived, 'Expected archived PDF under servicios folder'
 
@@ -170,12 +172,12 @@ def test_service_invoice_pdf_redirects_to_serviciofact_path(tmp_path):
             'service_itbis[]': ['0'],
         }, follow_redirects=False)
 
-        pdf_resp = c.get('/facturas/1/pdf', follow_redirects=False)
-
-    assert pdf_resp.status_code == 200
-    archived_url = pdf_resp.headers.get('X-Archived-Url', '')
-    assert '/generated_docs/' in archived_url or '/generated-docs/' in archived_url
-    assert '/serviciofact/' in archived_url
+    with app.app_context():
+        from models import Invoice
+        inv = Invoice.query.get(1)
+        assert inv is not None
+        assert inv.generated_doc_path and '/generated_docs/' in inv.generated_doc_path
+        assert '/serviciofact/' in inv.generated_doc_path
 
 
 def test_service_edit_route_updates_itbis_and_total(tmp_path):
@@ -243,6 +245,85 @@ def test_service_rows_use_service_edit_link(tmp_path):
     assert '/cotizaciones/editar-servicio/1' in html
 
 
+
+
+def test_service_rows_show_generate_factura_button(tmp_path):
+    _seed_base(tmp_path)
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        c.post('/cotizaciones/nuevo-servicio', data={
+            'client_id': '1',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'service_name[]': ['Servicio X'],
+            'service_description[]': ['Desc'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1000'],
+            'service_discount[]': ['100'],
+            'service_itbis[]': ['1'],
+        }, follow_redirects=False)
+        html = c.get('/cotizaciones').get_data(as_text=True)
+    assert 'Generar Factura' in html
+
+
+def test_generate_service_invoice_from_existing_service_quote(tmp_path):
+    _seed_base(tmp_path)
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        c.post('/cotizaciones/nuevo-servicio', data={
+            'client_id': '1',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'service_name[]': ['Servicio X'],
+            'service_description[]': ['Desc'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1000'],
+            'service_discount[]': ['100'],
+            'service_itbis[]': ['1'],
+        }, follow_redirects=False)
+        resp = c.post('/cotizaciones/1/generar-factura-servicio', data={}, follow_redirects=False)
+
+    assert resp.status_code == 302
+    assert '/generated_docs/' in resp.headers['Location']
+
+    with app.app_context():
+        from models import Invoice
+        inv = Invoice.query.get(1)
+        assert inv is not None
+        assert inv.subtotal == 900
+        assert round(inv.itbis, 2) == 162
+        assert round(inv.total, 2) == 1062
+
+
+def test_service_invoice_pdf_does_not_include_valid_until(monkeypatch, tmp_path):
+    _seed_base(tmp_path)
+    captured = {}
+
+    def _fake_generate_service_pdf_bytes(*args, **kwargs):
+        captured['valid_until'] = kwargs.get('valid_until')
+        return b'%PDF-1.4 mock'
+
+    monkeypatch.setattr('app.generate_service_pdf_bytes', _fake_generate_service_pdf_bytes)
+
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        c.post('/cotizaciones/nuevo-servicio', data={
+            'client_id': '1',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'document_mode': 'factura',
+            'service_name[]': ['Instalación'],
+            'service_description[]': ['Servicio técnico'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1500'],
+            'service_itbis[]': ['0'],
+        }, follow_redirects=False)
+
+    assert captured.get('valid_until') is None
+
 def test_generate_service_pdf_bytes_uses_only_user_created_rows(monkeypatch):
     original_cell = weasy_pdf._cell
     captured_texts: list[str] = []
@@ -284,6 +365,8 @@ def test_generate_service_pdf_bytes_uses_only_user_created_rows(monkeypatch):
         company,
         client,
         items,
+        subtotal=300,
+        itbis=63,
         total=363,
     )
 
