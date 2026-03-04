@@ -432,6 +432,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 MAIL_USE_SSL = _env_bool('MAIL_USE_SSL', False)
 MAIL_USE_TLS = _env_bool('MAIL_USE_TLS', True)
+MAIL_ENABLED = _env_bool('MAIL_ENABLED', True)
 
 EMAIL_METRICS = {
     'queued': 0,
@@ -444,6 +445,11 @@ _email_queue = ThreadQueue()
 
 
 def _deliver_email(to, subject, html, attachments=None, max_retries=None):
+    if not MAIL_ENABLED:
+        EMAIL_METRICS['skipped'] += 1
+        app.logger.warning('Email disabled by MAIL_ENABLED=0; skipping send to %s', to)
+        return
+
     if not MAIL_SERVER or not MAIL_DEFAULT_SENDER:
         EMAIL_METRICS['skipped'] += 1
         app.logger.warning('Email settings missing; skipping send to %s', to)
@@ -499,6 +505,11 @@ _email_worker_thread.start()
 
 
 def send_email(to, subject, html, attachments=None, asynchronous=True, max_retries=None):
+    if not MAIL_ENABLED:
+        EMAIL_METRICS['skipped'] += 1
+        app.logger.warning('Email disabled by MAIL_ENABLED=0; skipping queue/send to %s', to)
+        return
+
     if asynchronous:
         EMAIL_METRICS['queued'] += 1
         _email_queue.put((to, subject, html, attachments, max_retries))

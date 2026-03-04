@@ -128,6 +128,7 @@ La app incluye trazabilidad de latencia por request y SQL lento con `request_id`
 - `PSE_HTTP_TIMEOUT_SEC` (default `20`)
 - `PSE_HTTP_MAX_RETRIES` (default `2`)
 - `PSE_HTTP_BACKOFF_SEC` (default `0.4`)
+- `MAIL_ENABLED` (default `1`; usa `0` para desactivar SMTP temporalmente y aislar timeouts)
 
 Endpoints:
 - `GET /__health`
@@ -137,6 +138,14 @@ Endpoints:
 Runbook completo: `docs/timeout_runbook.md`.
 
 Si operas exclusivamente con phpMyAdmin, usa también `maint/phpmyadmin_timeout_kit.sql` para diagnóstico DB guiado.
+
+Tip de aislamiento rápido en producción:
+
+```bash
+MAIL_ENABLED=0
+```
+
+Con esto la app omite envíos SMTP (sin bloquear requests) y deja trazas en log para confirmar si el timeout venía del correo.
 
 ## Ejecutar con Docker (guía para principiantes)
 
