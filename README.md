@@ -16,8 +16,7 @@ Key features:
 - Approved account requests trigger an email notification with login details
 
 The repository does not include a prebuilt `database.sqlite`; each
-environment should generate its own database using the migration
-commands below.
+environment should generate its own database using the SQL scripts in this repository or phpMyAdmin.
 
 ## Configuration
 
@@ -60,9 +59,6 @@ Do not enable debug mode in production.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-flask db init  # first run only
-flask db migrate -m "initial"
-flask db upgrade
 python scripts/seed_db.py  # optional: seed admin user and sample data
 pytest
 python app.py
@@ -101,12 +97,7 @@ PUBLIC_DOCS_BASE_URL=https://app.ecosea.do
 > La app soporta `mysql://...` y lo corrige automáticamente a `mysql+pymysql://...`.
 
 3. Activa el virtualenv e instala dependencias.
-4. Ejecuta migraciones:
-
-```
-flask db upgrade
-```
-
+4. Importa `CPANEL_MYSQL_FULL_SCHEMA.sql` en phpMyAdmin (o aplica `DatabaseUpdate.sql` si ya existe una instalación).
 5. Reinicia la app desde Setup Python App.
 
 Consulta también `CPANEL_PYTHON_GUIA.txt`, `CPANEL_MYSQL_BASE.sql`, `CPANEL_MYSQL_FULL_SCHEMA.sql` y `.env.cpanel.example`.
@@ -115,6 +106,37 @@ Si ya tienes una instalación en producción y solo quieres actualizar el esquem
 
 For company name auto-completion, download the latest `DGII_RNC.TXT` from the DGII and place it under `data/`.
 
+
+
+## Observabilidad y diagnóstico de timeouts
+
+La app incluye trazabilidad de latencia por request y SQL lento con `request_id`:
+
+- `SLOW_REQUEST_WARN_MS` (default `2000`)
+- `SLOW_REQUEST_ERROR_MS` (default `10000`)
+- `SLOW_QUERY_WARN_MS` (default `500`)
+- `ENABLE_ROUTE_PROFILING` (default `0`, solo admin)
+- `PSE_HTTP_TIMEOUT_SEC` (default `20`)
+- `PSE_HTTP_MAX_RETRIES` (default `2`)
+- `PSE_HTTP_BACKOFF_SEC` (default `0.4`)
+- `MAIL_ENABLED` (default `1`; usa `0` para desactivar SMTP temporalmente y aislar timeouts)
+
+Endpoints:
+- `GET /__health`
+- `GET /__ready`
+- `GET /__admin/profile/reportes` (requiere admin + profiling habilitado)
+
+Runbook completo: `docs/timeout_runbook.md`.
+
+Si operas exclusivamente con phpMyAdmin, usa también `maint/phpmyadmin_timeout_kit.sql` para diagnóstico DB guiado.
+
+Tip de aislamiento rápido en producción:
+
+```bash
+MAIL_ENABLED=0
+```
+
+Con esto la app omite envíos SMTP (sin bloquear requests) y deja trazas en log para confirmar si el timeout venía del correo.
 
 ## Ejecutar con Docker (guía para principiantes)
 
@@ -151,7 +173,7 @@ docker compose up --build
 ¿Qué hace este comando?
 - Construye la imagen de Tiendix
 - Instala dependencias
-- Ejecuta migraciones (`flask db upgrade`)
+- Aplica esquema SQL desde phpMyAdmin (`CPANEL_MYSQL_FULL_SCHEMA.sql` o `DatabaseUpdate.sql`)
 - Inicia la app en el puerto `5000`
 
 ### 4) Abrir la aplicación

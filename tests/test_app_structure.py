@@ -25,9 +25,5 @@ def test_blueprint_registration():
     assert 'auth' in app.blueprints
 
 
-def test_migrate_extension_present():
-    try:
-        import flask_migrate  # noqa: F401
-    except ModuleNotFoundError:  # pragma: no cover
-        pytest.skip('Flask-Migrate not installed')
-    assert 'migrate' in app.extensions
+def test_sqlalchemy_extension_present():
+    assert 'sqlalchemy' in app.extensions

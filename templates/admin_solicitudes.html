@@ -7,9 +7,9 @@
     La creación automática de cuentas está activa. Los nuevos registros se crean directamente como <strong>Manager</strong>.
   </div>
 {% endif %}
-{% if requests %}
+{% if requests.items %}
   <div class="space-y-4">
-  {% for req in requests %}
+  {% for req in requests.items %}
     <div class="card">
       <p><strong>Nombre:</strong> {{ req.first_name }} {{ req.last_name }}</p>
       <p><strong>Empresa:</strong> {{ req.company }}</p>
@@ -46,4 +46,14 @@
 {% else %}
   <p>No hay solicitudes pendientes.</p>
 {% endif %}
+
+<div class="mt-4 flex items-center gap-2">
+  {% if requests.has_prev %}
+    <a href="?page={{ requests.prev_num }}" class="px-2 py-1 bg-gray-200 rounded">Anterior</a>
+  {% endif %}
+  <span>Página {{ requests.page }} de {{ requests.pages }}</span>
+  {% if requests.has_next %}
+    <a href="?page={{ requests.next_num }}" class="px-2 py-1 bg-gray-200 rounded">Siguiente</a>
+  {% endif %}
+</div>
 {% endblock %}
