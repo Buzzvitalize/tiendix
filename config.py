@@ -17,6 +17,7 @@ class BaseConfig:
     PDF_ARCHIVE_ROOT = os.environ.get("PDF_ARCHIVE_ROOT")
     PUBLIC_DOCS_BASE_URL = os.environ.get("PUBLIC_DOCS_BASE_URL")
     PDF_LOG_DIR = os.environ.get("PDF_LOG_DIR")
+    PDF_LOCK_WAIT_SECONDS = os.environ.get("PDF_LOCK_WAIT_SECONDS", "30")
 
 
 class DevelopmentConfig(BaseConfig):

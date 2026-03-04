@@ -10,7 +10,7 @@
     </tr>
   </thead>
   <tbody>
-    {% for c in companies %}
+    {% for c in companies.items %}
     <tr class="border-b">
       <td class="p-2">{{ c.name }}</td>
       <td class="p-2 text-center">
@@ -20,6 +20,16 @@
     {% endfor %}
   </tbody>
 </table>
+<div class="mt-4 flex items-center gap-2">
+  {% if companies.has_prev %}
+    <a href="?page={{ companies.prev_num }}" class="px-2 py-1 bg-gray-200 rounded">Anterior</a>
+  {% endif %}
+  <span>Página {{ companies.page }} de {{ companies.pages }}</span>
+  {% if companies.has_next %}
+    <a href="?page={{ companies.next_num }}" class="px-2 py-1 bg-gray-200 rounded">Siguiente</a>
+  {% endif %}
+</div>
+
 {% if session.get('company_id') %}
 <div class="mt-4">
   <a href="{{ url_for('clear_company') }}" class="text-sm text-gray-600">Salir de empresa</a>

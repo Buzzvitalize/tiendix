@@ -102,7 +102,7 @@
 
 {% block scripts %}
 <script>
-const initialConfig = {{ (config or {})|tojson }};
+const initialConfig = {};
 let p12Base64 = null;
 
 const byId = (id) => document.getElementById(id);
@@ -270,5 +270,13 @@ byId('cert_file').addEventListener('change', async (ev) => {
 });
 
 applyConfig(initialConfig || {});
+
+(async () => {
+  const r = await api('/api/fe/config');
+  if(r.ok && r.data && r.data.config){
+    applyConfig(r.data.config);
+    setResult(r.data);
+  }
+})();
 </script>
 {% endblock %}
