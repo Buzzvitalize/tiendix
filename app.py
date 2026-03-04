@@ -4518,11 +4518,16 @@ def _archivo_legacy_not_found(**_kwargs):
     return ('Not Found', 404)
 
 
-app.add_url_rule(
-    '/cotizaciones/<int:quotation_id>/archivo',
-    endpoint='quotation_archived_link_404',
-    view_func=_archivo_legacy_not_found,
-)
+def _register_legacy_archivo_404(path: str, endpoint: str) -> None:
+    if endpoint in app.view_functions:
+        app.logger.warning('Replacing duplicate legacy endpoint registration: %s', endpoint)
+        app.view_functions.pop(endpoint, None)
+    app.add_url_rule(path, endpoint=endpoint, view_func=_archivo_legacy_not_found)
+
+
+_register_legacy_archivo_404('/cotizaciones/<int:quotation_id>/archivo', 'quotation_archived_link')
+_register_legacy_archivo_404('/pedidos/<int:order_id>/archivo', 'order_archived_link')
+_register_legacy_archivo_404('/facturas/<int:invoice_id>/archivo', 'invoice_archived_link')
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -4941,6 +4946,7 @@ app.add_url_rule(
     view_func=_archivo_legacy_not_found,
 )
 
+
 # Invoices
 @app.route('/facturas')
 def list_invoices():
@@ -5126,6 +5132,7 @@ app.add_url_rule(
     endpoint='invoice_archived_link_404',
     view_func=_archivo_legacy_not_found,
 )
+
 
 @app.route('/generated-docs/<path:filename>')
 @app.route('/generated_docs/<path:filename>')
