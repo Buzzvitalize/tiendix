@@ -141,6 +141,13 @@
     <label for="quotation-note" class="block text-sm font-medium text-gray-700 mb-1">Nota</label>
     <textarea id="quotation-note" name="note" placeholder="Nota" class="input w-full"></textarea>
   </div>
+  <div class="rounded border border-gray-200 p-3 bg-gray-50 space-y-2">
+    <label class="inline-flex items-center gap-2 text-sm">
+      <input type="checkbox" name="use_default_footer" id="quotation-use-default-footer" value="1" checked>
+      <span>Usar pie predeterminado del documento</span>
+    </label>
+    <textarea name="custom_footer" id="quotation-custom-footer" class="input w-full" rows="2" placeholder="Escriba un pie personalizado" disabled></textarea>
+  </div>
   <button type="submit" class="btn-primary">Guardar</button>
 </form>
 {% endblock %}
@@ -165,6 +172,12 @@ window.addEventListener('load', () => {
   const phoneField=document.getElementById('new-client-phone');
   const nameField=document.getElementById('new-client-name');
   const rncStatus=document.getElementById('new-client-rnc-status');
+  const qSubtotal=document.getElementById('q-subtotal');
+  const qDiscount=document.getElementById('q-discount');
+  const qItbis=document.getElementById('q-itbis');
+  const qTotal=document.getElementById('q-total');
+  const footerCheck=document.getElementById('quotation-use-default-footer');
+  const customFooter=document.getElementById('quotation-custom-footer');
 
   function setRncStatus(message, ok=false){
     rncStatus.textContent = message;
@@ -274,6 +287,37 @@ window.addEventListener('load', () => {
     }
   });
 
+
+  function money(v){ return new Intl.NumberFormat('es-DO',{style:'currency',currency:'DOP'}).format(v || 0); }
+
+  function updateTotals(){
+    let subtotal = 0;
+    let discount = 0;
+    let itbis = 0;
+    document.querySelectorAll('.product-row').forEach((row)=>{
+      const p=parseFloat(row.querySelector('.price-field').value)||0;
+      const q=parseFloat(row.querySelector('.qty-field').value)||0;
+      const dPct=parseFloat(row.querySelector('.disc-field').value)||0;
+      const base = p*q;
+      const dValue = base * (dPct/100);
+      const net = Math.max(base - dValue, 0);
+      subtotal += net;
+      discount += dValue;
+      itbis += net * 0.18;
+    });
+    const total = subtotal + itbis;
+    if (qSubtotal) qSubtotal.textContent = money(subtotal);
+    if (qDiscount) qDiscount.textContent = money(discount);
+    if (qItbis) qItbis.textContent = money(itbis);
+    if (qTotal) qTotal.textContent = money(total);
+  }
+
+  function toggleFooterField(){
+    const useDefault = footerCheck.checked;
+    customFooter.disabled = useDefault;
+    if (useDefault) customFooter.value='';
+  }
+
   function bindProduct(row) {
     const select = row.querySelector('.product-select');
     const idField = row.querySelector('.product-id');
@@ -288,6 +332,7 @@ window.addEventListener('load', () => {
       const q=parseFloat(qty.value)||0;
       const d=parseFloat(disc.value)||0;
       total.value=(p*q*(1-d/100)).toFixed(2);
+      updateTotals();
     }
     select.addEventListener('change', function() {
       const opt = select.options[select.selectedIndex];
@@ -306,6 +351,7 @@ window.addEventListener('load', () => {
     disc.addEventListener('input', calc);
     removeBtn.addEventListener('click', () => {
       row.remove();
+      updateTotals();
     });
   }
   const productContainer = document.getElementById('productos');
@@ -328,6 +374,9 @@ window.addEventListener('load', () => {
   });
 
   document.querySelectorAll('.product-row').forEach(bindProduct);
+  if (footerCheck) footerCheck.addEventListener('change', toggleFooterField);
+  toggleFooterField();
+  updateTotals();
 });
 </script>
 {% endblock %}

@@ -60,7 +60,8 @@ def _safe_text(value) -> str:
     """Return latin-1-safe text for built-in fonts (keeps Spanish accents)."""
     text = '' if value is None else str(value)
     normalized = unicodedata.normalize('NFKD', text)
-    return normalized.encode('ascii', 'replace').decode('ascii')
+    cleaned = normalized.encode('ascii', 'ignore').decode('ascii')
+    return cleaned.replace('?', '')
 
 
 
@@ -72,10 +73,13 @@ def _fit_cell_text(pdf: FPDF, value, max_width: float, ellipsis: str = '...') ->
     text = _safe_text(value)
     if not text:
         return ''
-    if pdf.get_string_width(text) <= max_width:
+    get_width = getattr(pdf, 'get_string_width', None)
+    if not callable(get_width):
+        return text
+    if get_width(text) <= max_width:
         return text
     trimmed = text
-    while trimmed and pdf.get_string_width(trimmed + ellipsis) > max_width:
+    while trimmed and get_width(trimmed + ellipsis) > max_width:
         trimmed = trimmed[:-1]
     return (trimmed + ellipsis) if trimmed else ''
 
@@ -176,7 +180,7 @@ def _draw_header(pdf: FPDF, title: str, company: dict, date: datetime, doc_numbe
     if ncf:
         _cell(pdf, 0, 5, _safe_text(f"NCF: {ncf}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     if valid_until:
-        _cell(pdf, 0, 5, _safe_text(f"Valido hasta: {valid_until.strftime('%d/%m/%Y')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        _cell(pdf, 0, 5, _safe_text(f"Fecha de vencimiento: {valid_until.strftime('%d/%m/%Y')}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.ln(15)  # 1.5 cm
 
@@ -346,7 +350,9 @@ def generate_pdf_bytes(title: str, company: dict, client: dict, items: list,
 
 
 def generate_service_pdf_bytes(title: str, company: dict, client: dict, items: list,
-                               total: float, seller: str | None = None,
+                               subtotal: float, itbis: float, total: float,
+                               ncf: str | None = None,
+                               seller: str | None = None,
                                payment_method: str | None = None, bank: str | None = None,
                                doc_number: int | None = None, note: str | None = None,
                                date: datetime | None = None,
@@ -364,7 +370,7 @@ def generate_service_pdf_bytes(title: str, company: dict, client: dict, items: l
     pdf.add_page()
 
     base_date = _to_dom_time(date or datetime.now(DOM_TZ))
-    _draw_header(pdf, title, company, base_date, doc_number, None, valid_until)
+    _draw_header(pdf, title, company, base_date, doc_number, ncf, valid_until)
     _draw_client_block(pdf, client_dict)
     _draw_meta_block(pdf, seller, payment_method, bank, None)
 
@@ -383,7 +389,9 @@ def generate_service_pdf_bytes(title: str, company: dict, client: dict, items: l
     pdf.set_font('Helvetica', '', 8)
     for idx, i in enumerate(item_dicts, start=1):
         base_total = float(i.get('unit_price', 0) or 0) * float(i.get('quantity', 0) or 0)
-        line_total = base_total * (1 + 0.18) if i.get('has_itbis') else base_total
+        line_discount = float(i.get('discount', 0) or 0)
+        net_total = max(base_total - line_discount, 0)
+        line_total = net_total * (1 + 0.18) if i.get('has_itbis') else net_total
         row = [
             str(idx),
             str(i.get('product_name', '')),
@@ -397,20 +405,8 @@ def generate_service_pdf_bytes(title: str, company: dict, client: dict, items: l
             _cell(pdf, w, 6, display_text, border=1, align=align, new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.ln()
 
-    if note:
-        pdf.ln(3)
-        pdf.set_font('Helvetica', '', 9)
-        pdf.multi_cell(0, 5, _safe_text(f"Nota: {note}"))
-
-    pdf.ln(2)
-    pdf.set_font('Helvetica', 'B', 10)
-    pdf.set_text_color(*BLUE)
-    _cell(pdf, 0, 7, _safe_text(f"Total: {_fmt_money(total)}"), align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_text_color(0, 0, 0)
-
-    if footer:
-        pdf.ln(2)
-        pdf.set_font('Helvetica', '', 8)
-        pdf.multi_cell(0, 4, _safe_text(footer))
+    total_discount = sum(float(i.get('discount', 0) or 0) for i in item_dicts)
+    _draw_totals(pdf, subtotal, itbis, total, total_discount, note, footer)
 
     return _output_pdf_bytes(pdf)
+

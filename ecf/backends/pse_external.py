@@ -1,4 +1,6 @@
 from datetime import datetime
+import os
+import time
 
 try:
     import requests
@@ -11,6 +13,10 @@ import urllib.request
 
 from ecf.backends.base import FeBackend
 from ecf.constants import ECF_STATUS_ACCEPTED, ECF_STATUS_PROCESSING
+
+PSE_HTTP_TIMEOUT_SEC = max(float(os.getenv('PSE_HTTP_TIMEOUT_SEC', '20')), 1.0)
+PSE_HTTP_MAX_RETRIES = max(int(os.getenv('PSE_HTTP_MAX_RETRIES', '2')), 1)
+PSE_HTTP_BACKOFF_SEC = max(float(os.getenv('PSE_HTTP_BACKOFF_SEC', '0.4')), 0.0)
 
 
 class PseExternalBackend(FeBackend):
@@ -131,42 +137,48 @@ def _http_request(method: str, url: str, *, headers: dict | None = None, params:
         sep = '&' if '?' in url else '?'
         url = f"{url}{sep}{query}"
 
-    if requests is not None:
-        kwargs = {"headers": headers, "timeout": 20}
-        if json_payload is not None:
-            kwargs["json"] = json_payload
-        r = requests.request(method, url, **kwargs)
-        return {
-            "status_code": r.status_code,
-            "text": r.text or "",
-            "content": r.content or b"",
-        }
+    last_exc = None
+    for attempt in range(1, PSE_HTTP_MAX_RETRIES + 1):
+        try:
+            if requests is not None:
+                kwargs = {"headers": headers, "timeout": PSE_HTTP_TIMEOUT_SEC}
+                if json_payload is not None:
+                    kwargs["json"] = json_payload
+                r = requests.request(method, url, **kwargs)
+                return {
+                    "status_code": r.status_code,
+                    "text": r.text or "",
+                    "content": r.content or b"",
+                }
 
-    # Fallback urllib para entornos cPanel sin requests instalado.
-    data = None
-    if json_payload is not None:
-        import json
+            data = None
+            if json_payload is not None:
+                import json
 
-        data = json.dumps(json_payload).encode('utf-8')
-        headers.setdefault('Content-Type', 'application/json')
+                data = json.dumps(json_payload).encode('utf-8')
+                headers.setdefault('Content-Type', 'application/json')
 
-    req = urllib.request.Request(url=url, data=data, headers=headers, method=method.upper())
-    try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            body = r.read()
+            req = urllib.request.Request(url=url, data=data, headers=headers, method=method.upper())
+            with urllib.request.urlopen(req, timeout=PSE_HTTP_TIMEOUT_SEC) as r:
+                body = r.read()
+                return {
+                    "status_code": int(getattr(r, 'status', 200) or 200),
+                    "text": body.decode('utf-8', errors='replace'),
+                    "content": body,
+                }
+        except urllib.error.HTTPError as exc:
+            body = exc.read() if hasattr(exc, 'read') else b''
             return {
-                "status_code": int(getattr(r, 'status', 200) or 200),
+                "status_code": int(exc.code),
                 "text": body.decode('utf-8', errors='replace'),
                 "content": body,
             }
-    except urllib.error.HTTPError as exc:
-        body = exc.read() if hasattr(exc, 'read') else b''
-        return {
-            "status_code": int(exc.code),
-            "text": body.decode('utf-8', errors='replace'),
-            "content": body,
-        }
-    except Exception as exc:
-        raise RuntimeError(
-            "No se pudo conectar con PSE_EXTERNAL. Verifique red/URLs o instale requests en el entorno."
-        ) from exc
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= PSE_HTTP_MAX_RETRIES:
+                break
+            time.sleep(PSE_HTTP_BACKOFF_SEC * attempt)
+
+    raise RuntimeError(
+        "No se pudo conectar con PSE_EXTERNAL. Verifique red/URLs o incremente timeout/reintentos (PSE_HTTP_*)."
+    ) from last_exc

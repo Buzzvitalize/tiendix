@@ -5,7 +5,8 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app import app, db
-from models import CompanyInfo, User, Client, Order, Invoice
+from datetime import datetime, timedelta
+from models import CompanyInfo, User, Client, Order, Invoice, Quotation
 
 
 def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
@@ -28,6 +29,18 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
         db.session.flush()
         order = Order(client_id=client.id, subtotal=100, itbis=18, total=118, seller='U', payment_method='Efectivo', status='Pendiente', company_id=company.id)
         db.session.add(order)
+
+        quotation = Quotation(
+            client_id=client.id,
+            valid_until=datetime.utcnow() + timedelta(days=30),
+            subtotal=100,
+            itbis=18,
+            total=118,
+            status='vigente',
+            company_id=company.id,
+            warehouse_id=None,
+        )
+        db.session.add(quotation)
         invoice = Invoice(client_id=client.id, order_id=1, subtotal=100, itbis=18, total=118, invoice_type='Consumidor Final', status='Pendiente', company_id=company.id)
         db.session.add(invoice)
         db.session.commit()
@@ -36,9 +49,11 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
         c.post('/login', data={'username': 'u_links', 'password': 'pass'})
         orders_html = c.get('/pedidos').get_data(as_text=True)
         invoices_html = c.get('/facturas').get_data(as_text=True)
+        quotations_html = c.get('/cotizaciones').get_data(as_text=True)
 
-    assert '/pedidos/1/pdf' in orders_html
-    assert '/facturas/1/pdf' in invoices_html
+    assert '/pedidos/1/archivo' in orders_html
+    assert '/facturas/1/archivo' in invoices_html
+    assert '/cotizaciones/1/archivo' in quotations_html
     assert 'target="_blank"' in orders_html
     assert 'target="_blank"' in invoices_html
 

@@ -116,6 +116,28 @@ Si ya tienes una instalación en producción y solo quieres actualizar el esquem
 For company name auto-completion, download the latest `DGII_RNC.TXT` from the DGII and place it under `data/`.
 
 
+
+## Observabilidad y diagnóstico de timeouts
+
+La app incluye trazabilidad de latencia por request y SQL lento con `request_id`:
+
+- `SLOW_REQUEST_WARN_MS` (default `2000`)
+- `SLOW_REQUEST_ERROR_MS` (default `10000`)
+- `SLOW_QUERY_WARN_MS` (default `500`)
+- `ENABLE_ROUTE_PROFILING` (default `0`, solo admin)
+- `PSE_HTTP_TIMEOUT_SEC` (default `20`)
+- `PSE_HTTP_MAX_RETRIES` (default `2`)
+- `PSE_HTTP_BACKOFF_SEC` (default `0.4`)
+
+Endpoints:
+- `GET /__health`
+- `GET /__ready`
+- `GET /__admin/profile/reportes` (requiere admin + profiling habilitado)
+
+Runbook completo: `docs/timeout_runbook.md`.
+
+Si operas exclusivamente con phpMyAdmin, usa también `maint/phpmyadmin_timeout_kit.sql` para diagnóstico DB guiado.
+
 ## Ejecutar con Docker (guía para principiantes)
 
 Si nunca has usado Docker, sigue estos pasos literalmente:
