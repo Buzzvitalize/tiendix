@@ -4514,9 +4514,15 @@ def _quotation_generated_docs_url(quotation: Quotation, company_name: str | None
     )
 
 
-@app.route('/cotizaciones/<int:quotation_id>/archivo', endpoint='quotation_archived_link_404')
-def quotation_archived_link_404(quotation_id):
+def _archivo_legacy_not_found(**_kwargs):
     return ('Not Found', 404)
+
+
+app.add_url_rule(
+    '/cotizaciones/<int:quotation_id>/archivo',
+    endpoint='quotation_archived_link_404',
+    view_func=_archivo_legacy_not_found,
+)
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -4928,6 +4934,13 @@ def order_archived_link(order_id):
 def order_archived_link_404(order_id):
     return ('Not Found', 404)
 
+
+app.add_url_rule(
+    '/pedidos/<int:order_id>/archivo',
+    endpoint='order_archived_link_404',
+    view_func=_archivo_legacy_not_found,
+)
+
 # Invoices
 @app.route('/facturas')
 def list_invoices():
@@ -5077,28 +5090,6 @@ def _invoice_generated_docs_url(invoice: Invoice, company_name: str | None = Non
         generated_doc_path=invoice.generated_doc_path,
         build_pdf_bytes=_build,
     )
-    if not archived.exists():
-        pdf_data = _build_invoice_pdf_bytes(invoice, get_company_info())
-        archived_copy = _archive_pdf_copy(
-            doc_type,
-            invoice.id,
-            pdf_data,
-            company_name=company_name,
-            company_id=current_company_id(),
-        )
-        if archived_copy:
-            archived = Path(archived_copy)
-
-    if not archived.exists():
-        raise RuntimeError(f'No se pudo generar archivo PDF para factura {invoice.id}')
-
-    resolved_url = _archived_download_url(
-        doc_type,
-        invoice.id,
-        company_name=company_name,
-        company_id=current_company_id(),
-        full_path=str(archived),
-    )
     if resolved_url:
         return resolved_url
     rel = _relative_generated_doc_path(str(archived))
@@ -5128,6 +5119,13 @@ def invoice_archived_link(invoice_id):
 @app.route('/facturas/<int:invoice_id>/archivo', endpoint='invoice_archived_link_404')
 def invoice_archived_link_404(invoice_id):
     return ('Not Found', 404)
+
+
+app.add_url_rule(
+    '/facturas/<int:invoice_id>/archivo',
+    endpoint='invoice_archived_link_404',
+    view_func=_archivo_legacy_not_found,
+)
 
 @app.route('/generated-docs/<path:filename>')
 @app.route('/generated_docs/<path:filename>')
