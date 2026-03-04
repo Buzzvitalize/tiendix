@@ -4352,59 +4352,8 @@ def quotation_archived_link(quotation_id):
         link = _quotation_generated_docs_url(quotation, company_name=company_name)
     except Exception as exc:
         app.logger.exception('No se pudo resolver enlace archived para cotización %s: %s', quotation.id, exc)
-        return redirect(url_for('quotation_pdf', quotation_id=quotation.id))
+        return ('No se pudo resolver el archivo PDF de la cotización', 500)
     return redirect(link)
-
-
-@app.route('/cotizaciones/<int:quotation_id>/pdf')
-def quotation_pdf(quotation_id):
-    quotation = company_get(Quotation, quotation_id)
-    company = get_company_info()
-    doc_type = _quotation_doc_type(quotation)
-    filename = f'{doc_type}_{quotation_id}.pdf'
-    app.logger.info("Generating quotation PDF %s", quotation_id)
-
-    archived = _resolve_archived_pdf_path(
-        doc_type,
-        quotation.id,
-        company_name=company.get('name'),
-        company_id=current_company_id(),
-    )
-    if archived.exists():
-        _log_pdf_event(doc_type, quotation.id, 'ok', 'servido desde generated_docs')
-        try:
-            response = send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
-        except TypeError:
-            response = send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
-        return _set_archived_headers(
-            response,
-            doc_type=doc_type,
-            doc_number=quotation.id,
-            company_name=company.get('name'),
-            full_path=str(archived),
-        )
-
-    try:
-        pdf_data = _build_service_quotation_pdf_bytes(quotation, company) if doc_type == 'servicios' else _build_quotation_pdf_bytes(quotation, company)
-        response = _archive_and_send_pdf(
-            doc_type=doc_type,
-            doc_number=quotation.id,
-            pdf_data=pdf_data,
-            download_name=filename,
-            company_name=company.get('name'),
-        )
-        _log_pdf_event(doc_type, quotation.id, 'ok', 'pdf generado y entregado')
-        return response
-    except Exception as exc:
-        app.logger.exception('Quotation PDF generation failed id=%s: %s', quotation_id, exc)
-        if archived.exists():
-            _log_pdf_event(doc_type, quotation.id, 'fallback_ok', f'generacion fallo: {exc}; servido desde archivo')
-            try:
-                return send_file(str(archived), as_attachment=True, download_name=filename, mimetype='application/pdf')
-            except TypeError:
-                return send_file(str(archived), as_attachment=True, attachment_filename=filename, mimetype='application/pdf')
-        _log_pdf_event(doc_type, quotation.id, 'error', f'generacion fallo y no existe archivo: {exc}')
-        return ('No se pudo generar el PDF', 500)
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -4420,7 +4369,7 @@ def send_quotation_email(quotation_id):
     validity_days = max((quotation.valid_until.date() - quotation.date.date()).days, 1) if quotation.valid_until and quotation.date else 30
     download_url = _document_download_url(doc_type, quotation.id, company_name=company.get('name'))
     if not download_url:
-        download_url = url_for('quotation_pdf', quotation_id=quotation.id, _external=True)
+        download_url = url_for('quotation_archived_link', quotation_id=quotation.id, _external=True)
     email_ref = _document_email_reference(download_url, doc_type, quotation.id, company_name=company.get('name'))
     doc_label = 'servicio' if is_service else 'cotizacion'
     subject = _document_email_subject(company.get('name', 'Empresa'), doc_label, email_ref, validity_days=validity_days)
@@ -4683,7 +4632,7 @@ def send_order_email(order_id):
     company = get_company_info()
     download_url = _document_download_url('pedido', order.id, company_name=company.get('name'))
     if not download_url:
-        download_url = url_for('order_pdf', order_id=order.id, _external=True)
+        download_url = url_for('order_archived_link', order_id=order.id, _external=True)
     email_ref = _document_email_reference(download_url, 'pedido', order.id, company_name=company.get('name'))
     subject = _document_email_subject(company.get('name', 'Empresa'), 'pedido', email_ref)
     html = render_template(
@@ -4808,24 +4757,8 @@ def order_archived_link(order_id):
         link = _order_generated_docs_url(order, company_name=company_name)
     except Exception as exc:
         app.logger.exception('No se pudo resolver enlace archived para pedido %s: %s', order.id, exc)
-        return redirect(url_for('order_pdf', order_id=order.id))
+        return ('No se pudo resolver el archivo PDF del pedido', 500)
     return redirect(link)
-
-
-@app.route('/pedidos/<int:order_id>/pdf')
-def order_pdf(order_id):
-    order = company_get(Order, order_id)
-    company = get_company_info()
-    filename = f'pedido_{order_id}.pdf'
-    app.logger.info("Generating order PDF %s", order_id)
-    pdf_data = _build_order_pdf_bytes(order, company)
-    return _archive_and_send_pdf(
-        doc_type='pedido',
-        doc_number=order.id,
-        pdf_data=pdf_data,
-        download_name=filename,
-        company_name=company.get('name'),
-    )
 
 # Invoices
 @app.route('/facturas')
@@ -4860,7 +4793,7 @@ def send_invoice_email(invoice_id):
     invoice_doc_type = _invoice_doc_type(invoice)
     download_url = _document_download_url(invoice_doc_type, invoice.id, company_name=company.get('name'))
     if not download_url:
-        download_url = url_for('invoice_pdf', invoice_id=invoice.id, _external=True)
+        download_url = url_for('invoice_archived_link', invoice_id=invoice.id, _external=True)
     email_ref = _document_email_reference(download_url, invoice_doc_type, invoice.id, company_name=company.get('name'))
     subject = _document_email_subject(company.get('name', 'Empresa'), 'factura', email_ref)
     html = render_template(
@@ -4979,25 +4912,8 @@ def invoice_archived_link(invoice_id):
         link = _invoice_generated_docs_url(invoice, company_name=company_name)
     except Exception as exc:
         app.logger.exception('No se pudo resolver enlace archived para factura %s: %s', invoice.id, exc)
-        return redirect(url_for('invoice_pdf', invoice_id=invoice.id))
+        return ('No se pudo resolver el archivo PDF de la factura', 500)
     return redirect(link)
-
-
-@app.route('/facturas/<int:invoice_id>/pdf')
-def invoice_pdf(invoice_id):
-    invoice = company_get(Invoice, invoice_id)
-    company = get_company_info()
-    invoice_doc_type = _invoice_doc_type(invoice)
-    filename = f'{invoice_doc_type}_{invoice_id}.pdf'
-    app.logger.info("Generating invoice PDF %s", invoice_id)
-    pdf_data = _build_invoice_pdf_bytes(invoice, company)
-    return _archive_and_send_pdf(
-        doc_type=invoice_doc_type,
-        doc_number=invoice.id,
-        pdf_data=pdf_data,
-        download_name=filename,
-        company_name=company.get('name'),
-    )
 
 @app.route('/generated-docs/<path:filename>')
 @app.route('/generated_docs/<path:filename>')
