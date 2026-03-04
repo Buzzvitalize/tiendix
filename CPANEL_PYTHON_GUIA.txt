@@ -80,11 +80,11 @@ Recomendación:
 - No uses una SECRET_KEY corta.
 - Usa una clave larga, aleatoria y privada.
 
-5) Ejecutar migraciones de base de datos
+5) Importar esquema SQL en phpMyAdmin
 ----------------------------------------
 Con el venv activado y dentro de `~/tiendix`:
 
-flask db upgrade
+Importa `CPANEL_MYSQL_FULL_SCHEMA.sql` en phpMyAdmin
 
 Esto crea/actualiza las tablas.
 
@@ -121,7 +121,7 @@ C) Error al generar PDF
 D) Error 500 después de subir cambios
 - Activa venv.
 - Corre `pip install -r requirements.txt`.
-- Corre `flask db upgrade`.
+- Importa `CPANEL_MYSQL_FULL_SCHEMA.sql` en phpMyAdmin.
 - Reinicia la app desde cPanel.
 
 10) Flujo de actualización (cuando subes cambios nuevos)
@@ -129,7 +129,7 @@ D) Error 500 después de subir cambios
 1. Subir cambios a `~/tiendix`.
 2. Activar venv.
 3. `pip install -r requirements.txt` (por si hay dependencias nuevas).
-4. `flask db upgrade`.
+4. Importa `CPANEL_MYSQL_FULL_SCHEMA.sql` en phpMyAdmin.
 5. Restart en Setup Python App.
 
 11) Checklist final
@@ -137,7 +137,7 @@ D) Error 500 después de subir cambios
 [ ] App creada en Setup Python App
 [ ] Variables de entorno configuradas
 [ ] Dependencias instaladas
-[ ] Migraciones ejecutadas
+[ ] Esquema SQL importado en phpMyAdmin
 [ ] App reiniciada
 [ ] Login OK
 [ ] Recuperación de contraseña OK
@@ -179,7 +179,7 @@ Asegúrate de que ese `.htaccess` esté subido en la raíz pública de la app
 Opcional:
 - Puedes importar `CPANEL_MYSQL_BASE.sql` para validar charset/collation.
 - Si quieres la base completa lista para phpMyAdmin, importa `CPANEL_MYSQL_FULL_SCHEMA.sql`.
-- Luego ejecuta `flask db upgrade` para asegurar compatibilidad de migraciones futuras.
+- Luego importa `CPANEL_MYSQL_FULL_SCHEMA.sql` en phpMyAdmin para asegurar compatibilidad de actualizaciones futuras vía SQL.
 
 
 Nota de seguridad importante:
@@ -219,12 +219,12 @@ En Setup Python App > Environment Variables agrega:
 - `DB_USER=usuariocpanel_tiendix_user`
 - `DB_PASSWORD=TU_PASSWORD_DB`
 
-Paso 4: Instalar y migrar
+Paso 4: Instalar y cargar esquema SQL
 1. Terminal de cPanel.
 2. Ejecuta el comando de activación del venv que te da Setup Python App.
 3. Entra al proyecto: `cd ~/tiendix`
 4. Instala: `pip install -r requirements.txt`
-5. Migra: `flask db upgrade`
+5. Importa `CPANEL_MYSQL_FULL_SCHEMA.sql` en phpMyAdmin
 
 Paso 5: Reiniciar y validar
 1. Regresa a Setup Python App > Restart.
@@ -236,7 +236,7 @@ Checklist rápido final:
 - [ ] Base y usuario creados con prefijo cPanel.
 - [ ] Usuario agregado a base con ALL PRIVILEGES.
 - [ ] Variables `DB_*` o `DATABASE_URL` configuradas.
-- [ ] `flask db upgrade` ejecutado sin error.
+- [ ] `CPANEL_MYSQL_FULL_SCHEMA.sql` importado sin error en phpMyAdmin.
 - [ ] App reiniciada y funcionando.
 
 
@@ -245,7 +245,7 @@ Checklist rápido final:
 Causa común: hashes de contraseña truncados en tablas antiguas (columnas cortas).
 
 Qué hacer:
-1. Ejecuta `flask db upgrade`.
+1. Importa `CPANEL_MYSQL_FULL_SCHEMA.sql` en phpMyAdmin.
 2. Reinicia la app en Setup Python App.
 3. Si el usuario fue creado antes del ajuste, usa "¿Olvidaste tu contraseña?" para regenerar hash.
 
@@ -285,9 +285,9 @@ Haz esto:
 - Setup Python App > Restart
 
 5. Verificar rutas que deben responder 200
-- Cotización PDF: `/cotizaciones/<id>/pdf`
-- Pedido PDF: `/pedidos/<id>/pdf`
-- Factura PDF: `/facturas/<id>/pdf`
+- Cotización PDF: `/cotizaciones/<id>/archivo` (redirige a `/generated_docs/...`)
+- Pedido PDF: `/pedidos/<id>/archivo` (redirige a `/generated_docs/...`)
+- Factura PDF: `/facturas/<id>/archivo` (redirige a `/generated_docs/...`)
 - Estado de cuenta PDF: `/reportes/estado-cuentas/<client_id>?pdf=1`
 
 6. Estructura esperada en File Manager
@@ -296,7 +296,4 @@ Haz esto:
   - `/home/usuario/tiendix_data/generated_docs/eco-sea-srl/123456/cotizacion/01.pdf`
 
 Notas:
-- La descarga del PDF se sirve en memoria (no depende de escritura en disco para responder al navegador).
-- Si falla el guardado en carpeta, la descarga puede seguir funcionando, y el warning queda en `logs/app.log`.
-
-- AUTO_RUN_MIGRATIONS=0  # Opcional: desactiva upgrade Alembic automático al iniciar si manejarás cambios de BD manualmente (phpMyAdmin).
+- Las rutas legacy `.../pdf` de cotización/pedido/factura fueron removidas; usa siempre `.../archivo`.

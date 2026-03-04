@@ -339,15 +339,15 @@ def test_maybe_fix_cpanel_access_denied_keeps_uri_when_not_1044(monkeypatch):
 
 
 
-def test_is_auto_run_migrations_enabled(monkeypatch):
-    monkeypatch.delenv('AUTO_RUN_MIGRATIONS', raising=False)
-    assert app_module._is_auto_run_migrations_enabled() is True
+def test_is_auto_sync_schema_enabled(monkeypatch):
+    monkeypatch.delenv('AUTO_SYNC_SCHEMA', raising=False)
+    assert app_module._is_auto_sync_schema_enabled() is True
 
-    monkeypatch.setenv('AUTO_RUN_MIGRATIONS', '0')
-    assert app_module._is_auto_run_migrations_enabled() is False
+    monkeypatch.setenv('AUTO_SYNC_SCHEMA', '0')
+    assert app_module._is_auto_sync_schema_enabled() is False
 
-    monkeypatch.setenv('AUTO_RUN_MIGRATIONS', 'true')
-    assert app_module._is_auto_run_migrations_enabled() is True
+    monkeypatch.setenv('AUTO_SYNC_SCHEMA', 'true')
+    assert app_module._is_auto_sync_schema_enabled() is True
 
 def test_password_columns_are_wide_enough_for_werkzeug_hashes():
     from models import User, AccountRequest

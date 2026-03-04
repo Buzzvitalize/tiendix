@@ -1,13 +1,11 @@
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # Initialize extensions without app; configured in app.py
 
 db = SQLAlchemy()
-migrate = Migrate()
 
 
 def dom_now():

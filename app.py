@@ -15,7 +15,6 @@ from flask import (
     stream_with_context,
     has_request_context,
 )
-from flask_migrate import Migrate, upgrade
 import logging
 from logging.handlers import RotatingFileHandler
 import smtplib
@@ -25,7 +24,6 @@ from email.mime.application import MIMEApplication
 from flask_wtf import CSRFProtect
 from models import (
     db,
-    migrate,
     Client,
     Product,
     Quotation,
@@ -652,7 +650,6 @@ def _maybe_fix_cpanel_access_denied(config: dict):
 _ensure_mysql_driver_available(app.config)
 _maybe_fix_cpanel_access_denied(app.config)
 db.init_app(app)
-migrate.init_app(app, db)
 with app.app_context():
     _install_sql_timing_hooks()
 csrf = CSRFProtect(app)
@@ -663,9 +660,8 @@ app.register_blueprint(pse_gateway_bp)
 app.register_blueprint(ecf_panel_bp)
 register_cli(app)
 
-# The database schema is managed via Flask-Migrate.  Tables should be
-# created with ``flask db upgrade`` instead of ``db.create_all`` to avoid
-# diverging from migrations.
+# The database schema is managed directly from SQL scripts/phpMyAdmin.
+# The app only ensures missing tables exist for local/dev bootstrap.
 
 if Queue and Redis:
     redis_conn = Redis.from_url(os.getenv('REDIS_URL', 'redis://localhost:6379'))
@@ -1028,46 +1024,26 @@ def _migrate_legacy_schema():
         db.session.commit()
 
 
-def run_auto_migrations():
-    """Apply Alembic migrations or fallback to ``create_all``.
-
-    This runs on import so that new fields are added automatically for
-    existing SQLite databases where developers might forget to run
-    ``flask db upgrade``.  It also calls :func:`_migrate_legacy_schema`
-    to patch columns that predate Alembic.
-    """
+def ensure_admin():
+    """Backward-compatible bootstrap helper used by tests/startup hooks."""
     with app.app_context():
-        try:
-            upgrade()
-        except Exception:  # pragma: no cover - for environments without migrations
-            db.create_all()
+        db.create_all()
         _migrate_legacy_schema()
 
 
-def ensure_admin():
-    """Backward-compatible helper used by tests/legacy startup hooks.
 
-    Keeps previous contract: always attempts ``upgrade()`` when invoked.
-    """
-    with app.app_context():
-        upgrade()
-
-
-
-# Run migrations when the module is imported so that new fields are available
-# even if ``flask db upgrade`` wasn't executed manually.
-def _is_auto_run_migrations_enabled() -> bool:
-    value = os.getenv('AUTO_RUN_MIGRATIONS')
+def _is_auto_sync_schema_enabled() -> bool:
+    value = os.getenv('AUTO_SYNC_SCHEMA')
     if value is None:
         return True
     return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
-AUTO_RUN_MIGRATIONS = _is_auto_run_migrations_enabled()
-if AUTO_RUN_MIGRATIONS:
-    run_auto_migrations()
+AUTO_SYNC_SCHEMA = _is_auto_sync_schema_enabled()
+if AUTO_SYNC_SCHEMA:
+    ensure_admin()
 else:
-    app.logger.info('AUTO_RUN_MIGRATIONS disabled: skipping startup Alembic upgrade; applying lightweight legacy schema sync only.')
+    app.logger.info('AUTO_SYNC_SCHEMA disabled: skipping startup schema bootstrap.')
     with app.app_context():
         _migrate_legacy_schema()
 
