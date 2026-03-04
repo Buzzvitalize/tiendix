@@ -2042,6 +2042,10 @@ def _invoice_doc_type(invoice: Invoice) -> str:
 
 def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -> bytes:
     if _invoice_doc_type(invoice) == 'serviciofact':
+        valid_until = None
+        if getattr(invoice, 'order', None) is not None and getattr(invoice.order, 'quotation_id', None):
+            quotation = company_query(Quotation).filter_by(id=invoice.order.quotation_id).first()
+            valid_until = quotation.valid_until if quotation else None
         return generate_service_pdf_bytes(
             'Factura',
             company,
@@ -4900,6 +4904,35 @@ def _order_generated_docs_url(order: Order, company_name: str | None = None) -> 
         generated_doc_path=order.generated_doc_path,
         build_pdf_bytes=_build,
     )
+    if resolved_url:
+        return resolved_url
+    rel = _relative_generated_doc_path(str(archived))
+    if rel:
+        return f'/generated_docs/{rel}'
+    if order.generated_doc_path:
+        return order.generated_doc_path
+    deterministic = _archived_pdf_path('pedido', order.id, company_name=company_name, company_id=current_company_id())
+    rel = _relative_generated_doc_path(str(deterministic))
+    if rel:
+        url = f'/generated_docs/{rel}'
+        _persist_generated_doc_path('pedido', order.id, url)
+        return url
+    raise RuntimeError(f'No se pudo resolver URL pública para pedido {order.id}')
+
+
+@app.route('/pedidos/<int:order_id>/archivo')
+def order_archived_link(order_id):
+    return ('Not Found', 404)
+
+
+@app.route('/pedidos/<int:order_id>/archivo')
+def order_archived_link(order_id):
+    return ('Not Found', 404)
+
+
+@app.route('/pedidos/<int:order_id>/archivo', endpoint='order_archived_link_404')
+def order_archived_link_404(order_id):
+    return ('Not Found', 404)
 
 
 app.add_url_rule(
@@ -5057,6 +5090,35 @@ def _invoice_generated_docs_url(invoice: Invoice, company_name: str | None = Non
         generated_doc_path=invoice.generated_doc_path,
         build_pdf_bytes=_build,
     )
+    if resolved_url:
+        return resolved_url
+    rel = _relative_generated_doc_path(str(archived))
+    if rel:
+        return f'/generated_docs/{rel}'
+    if invoice.generated_doc_path:
+        return invoice.generated_doc_path
+    deterministic = _archived_pdf_path(doc_type, invoice.id, company_name=company_name, company_id=current_company_id())
+    rel = _relative_generated_doc_path(str(deterministic))
+    if rel:
+        url = f'/generated_docs/{rel}'
+        _persist_generated_doc_path(doc_type, invoice.id, url)
+        return url
+    raise RuntimeError(f'No se pudo resolver URL pública para factura {invoice.id}')
+
+
+@app.route('/facturas/<int:invoice_id>/archivo')
+def invoice_archived_link(invoice_id):
+    return ('Not Found', 404)
+
+
+@app.route('/facturas/<int:invoice_id>/archivo')
+def invoice_archived_link(invoice_id):
+    return ('Not Found', 404)
+
+
+@app.route('/facturas/<int:invoice_id>/archivo', endpoint='invoice_archived_link_404')
+def invoice_archived_link_404(invoice_id):
+    return ('Not Found', 404)
 
 
 app.add_url_rule(
