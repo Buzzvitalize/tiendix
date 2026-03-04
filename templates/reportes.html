@@ -414,6 +414,9 @@ exportMenu.querySelectorAll('a').forEach(a => {
     if (a.dataset.format === 'pdf') {
       params.set('link_only', '1');
     }
+    if (a.dataset.format !== 'csv') {
+      params.set('async', '1');
+    }
     const base = `{{ url_for('export_reportes') }}?formato=${a.dataset.format}&tipo=${exportTipo.value}&`;
     let resp = await fetch(base + params.toString());
     if (resp.status === 400) {

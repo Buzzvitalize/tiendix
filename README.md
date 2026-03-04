@@ -100,6 +100,16 @@ PUBLIC_DOCS_BASE_URL=https://app.ecosea.do
 4. Importa `CPANEL_MYSQL_FULL_SCHEMA.sql` en phpMyAdmin (o aplica `DatabaseUpdate.sql` si ya existe una instalación).
 5. Reinicia la app desde Setup Python App.
 
+### Ajuste recomendado para LiteSpeed (LSAPI)
+
+Si ves `Reached max children process limit`, ajusta en Environment Variables:
+
+- `LSAPI_CHILDREN=12` (sube gradualmente hasta 20 según RAM/plan).
+- `PDF_LOCK_WAIT_SECONDS=30` (evita doble generación concurrente).
+- `EAGER_PDF_ON_CREATE=0` (reduce workers ocupados al crear documentos).
+
+Guía rápida: `docs/cpanel_litespeed_tuning.md`.
+
 Consulta también `CPANEL_PYTHON_GUIA.txt`, `CPANEL_MYSQL_BASE.sql`, `CPANEL_MYSQL_FULL_SCHEMA.sql` y `.env.cpanel.example`.
 
 Si ya tienes una instalación en producción y solo quieres actualizar el esquema sin reinstalar, ejecuta `DatabaseUpdate.sql` en tu base actual (phpMyAdmin).
