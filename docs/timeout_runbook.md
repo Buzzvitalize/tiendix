@@ -86,7 +86,14 @@ Nuevas variables:
 - `PSE_HTTP_BACKOFF_SEC` (default `0.4`)
 
 ### SMTP
-Ya usa timeout explícito con `MAIL_CONNECT_TIMEOUT_SEC`.
+La app usa timeout explícito con `MAIL_CONNECT_TIMEOUT_SEC` y soporta aislamiento rápido con `MAIL_ENABLED=0`.
+
+Prueba de aislamiento recomendada:
+1. En cPanel > Setup Python App, define `MAIL_ENABLED=0`.
+2. Reinicia la app.
+3. Repite la operación que dispara timeout.
+4. Si el timeout desaparece, el cuello está en SMTP/red saliente.
+5. Rehabilita con `MAIL_ENABLED=1` tras ajustar proveedor SMTP (puerto TLS/SSL, firewall, credenciales).
 
 ## 8) Criterios de éxito post-fix
 1. `request_end.duration_ms` p95 < 2s para listados comunes.

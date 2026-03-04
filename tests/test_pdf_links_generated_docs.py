@@ -5,7 +5,8 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app import app, db
-from models import CompanyInfo, User, Client, Order, Invoice
+from datetime import datetime, timedelta
+from models import CompanyInfo, User, Client, Order, Invoice, Quotation
 
 
 def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
@@ -26,9 +27,22 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
         client = Client(name='Cliente', company_id=company.id)
         db.session.add(client)
         db.session.flush()
-        order = Order(client_id=client.id, subtotal=100, itbis=18, total=118, seller='U', payment_method='Efectivo', status='Pendiente', company_id=company.id)
+        order = Order(client_id=client.id, subtotal=100, itbis=18, total=118, seller='U', payment_method='Efectivo', status='Pendiente', company_id=company.id, generated_doc_path='/generated_docs/ecosea-srl/802227/pedido/pedido-1.pdf')
         db.session.add(order)
-        invoice = Invoice(client_id=client.id, order_id=1, subtotal=100, itbis=18, total=118, invoice_type='Consumidor Final', status='Pendiente', company_id=company.id)
+
+        quotation = Quotation(
+            client_id=client.id,
+            valid_until=datetime.utcnow() + timedelta(days=30),
+            subtotal=100,
+            itbis=18,
+            total=118,
+            status='vigente',
+            company_id=company.id,
+            warehouse_id=None,
+            generated_doc_path='/generated_docs/ecosea-srl/802227/cotizacion/cotizacion-1.pdf',
+        )
+        db.session.add(quotation)
+        invoice = Invoice(client_id=client.id, order_id=1, subtotal=100, itbis=18, total=118, invoice_type='Consumidor Final', status='Pendiente', company_id=company.id, generated_doc_path='/generated_docs/ecosea-srl/802227/factura/factura-1.pdf')
         db.session.add(invoice)
         db.session.commit()
 
@@ -36,9 +50,14 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
         c.post('/login', data={'username': 'u_links', 'password': 'pass'})
         orders_html = c.get('/pedidos').get_data(as_text=True)
         invoices_html = c.get('/facturas').get_data(as_text=True)
+        quotations_html = c.get('/cotizaciones').get_data(as_text=True)
 
-    assert '/pedidos/1/pdf' in orders_html
-    assert '/facturas/1/archivo' in invoices_html
+    assert '/generated_docs/' in orders_html
+    assert '/generated_docs/' in invoices_html
+    assert '/generated_docs/' in quotations_html
+    assert '/pedidos/1/archivo' not in orders_html
+    assert '/facturas/1/archivo' not in invoices_html
+    assert '/cotizaciones/1/archivo' not in quotations_html
     assert 'target="_blank"' in orders_html
     assert 'target="_blank"' in invoices_html
 
@@ -67,3 +86,35 @@ def test_generated_docs_directory_path_returns_404(tmp_path):
         resp = c.get('/generated_docs/ecosea-srl/802227/cotizacion/')
 
     assert resp.status_code == 404
+
+
+def test_legacy_pdf_endpoints_are_removed(tmp_path):
+    db_path = tmp_path / 'test.sqlite'
+    app.config.from_object('config.TestingConfig')
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+
+    with app.app_context():
+        db.drop_all()
+        db.create_all()
+        company = CompanyInfo(name='Eco Sea SRL', street='', sector='', province='', phone='', rnc='')
+        db.session.add(company)
+        db.session.flush()
+        user = User(username='u_legacy', first_name='U', last_name='Legacy', role='company', company_id=company.id)
+        user.set_password('pass')
+        db.session.add(user)
+        client = Client(name='Cliente', company_id=company.id)
+        db.session.add(client)
+        db.session.flush()
+        db.session.add(Order(client_id=client.id, subtotal=100, itbis=18, total=118, seller='U', payment_method='Efectivo', status='Pendiente', company_id=company.id))
+        db.session.add(Quotation(client_id=client.id, valid_until=datetime.utcnow() + timedelta(days=30), subtotal=100, itbis=18, total=118, status='vigente', company_id=company.id))
+        db.session.add(Invoice(client_id=client.id, order_id=1, subtotal=100, itbis=18, total=118, invoice_type='Consumidor Final', status='Pendiente', company_id=company.id))
+        db.session.commit()
+
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'u_legacy', 'password': 'pass'})
+        assert c.get('/cotizaciones/1/pdf').status_code == 404
+        assert c.get('/pedidos/1/pdf').status_code == 404
+        assert c.get('/facturas/1/pdf').status_code == 404
+        assert c.get('/cotizaciones/1/archivo').status_code == 404
+        assert c.get('/pedidos/1/archivo').status_code == 404
+        assert c.get('/facturas/1/archivo').status_code == 404

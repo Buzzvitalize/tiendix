@@ -115,12 +115,6 @@
   </div>
   <div class="action-bar">
     <button type="button" class="action-btn is-info btn-info" id="add-service-row">Agregar artículo</button>
-    <div class="text-sm space-y-1">
-      <div>Subtotal: <span id="service-subtotal">RD$0.00</span></div>
-      <div>Descuento: <span id="service-discount">RD$0.00</span></div>
-      <div>ITBIS (18%): <span id="service-itbis">RD$0.00</span></div>
-      <div class="font-semibold">Total: <span id="service-total">RD$0.00</span></div>
-    </div>
   </div>
   <button class="btn-primary">Guardar Servicio</button>
 </form>
@@ -172,10 +166,10 @@
       itbis += tax;
       total += amount;
     });
-    subtotalEl.textContent = money(subtotal);
-    discountEl.textContent = money(totalDiscount);
-    itbisEl.textContent = money(itbis);
-    totalEl.textContent = money(total);
+    if (subtotalEl) subtotalEl.textContent = money(subtotal);
+    if (discountEl) discountEl.textContent = money(totalDiscount);
+    if (itbisEl) itbisEl.textContent = money(itbis);
+    if (totalEl) totalEl.textContent = money(total);
   }
 
   function bindRow(tr){

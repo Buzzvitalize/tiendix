@@ -60,6 +60,27 @@ def test_send_email_retries_and_metrics(monkeypatch):
     assert app_module.EMAIL_METRICS['failed'] == 0
 
 
+def test_send_email_skips_when_mail_disabled(monkeypatch):
+    calls = {'smtp': 0}
+
+    class FakeSMTP:
+        def __init__(self, *args, **kwargs):
+            calls['smtp'] += 1
+
+    monkeypatch.setattr(app_module, 'MAIL_ENABLED', False)
+    monkeypatch.setattr(app_module, 'MAIL_SERVER', 'smtp.example.com')
+    monkeypatch.setattr(app_module, 'MAIL_DEFAULT_SENDER', 'no-reply@example.com')
+    monkeypatch.setattr(app_module.smtplib, 'SMTP', FakeSMTP)
+
+    for key in app_module.EMAIL_METRICS:
+        app_module.EMAIL_METRICS[key] = 0
+
+    app_module.send_email('to@example.com', 'subject', '<b>ok</b>', asynchronous=False)
+
+    assert calls['smtp'] == 0
+    assert app_module.EMAIL_METRICS['skipped'] == 1
+
+
 def test_deliver_email_uses_smtp_ssl_without_starttls(monkeypatch):
     calls = {'smtp': 0, 'smtp_ssl': 0, 'starttls': 0, 'login': 0, 'sendmail': 0}
 
@@ -318,15 +339,15 @@ def test_maybe_fix_cpanel_access_denied_keeps_uri_when_not_1044(monkeypatch):
 
 
 
-def test_is_auto_run_migrations_enabled(monkeypatch):
-    monkeypatch.delenv('AUTO_RUN_MIGRATIONS', raising=False)
-    assert app_module._is_auto_run_migrations_enabled() is True
+def test_is_auto_sync_schema_enabled(monkeypatch):
+    monkeypatch.delenv('AUTO_SYNC_SCHEMA', raising=False)
+    assert app_module._is_auto_sync_schema_enabled() is True
 
-    monkeypatch.setenv('AUTO_RUN_MIGRATIONS', '0')
-    assert app_module._is_auto_run_migrations_enabled() is False
+    monkeypatch.setenv('AUTO_SYNC_SCHEMA', '0')
+    assert app_module._is_auto_sync_schema_enabled() is False
 
-    monkeypatch.setenv('AUTO_RUN_MIGRATIONS', 'true')
-    assert app_module._is_auto_run_migrations_enabled() is True
+    monkeypatch.setenv('AUTO_SYNC_SCHEMA', 'true')
+    assert app_module._is_auto_sync_schema_enabled() is True
 
 def test_password_columns_are_wide_enough_for_werkzeug_hashes():
     from models import User, AccountRequest

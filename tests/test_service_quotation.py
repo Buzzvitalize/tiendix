@@ -102,10 +102,12 @@ def test_service_quotation_pdf_is_generated_under_servicios(tmp_path):
         }, follow_redirects=False)
         assert create_resp.status_code == 302
 
-        pdf_resp = c.get('/cotizaciones/1/pdf')
+    with app.app_context():
+        from models import Quotation
+        q = Quotation.query.get(1)
+        assert q is not None
+        assert q.generated_doc_path and '/generated_docs/' in q.generated_doc_path
 
-    assert pdf_resp.status_code == 200
-    assert pdf_resp.headers.get('Content-Type', '').startswith('application/pdf')
     archived = list(archive_root.glob('**/servicios/*.pdf'))
     assert archived, 'Expected archived PDF under servicios folder'
 
@@ -170,12 +172,12 @@ def test_service_invoice_pdf_redirects_to_serviciofact_path(tmp_path):
             'service_itbis[]': ['0'],
         }, follow_redirects=False)
 
-        pdf_resp = c.get('/facturas/1/pdf', follow_redirects=False)
-
-    assert pdf_resp.status_code == 200
-    archived_url = pdf_resp.headers.get('X-Archived-Url', '')
-    assert '/generated_docs/' in archived_url or '/generated-docs/' in archived_url
-    assert '/serviciofact/' in archived_url
+    with app.app_context():
+        from models import Invoice
+        inv = Invoice.query.get(1)
+        assert inv is not None
+        assert inv.generated_doc_path and '/generated_docs/' in inv.generated_doc_path
+        assert '/serviciofact/' in inv.generated_doc_path
 
 
 def test_service_edit_route_updates_itbis_and_total(tmp_path):
@@ -284,7 +286,7 @@ def test_generate_service_invoice_from_existing_service_quote(tmp_path):
         resp = c.post('/cotizaciones/1/generar-factura-servicio', data={}, follow_redirects=False)
 
     assert resp.status_code == 302
-    assert '/facturas/1/archivo' in resp.headers['Location']
+    assert '/generated_docs/' in resp.headers['Location']
 
     with app.app_context():
         from models import Invoice

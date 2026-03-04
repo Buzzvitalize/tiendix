@@ -148,12 +148,6 @@
     </label>
     <textarea name="custom_footer" id="quotation-custom-footer" class="input w-full" rows="2" placeholder="Escriba un pie personalizado" disabled></textarea>
   </div>
-  <div class="text-sm space-y-1" id="quotation-totals">
-    <div>Subtotal: <span id="q-subtotal">RD$0.00</span></div>
-    <div>Descuento: <span id="q-discount">RD$0.00</span></div>
-    <div>ITBIS (18%): <span id="q-itbis">RD$0.00</span></div>
-    <div class="font-semibold">Total: <span id="q-total">RD$0.00</span></div>
-  </div>
   <button type="submit" class="btn-primary">Guardar</button>
 </form>
 {% endblock %}
@@ -312,10 +306,10 @@ window.addEventListener('load', () => {
       itbis += net * 0.18;
     });
     const total = subtotal + itbis;
-    qSubtotal.textContent = money(subtotal);
-    qDiscount.textContent = money(discount);
-    qItbis.textContent = money(itbis);
-    qTotal.textContent = money(total);
+    if (qSubtotal) qSubtotal.textContent = money(subtotal);
+    if (qDiscount) qDiscount.textContent = money(discount);
+    if (qItbis) qItbis.textContent = money(itbis);
+    if (qTotal) qTotal.textContent = money(total);
   }
 
   function toggleFooterField(){

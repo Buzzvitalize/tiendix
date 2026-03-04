@@ -1,13 +1,11 @@
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # Initialize extensions without app; configured in app.py
 
 db = SQLAlchemy()
-migrate = Migrate()
 
 
 def dom_now():
@@ -82,6 +80,7 @@ class Quotation(db.Model):
     bank = db.Column(db.String(50))
     note = db.Column(db.Text)
     footer_text = db.Column(db.Text)
+    generated_doc_path = db.Column(db.String(255))
     status = db.Column(db.String(20), default='vigente')
     company_id = db.Column(db.Integer, db.ForeignKey('company_info.id'), nullable=False)
     warehouse_id = db.Column(db.Integer, db.ForeignKey('warehouse.id'))
@@ -122,6 +121,7 @@ class Order(db.Model):
     bank = db.Column(db.String(50))
     note = db.Column(db.Text)
     customer_po = db.Column(db.String(120))
+    generated_doc_path = db.Column(db.String(255))
     warehouse_id = db.Column(db.Integer, db.ForeignKey('warehouse.id'))
     company_id = db.Column(db.Integer, db.ForeignKey('company_info.id'), nullable=False)
 
@@ -162,6 +162,7 @@ class Invoice(db.Model):
     status = db.Column(db.String(20), default='Pendiente')
     note = db.Column(db.Text)
     footer_text = db.Column(db.Text)
+    generated_doc_path = db.Column(db.String(255))
     warehouse_id = db.Column(db.Integer, db.ForeignKey('warehouse.id'))
     company_id = db.Column(db.Integer, db.ForeignKey('company_info.id'), nullable=False)
 
