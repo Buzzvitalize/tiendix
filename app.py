@@ -1852,6 +1852,10 @@ def _invoice_doc_type(invoice: Invoice) -> str:
 
 def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -> bytes:
     if _invoice_doc_type(invoice) == 'serviciofact':
+        valid_until = None
+        if getattr(invoice, 'order', None) is not None and getattr(invoice.order, 'quotation_id', None):
+            quotation = company_query(Quotation).filter_by(id=invoice.order.quotation_id).first()
+            valid_until = quotation.valid_until if quotation else None
         return generate_service_pdf_bytes(
             'Factura',
             company,
