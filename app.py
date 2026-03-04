@@ -4514,8 +4514,8 @@ def _quotation_generated_docs_url(quotation: Quotation, company_name: str | None
     )
 
 
-@app.route('/cotizaciones/<int:quotation_id>/archivo')
-def quotation_archived_link(quotation_id):
+@app.route('/cotizaciones/<int:quotation_id>/archivo', endpoint='quotation_archived_link_404')
+def quotation_archived_link_404(quotation_id):
     return ('Not Found', 404)
 
 
@@ -4923,6 +4923,11 @@ def order_archived_link(order_id):
 def order_archived_link(order_id):
     return ('Not Found', 404)
 
+
+@app.route('/pedidos/<int:order_id>/archivo', endpoint='order_archived_link_404')
+def order_archived_link_404(order_id):
+    return ('Not Found', 404)
+
 # Invoices
 @app.route('/facturas')
 def list_invoices():
@@ -5117,6 +5122,11 @@ def invoice_archived_link(invoice_id):
 
 @app.route('/facturas/<int:invoice_id>/archivo')
 def invoice_archived_link(invoice_id):
+    return ('Not Found', 404)
+
+
+@app.route('/facturas/<int:invoice_id>/archivo', endpoint='invoice_archived_link_404')
+def invoice_archived_link_404(invoice_id):
     return ('Not Found', 404)
 
 @app.route('/generated-docs/<path:filename>')
