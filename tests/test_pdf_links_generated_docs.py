@@ -27,7 +27,7 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
         client = Client(name='Cliente', company_id=company.id)
         db.session.add(client)
         db.session.flush()
-        order = Order(client_id=client.id, subtotal=100, itbis=18, total=118, seller='U', payment_method='Efectivo', status='Pendiente', company_id=company.id)
+        order = Order(client_id=client.id, subtotal=100, itbis=18, total=118, seller='U', payment_method='Efectivo', status='Pendiente', company_id=company.id, generated_doc_path='/generated_docs/ecosea-srl/802227/pedido/pedido-1.pdf')
         db.session.add(order)
 
         quotation = Quotation(
