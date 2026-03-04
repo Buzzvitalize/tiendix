@@ -63,9 +63,7 @@
         <td class="p-2">{{ q.status }}</td>
         <td class="p-2">
           <div class="action-bar flex flex-wrap gap-2">
-          <button type="button" class="action-btn is-primary pdf-action px-3 py-1 rounded-md text-white font-semibold" style="background-color:#2563eb" data-pdf-url="{{ archived_urls.get(q.id) or url_for('quotation_archived_link', quotation_id=q.id) }}" data-filename="cotizacion_{{ q.id }}.pdf" data-archived-url="{{ archived_urls.get(q.id) or '' }}">
-            <span class="pdf-label">Generar PDF</span>
-          </button>
+          <a class="action-btn is-primary px-3 py-1 rounded-md text-white font-semibold" style="background-color:#2563eb" href="{{ q.generated_doc_path or archived_urls.get(q.id) or '#' }}" target="_blank" rel="noopener">PDF</a>
           <form method="post" action="{{ url_for('send_quotation_email', quotation_id=q.id) }}" class="inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="action-btn is-info px-3 py-1 rounded-md text-white font-semibold" style="background-color:#6366f1"><svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 inline" viewBox="0 0 24 24" fill="currentColor"><path d="M2 4l20 8-20 8 4-8-4-8zm6.5 8L4.8 7.5 16 12 4.8 16.5 8.5 12z"/></svg> Enviar</button>
@@ -76,7 +74,7 @@
           {% if is_service %}
             {% set service_invoice_id = service_invoice_ids.get(q.id) %}
             {% if service_invoice_id %}
-              <a class="action-btn is-success px-3 py-1 rounded-md text-white font-semibold" style="background-color:#16a34a" href="{{ service_invoice_urls.get(q.id) or url_for('invoice_archived_link', invoice_id=service_invoice_id) }}">Ver Factura</a>
+              <a class="action-btn is-success px-3 py-1 rounded-md text-white font-semibold" style="background-color:#16a34a" href="{{ service_invoice_urls.get(q.id) or '#' }}" target="_blank" rel="noopener">Ver Factura</a>
             {% else %}
               <form method="post" action="{{ url_for('generate_service_invoice_from_quotation', quotation_id=q.id) }}" class="inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -123,43 +121,3 @@
 </div>
 {% endblock %}
 
-
-{% block scripts %}
-<script>
-document.querySelectorAll('.pdf-action').forEach((btn) => {
-  let ready = false;
-  let downloadUrl = (btn.dataset.archivedUrl || '').trim() || null;
-
-  function setLabel(label, icon = false) {
-    btn.innerHTML = icon
-      ? `<svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 9V3h12v6h1a3 3 0 013 3v5h-4v4H6v-4H2v-5a3 3 0 013-3h1zm2-4v4h8V5H8zm8 14v-4H8v4h8zm2-4h2v-3a1 1 0 00-1-1h-1v4zM4 15h2v-4H5a1 1 0 00-1 1v3z"/></svg><span class="pdf-label">${label}</span>`
-      : `<span class="pdf-label">${label}</span>`;
-  }
-
-  if (downloadUrl) {
-    ready = true;
-    setLabel('PDF', true);
-    btn.classList.remove('is-primary');
-    btn.classList.add('is-success');
-    btn.style.backgroundColor = '#16a34a';
-  }
-
-  btn.addEventListener('click', () => {
-    const targetUrl = downloadUrl || btn.dataset.pdfUrl;
-    if (!targetUrl) {
-      setLabel('Error PDF');
-      btn.classList.remove('is-primary');
-      btn.classList.add('is-warning');
-      btn.style.backgroundColor = '#d97706';
-      return;
-    }
-    window.open(targetUrl, '_blank', 'noopener');
-    ready = true;
-    setLabel('PDF', true);
-    btn.classList.remove('is-primary');
-    btn.classList.add('is-success');
-    btn.style.backgroundColor = '#16a34a';
-  });
-});
-</script>
-{% endblock %}

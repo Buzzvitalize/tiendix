@@ -27,7 +27,7 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
         client = Client(name='Cliente', company_id=company.id)
         db.session.add(client)
         db.session.flush()
-        order = Order(client_id=client.id, subtotal=100, itbis=18, total=118, seller='U', payment_method='Efectivo', status='Pendiente', company_id=company.id)
+        order = Order(client_id=client.id, subtotal=100, itbis=18, total=118, seller='U', payment_method='Efectivo', status='Pendiente', company_id=company.id, generated_doc_path='/generated_docs/ecosea-srl/802227/pedido/pedido-1.pdf')
         db.session.add(order)
 
         quotation = Quotation(
@@ -39,9 +39,10 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
             status='vigente',
             company_id=company.id,
             warehouse_id=None,
+            generated_doc_path='/generated_docs/ecosea-srl/802227/cotizacion/cotizacion-1.pdf',
         )
         db.session.add(quotation)
-        invoice = Invoice(client_id=client.id, order_id=1, subtotal=100, itbis=18, total=118, invoice_type='Consumidor Final', status='Pendiente', company_id=company.id)
+        invoice = Invoice(client_id=client.id, order_id=1, subtotal=100, itbis=18, total=118, invoice_type='Consumidor Final', status='Pendiente', company_id=company.id, generated_doc_path='/generated_docs/ecosea-srl/802227/factura/factura-1.pdf')
         db.session.add(invoice)
         db.session.commit()
 
@@ -51,9 +52,12 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
         invoices_html = c.get('/facturas').get_data(as_text=True)
         quotations_html = c.get('/cotizaciones').get_data(as_text=True)
 
-    assert '/pedidos/1/archivo' in orders_html
-    assert '/facturas/1/archivo' in invoices_html
-    assert '/cotizaciones/1/archivo' in quotations_html
+    assert '/generated_docs/' in orders_html
+    assert '/generated_docs/' in invoices_html
+    assert '/generated_docs/' in quotations_html
+    assert '/pedidos/1/archivo' not in orders_html
+    assert '/facturas/1/archivo' not in invoices_html
+    assert '/cotizaciones/1/archivo' not in quotations_html
     assert 'target="_blank"' in orders_html
     assert 'target="_blank"' in invoices_html
 
@@ -111,3 +115,6 @@ def test_legacy_pdf_endpoints_are_removed(tmp_path):
         assert c.get('/cotizaciones/1/pdf').status_code == 404
         assert c.get('/pedidos/1/pdf').status_code == 404
         assert c.get('/facturas/1/pdf').status_code == 404
+        assert c.get('/cotizaciones/1/archivo').status_code == 404
+        assert c.get('/pedidos/1/archivo').status_code == 404
+        assert c.get('/facturas/1/archivo').status_code == 404

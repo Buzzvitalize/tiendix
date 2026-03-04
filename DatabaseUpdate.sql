@@ -44,6 +44,31 @@ BEGIN
         PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
     END IF;
 
+    -- 2.1) generated_doc_path links stored for direct /generated_docs URLs
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = @db AND table_name = 'quotation' AND column_name = 'generated_doc_path'
+    ) THEN
+        SET @sql := 'ALTER TABLE `quotation` ADD COLUMN `generated_doc_path` VARCHAR(255) NULL';
+        PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = @db AND table_name = 'order' AND column_name = 'generated_doc_path'
+    ) THEN
+        SET @sql := 'ALTER TABLE `order` ADD COLUMN `generated_doc_path` VARCHAR(255) NULL';
+        PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = @db AND table_name = 'invoice' AND column_name = 'generated_doc_path'
+    ) THEN
+        SET @sql := 'ALTER TABLE `invoice` ADD COLUMN `generated_doc_path` VARCHAR(255) NULL';
+        PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_schema = @db AND table_name = 'account_request' AND column_name = 'accepted_terms_ip'

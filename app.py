@@ -911,6 +911,24 @@ def _migrate_legacy_schema():
             statements.append("ALTER TABLE quotation ADD COLUMN status VARCHAR(20)")
         if 'valid_until' not in quote_cols:
             statements.append("ALTER TABLE quotation ADD COLUMN valid_until DATETIME")
+        if 'generated_doc_path' not in quote_cols:
+            statements.append("ALTER TABLE quotation ADD COLUMN generated_doc_path VARCHAR(255)")
+
+    if inspector.has_table('order'):
+        try:
+            order_cols = {c['name'] for c in inspector.get_columns('order')}
+        except NoSuchTableError:  # pragma: no cover
+            order_cols = set()
+        if 'generated_doc_path' not in order_cols:
+            statements.append("ALTER TABLE `order` ADD COLUMN generated_doc_path VARCHAR(255)")
+
+    if inspector.has_table('invoice'):
+        try:
+            invoice_cols = {c['name'] for c in inspector.get_columns('invoice')}
+        except NoSuchTableError:  # pragma: no cover
+            invoice_cols = set()
+        if 'generated_doc_path' not in invoice_cols:
+            statements.append("ALTER TABLE invoice ADD COLUMN generated_doc_path VARCHAR(255)")
 
     if not inspector.has_table('audit_log'):
         statements.append(
@@ -1916,6 +1934,9 @@ def _archive_pdf_copy(doc_type: str, doc_number: int | str, pdf_data: bytes, com
         )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(pdf_data)
+        rel = _relative_generated_doc_path(str(out_path))
+        if rel:
+            _persist_generated_doc_path(doc_type, doc_number, f'/generated_docs/{rel}')
         return str(out_path)
     except Exception as exc:  # pragma: no cover
         app.logger.warning('Could not archive PDF copy (%s %s): %s', doc_type, doc_number, exc)
@@ -1955,6 +1976,33 @@ def _relative_generated_doc_path(full_path: str | None) -> str | None:
         return None
 
 
+def _persist_generated_doc_path(doc_type: str, doc_number: int | str, public_path: str) -> None:
+    table_name = None
+    if doc_type in {'cotizacion', 'servicios'}:
+        table_name = 'quotation'
+    elif doc_type == 'pedido':
+        table_name = 'order'
+    elif doc_type in {'factura', 'serviciofact'}:
+        table_name = 'invoice'
+    if table_name is None:
+        return
+    try:
+        doc_id = int(doc_number)
+    except (TypeError, ValueError):
+        return
+
+    try:
+        safe_table = f'`{table_name}`' if table_name == 'order' else table_name
+        db.session.execute(
+            text(f"UPDATE {safe_table} SET generated_doc_path = :path WHERE id = :doc_id"),
+            {'path': public_path, 'doc_id': doc_id},
+        )
+        db.session.commit()
+    except Exception as exc:  # pragma: no cover
+        db.session.rollback()
+        app.logger.warning('Could not persist generated_doc_path (%s %s): %s', doc_type, doc_number, exc)
+
+
 def _archived_download_url(doc_type: str, doc_number: int | str, *, company_name: str | None = None, company_id: int | None = None, full_path: str | None = None) -> str | None:
     if full_path:
         rel = _relative_generated_doc_path(full_path)
@@ -1969,7 +2017,7 @@ def _archived_download_url(doc_type: str, doc_number: int | str, *, company_name
         if not parsed.scheme:
             base_url = f"https://{base_url.lstrip('/')}".rstrip('/')
         return f"{base_url}/generated_docs/{rel}"
-    return url_for('download_generated_doc', filename=rel)
+    return f"/generated_docs/{rel}"
 
 
 def _set_archived_headers(response, *, doc_type: str, doc_number: int | str, company_name: str | None = None, full_path: str | None = None):
@@ -3649,9 +3697,10 @@ def list_quotations():
             .all()
         )
         service_invoice_ids = {qid: iid for qid, iid in rows if qid and iid}
-        company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
         for qid, invoice_id in service_invoice_ids.items():
-            service_invoice_urls[qid] = url_for('invoice_archived_link', invoice_id=invoice_id)
+            invoice = company_get(Invoice, invoice_id)
+            if invoice.generated_doc_path:
+                service_invoice_urls[qid] = invoice.generated_doc_path
 
     archived_urls = {}
     for q in quotations.items:
@@ -3672,6 +3721,8 @@ def list_quotations():
             )
             if url:
                 archived_urls[q.id] = url
+                if not q.generated_doc_path:
+                    q.generated_doc_path = url
     return render_template(
         'cotizaciones.html',
         quotations=quotations,
@@ -4311,25 +4362,32 @@ def _quotation_generated_docs_url(quotation: Quotation, company_name: str | None
             archived = Path(archived_copy)
     if not archived.exists():
         raise RuntimeError(f'No se pudo generar archivo PDF para cotización {quotation.id}')
-    return _archived_download_url(
+    resolved_url = _archived_download_url(
         doc_type,
         quotation.id,
         company_name=company_name,
         company_id=current_company_id(),
         full_path=str(archived),
     )
+    if resolved_url:
+        return resolved_url
+    rel = _relative_generated_doc_path(str(archived))
+    if rel:
+        return f'/generated_docs/{rel}'
+    if quotation.generated_doc_path:
+        return quotation.generated_doc_path
+    deterministic = _archived_pdf_path(doc_type, quotation.id, company_name=company_name, company_id=current_company_id())
+    rel = _relative_generated_doc_path(str(deterministic))
+    if rel:
+        url = f'/generated_docs/{rel}'
+        _persist_generated_doc_path(doc_type, quotation.id, url)
+        return url
+    raise RuntimeError(f'No se pudo resolver URL pública para cotización {quotation.id}')
 
 
 @app.route('/cotizaciones/<int:quotation_id>/archivo')
 def quotation_archived_link(quotation_id):
-    quotation = company_get(Quotation, quotation_id)
-    company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
-    try:
-        link = _quotation_generated_docs_url(quotation, company_name=company_name)
-    except Exception as exc:
-        app.logger.exception('No se pudo resolver enlace archived para cotización %s: %s', quotation.id, exc)
-        return ('No se pudo resolver el archivo PDF de la cotización', 500)
-    return redirect(link)
+    return ('Not Found', 404)
 
 
 @app.route('/cotizaciones/<int:quotation_id>/enviar', methods=['POST'])
@@ -4345,7 +4403,10 @@ def send_quotation_email(quotation_id):
     validity_days = max((quotation.valid_until.date() - quotation.date.date()).days, 1) if quotation.valid_until and quotation.date else 30
     download_url = _document_download_url(doc_type, quotation.id, company_name=company.get('name'))
     if not download_url:
-        download_url = url_for('quotation_archived_link', quotation_id=quotation.id, _external=True)
+        try:
+            download_url = _quotation_generated_docs_url(quotation, company_name=company.get('name'))
+        except Exception:
+            download_url = quotation.generated_doc_path or '#'
     email_ref = _document_email_reference(download_url, doc_type, quotation.id, company_name=company.get('name'))
     doc_label = 'servicio' if is_service else 'cotizacion'
     subject = _document_email_subject(company.get('name', 'Empresa'), doc_label, email_ref, validity_days=validity_days)
@@ -4378,7 +4439,10 @@ def generate_service_invoice_from_quotation(quotation_id):
         .first()
     )
     if existing:
-        return redirect(url_for('invoice_archived_link', invoice_id=existing.id))
+        try:
+            return redirect(_invoice_generated_docs_url(existing, company_name=get_company_info().get('name')))
+        except Exception:
+            return redirect(existing.generated_doc_path or url_for('list_invoices'))
 
     client = quotation.client
     service_order = Order(
@@ -4478,7 +4542,10 @@ def generate_service_invoice_from_quotation(quotation_id):
         except Exception as exc:
             app.logger.exception('Service invoice archive generation failed id=%s: %s', invoice.id, exc)
 
-    return redirect(url_for('invoice_archived_link', invoice_id=invoice.id))
+    try:
+        return redirect(_invoice_generated_docs_url(invoice, company_name=get_company_info().get('name')))
+    except Exception:
+        return redirect(invoice.generated_doc_path or url_for('list_invoices'))
 
 
 @app.route('/cotizaciones/<int:quotation_id>/convertir', methods=['GET', 'POST'])
@@ -4596,6 +4663,8 @@ def list_orders():
             url = _archived_download_url('pedido', o.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:
                 archived_order_urls[o.id] = url
+                if not o.generated_doc_path:
+                    o.generated_doc_path = url
     return render_template('pedido.html', orders=orders, q=q, archived_order_urls=archived_order_urls, pagination=pagination)
 
 @app.route('/pedidos/<int:order_id>/enviar', methods=['POST'])
@@ -4608,7 +4677,10 @@ def send_order_email(order_id):
     company = get_company_info()
     download_url = _document_download_url('pedido', order.id, company_name=company.get('name'))
     if not download_url:
-        download_url = url_for('order_archived_link', order_id=order.id, _external=True)
+        try:
+            download_url = _order_generated_docs_url(order, company_name=company.get('name'))
+        except Exception:
+            download_url = order.generated_doc_path or '#'
     email_ref = _document_email_reference(download_url, 'pedido', order.id, company_name=company.get('name'))
     subject = _document_email_subject(company.get('name', 'Empresa'), 'pedido', email_ref)
     html = render_template(
@@ -4716,25 +4788,32 @@ def _order_generated_docs_url(order: Order, company_name: str | None = None) -> 
             archived = Path(archived_copy)
     if not archived.exists():
         raise RuntimeError(f'No se pudo generar archivo PDF para pedido {order.id}')
-    return _archived_download_url(
+    resolved_url = _archived_download_url(
         'pedido',
         order.id,
         company_name=company_name,
         company_id=current_company_id(),
         full_path=str(archived),
     )
+    if resolved_url:
+        return resolved_url
+    rel = _relative_generated_doc_path(str(archived))
+    if rel:
+        return f'/generated_docs/{rel}'
+    if order.generated_doc_path:
+        return order.generated_doc_path
+    deterministic = _archived_pdf_path('pedido', order.id, company_name=company_name, company_id=current_company_id())
+    rel = _relative_generated_doc_path(str(deterministic))
+    if rel:
+        url = f'/generated_docs/{rel}'
+        _persist_generated_doc_path('pedido', order.id, url)
+        return url
+    raise RuntimeError(f'No se pudo resolver URL pública para pedido {order.id}')
 
 
 @app.route('/pedidos/<int:order_id>/archivo')
 def order_archived_link(order_id):
-    order = company_get(Order, order_id)
-    company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
-    try:
-        link = _order_generated_docs_url(order, company_name=company_name)
-    except Exception as exc:
-        app.logger.exception('No se pudo resolver enlace archived para pedido %s: %s', order.id, exc)
-        return ('No se pudo resolver el archivo PDF del pedido', 500)
-    return redirect(link)
+    return ('Not Found', 404)
 
 # Invoices
 @app.route('/facturas')
@@ -4755,6 +4834,8 @@ def list_invoices():
             url = _archived_download_url(doc_type, f.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
             if url:
                 archived_invoice_urls[f.id] = url
+                if not f.generated_doc_path:
+                    f.generated_doc_path = url
     return render_template('factura.html', invoices=invoices, q=q, archived_invoice_urls=archived_invoice_urls, pagination=pagination)
 
 
@@ -4769,7 +4850,10 @@ def send_invoice_email(invoice_id):
     invoice_doc_type = _invoice_doc_type(invoice)
     download_url = _document_download_url(invoice_doc_type, invoice.id, company_name=company.get('name'))
     if not download_url:
-        download_url = url_for('invoice_archived_link', invoice_id=invoice.id, _external=True)
+        try:
+            download_url = _invoice_generated_docs_url(invoice, company_name=company.get('name'))
+        except Exception:
+            download_url = invoice.generated_doc_path or '#'
     email_ref = _document_email_reference(download_url, invoice_doc_type, invoice.id, company_name=company.get('name'))
     subject = _document_email_subject(company.get('name', 'Empresa'), 'factura', email_ref)
     html = render_template(
@@ -4871,30 +4955,39 @@ def _invoice_generated_docs_url(invoice: Invoice, company_name: str | None = Non
     if not archived.exists():
         raise RuntimeError(f'No se pudo generar archivo PDF para factura {invoice.id}')
 
-    return _archived_download_url(
+    resolved_url = _archived_download_url(
         doc_type,
         invoice.id,
         company_name=company_name,
         company_id=current_company_id(),
         full_path=str(archived),
     )
+    if resolved_url:
+        return resolved_url
+    rel = _relative_generated_doc_path(str(archived))
+    if rel:
+        return f'/generated_docs/{rel}'
+    if invoice.generated_doc_path:
+        return invoice.generated_doc_path
+    deterministic = _archived_pdf_path(doc_type, invoice.id, company_name=company_name, company_id=current_company_id())
+    rel = _relative_generated_doc_path(str(deterministic))
+    if rel:
+        url = f'/generated_docs/{rel}'
+        _persist_generated_doc_path(doc_type, invoice.id, url)
+        return url
+    raise RuntimeError(f'No se pudo resolver URL pública para factura {invoice.id}')
 
 
 @app.route('/facturas/<int:invoice_id>/archivo')
 def invoice_archived_link(invoice_id):
-    invoice = company_get(Invoice, invoice_id)
-    company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
-    try:
-        link = _invoice_generated_docs_url(invoice, company_name=company_name)
-    except Exception as exc:
-        app.logger.exception('No se pudo resolver enlace archived para factura %s: %s', invoice.id, exc)
-        return ('No se pudo resolver el archivo PDF de la factura', 500)
-    return redirect(link)
+    return ('Not Found', 404)
 
 @app.route('/generated-docs/<path:filename>')
 @app.route('/generated_docs/<path:filename>')
 def download_generated_doc(filename):
     if '..' in filename or filename.startswith('/'):
+        return ('Not Found', 404)
+    if filename.endswith('/'):
         return ('Not Found', 404)
     base = _archive_root_dir().resolve()
     file_path = (base / filename).resolve()
