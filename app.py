@@ -1871,7 +1871,7 @@ def _build_invoice_pdf_bytes(invoice: Invoice, company: dict[str, str | None]) -
             doc_number=invoice.id,
             note=invoice.note,
             date=invoice.date,
-            valid_until=valid_until,
+            valid_until=None,
             footer=invoice.footer_text or _default_invoice_footer(),
         )
     return generate_pdf_bytes(

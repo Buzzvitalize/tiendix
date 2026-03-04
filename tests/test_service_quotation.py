@@ -296,6 +296,34 @@ def test_generate_service_invoice_from_existing_service_quote(tmp_path):
         assert round(inv.itbis, 2) == 162
         assert round(inv.total, 2) == 1062
 
+
+def test_service_invoice_pdf_does_not_include_valid_until(monkeypatch, tmp_path):
+    _seed_base(tmp_path)
+    captured = {}
+
+    def _fake_generate_service_pdf_bytes(*args, **kwargs):
+        captured['valid_until'] = kwargs.get('valid_until')
+        return b'%PDF-1.4 mock'
+
+    monkeypatch.setattr('app.generate_service_pdf_bytes', _fake_generate_service_pdf_bytes)
+
+    with app.test_client() as c:
+        c.post('/login', data={'username': 'svcuser', 'password': 'pass'})
+        c.post('/cotizaciones/nuevo-servicio', data={
+            'client_id': '1',
+            'seller': 'Carlos Tester',
+            'payment_method': 'Efectivo',
+            'validity_period': '1m',
+            'document_mode': 'factura',
+            'service_name[]': ['Instalación'],
+            'service_description[]': ['Servicio técnico'],
+            'service_quantity[]': ['1'],
+            'service_rate[]': ['1500'],
+            'service_itbis[]': ['0'],
+        }, follow_redirects=False)
+
+    assert captured.get('valid_until') is None
+
 def test_generate_service_pdf_bytes_uses_only_user_created_rows(monkeypatch):
     original_cell = weasy_pdf._cell
     captured_texts: list[str] = []
