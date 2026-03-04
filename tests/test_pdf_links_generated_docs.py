@@ -39,10 +39,9 @@ def test_order_and_invoice_pages_prefer_generated_docs_links(tmp_path):
             status='vigente',
             company_id=company.id,
             warehouse_id=None,
-            generated_doc_path='/generated_docs/ecosea-srl/802227/cotizacion/cotizacion-1.pdf',
         )
         db.session.add(quotation)
-        invoice = Invoice(client_id=client.id, order_id=1, subtotal=100, itbis=18, total=118, invoice_type='Consumidor Final', status='Pendiente', company_id=company.id, generated_doc_path='/generated_docs/ecosea-srl/802227/factura/factura-1.pdf')
+        invoice = Invoice(client_id=client.id, order_id=1, subtotal=100, itbis=18, total=118, invoice_type='Consumidor Final', status='Pendiente', company_id=company.id)
         db.session.add(invoice)
         db.session.commit()
 

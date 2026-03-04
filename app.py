@@ -3701,9 +3701,17 @@ def list_quotations():
             invoice = company_get(Invoice, invoice_id)
             if invoice.generated_doc_path:
                 service_invoice_urls[qid] = invoice.generated_doc_path
+                continue
+            try:
+                service_invoice_urls[qid] = _invoice_generated_docs_url(invoice)
+            except Exception:
+                pass
 
     archived_urls = {}
     for q in quotations.items:
+        if q.generated_doc_path:
+            archived_urls[q.id] = q.generated_doc_path
+            continue
         doc_type = _quotation_doc_type(q)
         archived = _resolve_archived_pdf_path(
             doc_type,
@@ -3723,6 +3731,11 @@ def list_quotations():
                 archived_urls[q.id] = url
                 if not q.generated_doc_path:
                     q.generated_doc_path = url
+            continue
+        try:
+            archived_urls[q.id] = _quotation_generated_docs_url(q)
+        except Exception:
+            pass
     return render_template(
         'cotizaciones.html',
         quotations=quotations,
@@ -4658,6 +4671,9 @@ def list_orders():
     archived_order_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for o in orders:
+        if o.generated_doc_path:
+            archived_order_urls[o.id] = o.generated_doc_path
+            continue
         archived = _resolve_archived_pdf_path('pedido', o.id, company_name=company_name, company_id=current_company_id())
         if archived.exists():
             url = _archived_download_url('pedido', o.id, company_name=company_name, company_id=current_company_id(), full_path=str(archived))
@@ -4665,6 +4681,11 @@ def list_orders():
                 archived_order_urls[o.id] = url
                 if not o.generated_doc_path:
                     o.generated_doc_path = url
+            continue
+        try:
+            archived_order_urls[o.id] = _order_generated_docs_url(o)
+        except Exception:
+            pass
     return render_template('pedido.html', orders=orders, q=q, archived_order_urls=archived_order_urls, pagination=pagination)
 
 @app.route('/pedidos/<int:order_id>/enviar', methods=['POST'])
@@ -4828,6 +4849,9 @@ def list_invoices():
     archived_invoice_urls = {}
     company_name = (getattr(g, 'company', None).name if getattr(g, 'company', None) else None)
     for f in invoices:
+        if f.generated_doc_path:
+            archived_invoice_urls[f.id] = f.generated_doc_path
+            continue
         doc_type = _invoice_doc_type(f)
         archived = _resolve_archived_pdf_path(doc_type, f.id, company_name=company_name, company_id=current_company_id())
         if archived.exists():
@@ -4836,6 +4860,11 @@ def list_invoices():
                 archived_invoice_urls[f.id] = url
                 if not f.generated_doc_path:
                     f.generated_doc_path = url
+            continue
+        try:
+            archived_invoice_urls[f.id] = _invoice_generated_docs_url(f)
+        except Exception:
+            pass
     return render_template('factura.html', invoices=invoices, q=q, archived_invoice_urls=archived_invoice_urls, pagination=pagination)
 
 
