@@ -1514,9 +1514,12 @@ def inject_company():
     unread_notifications = []
     archived_notifications = []
     active_announcement = None
+    company_logo_url = None
     try:
+        if has_request_context() and getattr(g, 'company', None):
+            company_logo_url = _public_logo_url(g.company.logo)
         cid = current_company_id()
-        if 'user_id' in session and cid and ENABLE_NOTIFICATIONS_CONTEXT:
+        if has_request_context() and 'user_id' in session and cid and ENABLE_NOTIFICATIONS_CONTEXT:
             now_ts = int(time.time())
 
             # Optional background-like scan for low stock; disabled by default to protect worker capacity.
@@ -1591,6 +1594,7 @@ def inject_company():
         app.logger.exception('Failed to compute notifications: %s', exc)
     return {
         'company': getattr(g, 'company', None),
+        'company_logo_url': company_logo_url,
         'notification_count': notif_count,
         'unread_notifications': unread_notifications,
         'archived_notifications': archived_notifications,
@@ -1605,16 +1609,41 @@ def get_company_info():
     c = db.session.get(CompanyInfo, current_company_id())
     if not c:
         return {}
+    logo_rel = _normalized_logo_relative_path(c.logo)
     return {
         'name': c.name,
         'address': f"{c.street}, {c.sector}, {c.province}",
         'rnc': c.rnc,
         'phone': c.phone,
         'website': c.website,
-        'logo': os.path.join(app.static_folder, c.logo if c.logo.startswith('uploads/') else f'uploads/{c.logo}') if c.logo else None,
+        'logo': os.path.join(app.static_folder, logo_rel) if logo_rel else None,
         'ncf_final': c.ncf_final,
         'ncf_fiscal': c.ncf_fiscal,
     }
+
+
+def _normalized_logo_relative_path(raw_logo: str | None) -> str | None:
+    logo = (raw_logo or '').strip().replace('\\', '/')
+    if not logo:
+        return None
+    if logo.startswith('/'):
+        logo = logo.lstrip('/')
+    if logo.startswith('static/'):
+        logo = logo[len('static/'):]
+    if not logo.startswith('uploads/'):
+        logo = f'uploads/{logo}'
+    return logo
+
+
+def _public_logo_url(raw_logo: str | None) -> str | None:
+    logo_rel = _normalized_logo_relative_path(raw_logo)
+    if not logo_rel:
+        return None
+    logo_path = Path(app.static_folder) / logo_rel
+    if not logo_path.exists() or not logo_path.is_file():
+        app.logger.warning('Configured logo file is missing on disk: %s', logo_rel)
+        return None
+    return url_for('static', filename=logo_rel)
 
 
 def _company_short_slug(company_name: str | None) -> str:
@@ -4925,27 +4954,6 @@ def _order_generated_docs_url(order: Order, company_name: str | None = None) -> 
     raise RuntimeError(f'No se pudo resolver URL pública para pedido {order.id}')
 
 
-@app.route('/pedidos/<int:order_id>/archivo')
-def order_archived_link(order_id):
-    return ('Not Found', 404)
-
-
-@app.route('/pedidos/<int:order_id>/archivo')
-def order_archived_link(order_id):
-    return ('Not Found', 404)
-
-
-@app.route('/pedidos/<int:order_id>/archivo', endpoint='order_archived_link_404')
-def order_archived_link_404(order_id):
-    return ('Not Found', 404)
-
-
-app.add_url_rule(
-    '/pedidos/<int:order_id>/archivo',
-    endpoint='order_archived_link_404',
-    view_func=_archivo_legacy_not_found,
-)
-
 
 # Invoices
 @app.route('/facturas')
@@ -5111,27 +5119,6 @@ def _invoice_generated_docs_url(invoice: Invoice, company_name: str | None = Non
         return url
     raise RuntimeError(f'No se pudo resolver URL pública para factura {invoice.id}')
 
-
-@app.route('/facturas/<int:invoice_id>/archivo')
-def invoice_archived_link(invoice_id):
-    return ('Not Found', 404)
-
-
-@app.route('/facturas/<int:invoice_id>/archivo')
-def invoice_archived_link(invoice_id):
-    return ('Not Found', 404)
-
-
-@app.route('/facturas/<int:invoice_id>/archivo', endpoint='invoice_archived_link_404')
-def invoice_archived_link_404(invoice_id):
-    return ('Not Found', 404)
-
-
-app.add_url_rule(
-    '/facturas/<int:invoice_id>/archivo',
-    endpoint='invoice_archived_link_404',
-    view_func=_archivo_legacy_not_found,
-)
 
 
 @app.route('/generated-docs/<path:filename>')

@@ -13,8 +13,8 @@
   <div class="bg-white rounded-lg shadow-xl hover:shadow-2xl transition-shadow flex flex-col md:flex-row w-full max-w-4xl overflow-hidden mt-12">
     <div class="hidden md:flex md:w-1/2 bg-blue-600 text-white items-center justify-center p-8 relative">
       <div class="absolute top-4 left-4">
-        {% if company and company.logo %}
-          <img src="{{ url_for('static', filename='uploads/' + company.logo) }}" alt="Logo" class="h-8">
+        {% if company_logo_url %}
+          <img src="{{ company_logo_url }}" alt="Logo" class="h-8">
         {% else %}
           <span class="text-xl font-bold">Tiendix</span>
         {% endif %}
@@ -26,8 +26,8 @@
     </div>
     <div class="w-full md:w-1/2 p-8">
       <div class="md:hidden mb-6 text-center">
-        {% if company and company.logo %}
-          <img src="{{ url_for('static', filename='uploads/' + company.logo) }}" alt="Logo" class="h-10 mx-auto">
+        {% if company_logo_url %}
+          <img src="{{ company_logo_url }}" alt="Logo" class="h-10 mx-auto">
         {% else %}
           <span class="text-2xl font-bold text-blue-600">Tiendix</span>
         {% endif %}
